@@ -6,10 +6,12 @@ import { appError } from "../lib/errors";
 import { optionalText, requireText } from "../lib/input";
 import {
   answerKeyValidator,
+  codeTaskValidator,
   optionValidator,
   questionTypeValidator,
   viaValidator,
   type AnswerKey,
+  type CodeTask,
   type QuestionInput,
 } from "../lib/validators";
 import {
@@ -22,6 +24,7 @@ import {
   toAssessment,
 } from "./assessments";
 import { logAudit } from "./audit";
+import { normalizeCodeTask } from "./codeTasks";
 
 export const MAX_QUESTIONS_PER_CALL = 50;
 
@@ -34,6 +37,7 @@ export const questionWithKeyValidator = v.object({
   points: v.number(),
   options: v.optional(v.array(optionValidator)),
   explanation: v.optional(v.string()),
+  code: v.optional(codeTaskValidator),
   key: answerKeyValidator,
   createdVia: viaValidator,
 });
@@ -51,6 +55,7 @@ type NormalizedQuestion = {
   points: number;
   options?: { id: string; text: string }[];
   explanation?: string;
+  code?: CodeTask;
   key: AnswerKey;
 };
 
@@ -145,6 +150,17 @@ export function normalizeQuestion(input: QuestionInput): NormalizedQuestion {
         explanation,
         key: { type: "essay", rubric: optionalText(input.rubric, "Rubric", 4000) },
       };
+    case "code": {
+      const task = normalizeCodeTask(input);
+      return {
+        type: "code",
+        prompt,
+        points,
+        explanation,
+        code: task.code,
+        key: { type: "code", hiddenChecks: task.hiddenChecks, solution: task.solution },
+      };
+    }
   }
 }
 
@@ -173,6 +189,7 @@ export async function listQuestionsWithKeys(ctx: QueryCtx, assessmentId: Id<"ass
         points: question.points,
         options: question.options,
         explanation: question.explanation,
+        code: question.code,
         key,
         createdVia: question.createdVia,
       },
@@ -274,6 +291,7 @@ export async function updateQuestion(
     // Patching with undefined removes a field, e.g. options on a former choice question.
     options: fields.options,
     explanation: fields.explanation,
+    code: fields.code,
   });
   const existingKey = await ctx.db
     .query("answerKeys")

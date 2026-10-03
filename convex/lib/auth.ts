@@ -57,15 +57,37 @@ export async function userByClerkUserId(ctx: QueryCtx, clerkUserId: string) {
 }
 
 /**
+ * After a move to a new Clerk application, people sign up again with the same
+ * email and get a new Clerk id. Their row from the old application (a
+ * different issuer in its tokenIdentifier) is handed over, so roles, courses
+ * and work carry over. Only rows from another issuer qualify: two accounts of
+ * the current Clerk application with the same email never merge.
+ */
+export async function userFromPreviousClerkApp(ctx: QueryCtx, email: string, issuer: string) {
+  const rows = await ctx.db
+    .query("users")
+    .withIndex("by_email", (q) => q.eq("email", email))
+    .take(5);
+  const prefix = `${issuer.replace(/\/+$/, "")}|`;
+  const stale = rows.filter((row) => !row.tokenIdentifier.startsWith(prefix));
+  return stale.length === 1 ? stale[0] : null;
+}
+
+/**
  * The tokenIdentifier Convex will compute for this Clerk user (`issuer|subject`).
  * Lets a webhook create the row before the person's first signed-in request.
  */
 export function clerkTokenIdentifier(clerkUserId: string): string {
+  return `${clerkIssuer()}|${clerkUserId}`;
+}
+
+/** The Clerk Frontend API URL this deployment trusts, as Convex writes it in tokenIdentifiers. */
+export function clerkIssuer(): string {
   const issuer = process.env.CLERK_FRONTEND_API_URL;
   if (!issuer) {
     throw new Error("CLERK_FRONTEND_API_URL is not set on this Convex deployment");
   }
-  return `${issuer.replace(/\/+$/, "")}|${clerkUserId}`;
+  return issuer.replace(/\/+$/, "");
 }
 
 /** The signed-in user's row, or null when signed out or not stored yet. */
@@ -105,10 +127,13 @@ export async function ensureUser(ctx: MutationCtx): Promise<Doc<"users">> {
   // this deployment trusts exactly one issuer (see auth.config.ts).
   const clerkUserId = identity.subject;
 
-  // The Clerk webhook may have created the row first; adopt it either way.
+  // The Clerk webhook may have created the row first; adopt it either way. After a
+  // move to a new Clerk app, the row from the old one is taken over, but only for
+  // a verified email.
   const existing =
     (await userByTokenIdentifier(ctx, identity.tokenIdentifier)) ??
-    (await userByClerkUserId(ctx, clerkUserId));
+    (await userByClerkUserId(ctx, clerkUserId)) ??
+    (identity.emailVerified === true ? await userFromPreviousClerkApp(ctx, email, identity.issuer) : null);
   if (existing !== null) {
     const fresh = {
       tokenIdentifier: identity.tokenIdentifier,

@@ -125,6 +125,7 @@ export function StudioDashboard({
 function CourseCard({ course }: { course: CourseSummary }) {
   const { counts } = course;
   const parts = [
+    counts.tasks > 0 && `${counts.tasks} task${counts.tasks === 1 ? "" : "s"}`,
     counts.quizzes > 0 && `${counts.quizzes} quiz${counts.quizzes === 1 ? "" : "zes"}`,
     counts.midterms > 0 && `${counts.midterms} midterm${counts.midterms === 1 ? "" : "s"}`,
     counts.finals > 0 && `${counts.finals} final${counts.finals === 1 ? "" : "s"}`,

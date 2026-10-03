@@ -44,6 +44,7 @@ export const courseStaffRoleValidator = v.union(v.literal("owner"), v.literal("a
 export type CourseStaffRole = Infer<typeof courseStaffRoleValidator>;
 
 export const assessmentKindValidator = v.union(
+  v.literal("task"),
   v.literal("quiz"),
   v.literal("midterm"),
   v.literal("final"),
@@ -89,11 +90,98 @@ export const questionTypeValidator = v.union(
   v.literal("multiple"),
   v.literal("short"),
   v.literal("essay"),
+  v.literal("code"),
 );
 export type QuestionType = Infer<typeof questionTypeValidator>;
 
 /** A choice shown to students. Which ones are correct lives in answerKeys. */
 export const optionValidator = v.object({ id: v.string(), text: v.string() });
+
+// --- Code tasks (HTML/CSS sandbox). Rules mirror lib/checks/types.ts. ----------
+
+export const codeFileValidator = v.object({ name: v.string(), content: v.string() });
+export type CodeFileDoc = Infer<typeof codeFileValidator>;
+
+/** The same rule shapes with or without an id; agents send them without, the server numbers them. */
+function checkRuleVariants<Base extends Record<string, ReturnType<typeof v.string>>>(base: Base) {
+  return v.union(
+    v.object({ ...base, type: v.literal("exists"), selector: v.string() }),
+    v.object({ ...base, type: v.literal("not_exists"), selector: v.string() }),
+    v.object({
+      ...base,
+      type: v.literal("count"),
+      selector: v.string(),
+      min: v.optional(v.number()),
+      max: v.optional(v.number()),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("text"),
+      selector: v.string(),
+      equals: v.optional(v.string()),
+      contains: v.optional(v.string()),
+      caseSensitive: v.optional(v.boolean()),
+      every: v.optional(v.boolean()),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("attr"),
+      selector: v.string(),
+      attribute: v.string(),
+      equals: v.optional(v.string()),
+      contains: v.optional(v.string()),
+      every: v.optional(v.boolean()),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("css"),
+      selector: v.string(),
+      property: v.string(),
+      equals: v.optional(v.string()),
+      oneOf: v.optional(v.array(v.string())),
+      every: v.optional(v.boolean()),
+      viewport: v.optional(v.number()),
+    }),
+    v.object({ ...base, type: v.literal("linked"), href: v.string() }),
+  );
+}
+
+export const checkRuleValidator = checkRuleVariants({ id: v.string(), label: v.string() });
+export type CheckRuleDoc = Infer<typeof checkRuleValidator>;
+export const checkRuleInputValidator = checkRuleVariants({ label: v.string() });
+export type CheckRuleInput = Infer<typeof checkRuleInputValidator>;
+
+/** An image students may use by its short name, e.g. `<img src="cat.jpg">`. Hosted on ImageKit. */
+export const codeAssetValidator = v.object({
+  name: v.string(),
+  url: v.string(),
+  alt: v.optional(v.string()),
+});
+
+export const codeStepValidator = v.object({
+  title: v.string(),
+  /** Markdown. */
+  instructions: v.string(),
+  hint: v.optional(v.string()),
+  /** Visible to the student, ticked live while they type. */
+  checks: v.array(checkRuleValidator),
+});
+
+/**
+ * A per-student variable: each student gets one of `values`, used as
+ * `{{name}}` in instructions, files and checks.
+ */
+export const codeVariableValidator = v.object({ name: v.string(), values: v.array(v.string()) });
+
+/** What students get with a code question: starter files and the steps, freeCodeCamp-style. */
+export const codeTaskValidator = v.object({
+  files: v.array(codeFileValidator),
+  steps: v.array(codeStepValidator),
+  assets: v.array(codeAssetValidator),
+  /** Never sent to students: they get the task with their own values filled in. */
+  variables: v.optional(v.array(codeVariableValidator)),
+});
+export type CodeTask = Infer<typeof codeTaskValidator>;
 
 /** Stored separately from the question so student-facing queries can never leak it. */
 export const answerKeyValidator = v.union(
@@ -105,8 +193,36 @@ export const answerKeyValidator = v.union(
     caseSensitive: v.boolean(),
   }),
   v.object({ type: v.literal("essay"), rubric: v.optional(v.string()) }),
+  v.object({
+    type: v.literal("code"),
+    /** Only run on submit; students never see them before. */
+    hiddenChecks: v.array(checkRuleValidator),
+    /** A finished version that passes every check. Proves the task can be done. */
+    solution: v.array(codeFileValidator),
+  }),
 );
 export type AnswerKey = Infer<typeof answerKeyValidator>;
+
+/** A code task as an agent or the studio sends it. Checks get their ids on the server. */
+export const codeQuestionInputValidator = v.object({
+  type: v.literal("code"),
+  prompt: v.string(),
+  points: v.optional(v.number()),
+  explanation: v.optional(v.string()),
+  starterFiles: v.array(codeFileValidator),
+  steps: v.array(
+    v.object({
+      title: v.string(),
+      instructions: v.string(),
+      hint: v.optional(v.string()),
+      checks: v.array(checkRuleInputValidator),
+    }),
+  ),
+  hiddenChecks: v.optional(v.array(checkRuleInputValidator)),
+  solution: v.array(codeFileValidator),
+  assets: v.optional(v.array(codeAssetValidator)),
+  variables: v.optional(v.array(codeVariableValidator)),
+});
 
 /**
  * How a question arrives from the builder or an agent: options carry their own
@@ -142,5 +258,42 @@ export const questionInputValidator = v.union(
     explanation: v.optional(v.string()),
     rubric: v.optional(v.string()),
   }),
+  codeQuestionInputValidator,
 );
 export type QuestionInput = Infer<typeof questionInputValidator>;
+export type CodeQuestionInput = Infer<typeof codeQuestionInputValidator>;
+
+// --- Students taking assessments -------------------------------------------------
+
+export const enrollmentStatusValidator = v.union(v.literal("active"), v.literal("removed"));
+
+export const attemptStatusValidator = v.union(v.literal("in_progress"), v.literal("submitted"));
+export type AttemptStatus = Infer<typeof attemptStatusValidator>;
+
+/**
+ * Integrity counters (KALAMI.md §6.2), never recordings. The first three come
+ * from the editor; the rest from the page and were added later, so they're optional.
+ */
+export const integrityCountsValidator = v.object({
+  pasteBlocked: v.number(),
+  dropBlocked: v.number(),
+  largeInserts: v.number(),
+  tabSwitches: v.optional(v.number()),
+  awayMs: v.optional(v.number()),
+  fullscreenExits: v.optional(v.number()),
+  copyBlocked: v.optional(v.number()),
+  shortcutsBlocked: v.optional(v.number()),
+  multiTab: v.optional(v.number()),
+  resizes: v.optional(v.number()),
+});
+export type IntegrityCounts = Infer<typeof integrityCountsValidator>;
+
+export const integrityColorValidator = v.union(v.literal("green"), v.literal("yellow"), v.literal("red"));
+
+/** What a student saved for one question. A union once other question types join. */
+export const responseValueValidator = v.object({
+  type: v.literal("code"),
+  files: v.array(codeFileValidator),
+});
+
+export const checkOutcomeValidator = v.object({ id: v.string(), passed: v.boolean() });

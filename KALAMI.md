@@ -44,7 +44,7 @@ Existing tools are ugly, English-only, and expensive, and most Georgian universi
 ```
 kalami.space                  → landing page (what Kalami is, contact)
 app.kalami.space              → STUDENTS        repo: kalami-student    (Vercel project #2)
-anticheat.kalami.space        → LECTURERS/ADMIN repo: kalami-anticheat  (Vercel project #1, owns convex/)
+staff.kalami.space        → LECTURERS/ADMIN repo: kalami-anticheat  (Vercel project #1, owns convex/)
 ```
 
 ```
@@ -169,7 +169,7 @@ Transparency builds trust.
 
 ---
 
-## 5. The lecturer experience (anticheat.kalami.space)
+## 5. The lecturer experience (staff.kalami.space)
 
 ### 5.1 Courses home
 
@@ -410,7 +410,7 @@ High-churn data (heartbeats, progress, integrity counters) lives in **separate t
 /profile
 ```
 
-### kalami-anticheat (anticheat.kalami.space)
+### kalami-anticheat (staff.kalami.space)
 
 ```
 /sign-in  /invite/[token]
@@ -512,7 +512,7 @@ npm install convex @clerk/nextjs
 ### Domains (production)
 
 - Buy `kalami.space` (and consider `kalami.ge`).
-- `app.kalami.space` → Vercel project kalami-student; `anticheat.kalami.space` → Vercel project kalami-anticheat.
+- `app.kalami.space` → Vercel project kalami-student; `staff.kalami.space` → Vercel project kalami-anticheat.
 - Clerk production instance on `kalami.space`, so logins work across both subdomains.
 
 ---

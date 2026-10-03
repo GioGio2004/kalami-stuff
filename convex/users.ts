@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import type { MutationCtx } from "./_generated/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import {
+  clerkIssuer,
   clerkTokenIdentifier,
   ensureUser,
   getCurrentUser,
@@ -13,6 +14,7 @@ import {
   requireUser,
   userByClerkUserId,
   userByTokenIdentifier,
+  userFromPreviousClerkApp,
 } from "./lib/auth";
 import { appError } from "./lib/errors";
 import { HONESTY_NOTICE } from "./lib/honestyNotice";
@@ -52,7 +54,24 @@ export const upsertFromClerk = internalMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const email = normalizeEmail(args.email);
-    const existing = await userForClerkId(ctx, args.clerkUserId);
+    const tokenIdentifier = clerkTokenIdentifier(args.clerkUserId);
+    const current = await userForClerkId(ctx, args.clerkUserId);
+    // After a move to a new Clerk app, the row from the old one carries over (see ensureUser).
+    // Clerk only sends verified primary addresses here: sign-up requires verification.
+    const adopted =
+      current === null
+        ? await userFromPreviousClerkApp(ctx, email, clerkIssuer())
+        : null;
+    if (adopted !== null) {
+      await ctx.db.patch("users", adopted._id, {
+        tokenIdentifier,
+        clerkUserId: args.clerkUserId,
+        email,
+        avatarUrl: args.avatarUrl,
+      });
+      return null;
+    }
+    const existing = current;
     if (existing === null) {
       await ctx.db.insert("users", {
         tokenIdentifier: clerkTokenIdentifier(args.clerkUserId),

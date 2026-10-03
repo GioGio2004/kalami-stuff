@@ -23,9 +23,10 @@ import {
   type UpdateCourseArgs,
 } from "./types";
 
-const KINDS: AssessmentKind[] = ["quiz", "midterm", "final"];
+const KINDS: AssessmentKind[] = ["task", "quiz", "midterm", "final"];
 
 const KIND_BLURB: Record<AssessmentKind, string> = {
+  task: "Homework in the code sandbox: HTML and CSS in small steps, checked as students type. Best drafted by your agent.",
   quiz: "Short checks between lessons. Standard integrity, results after close.",
   midterm: "The mid-semester exam. Strict integrity and a 60-minute timer by default.",
   final: "The end-of-semester exam. Strict integrity and a 90-minute timer by default.",

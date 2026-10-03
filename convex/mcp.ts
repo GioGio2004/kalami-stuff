@@ -9,9 +9,11 @@ import {
   localizedTextValidator,
   questionInputValidator,
   roleValidator,
+  codeQuestionInputValidator,
 } from "./lib/validators";
 import { createAssessment, updateAssessment } from "./model/assessments";
 import { displayName } from "./model/audit";
+import { codeTaskReportValidator, testCodeTask } from "./model/codeTasks";
 import {
   courseDetailValidator,
   courseSummaryValidator,
@@ -209,5 +211,19 @@ export const reorderQuestionsAsAgent = mutation({
     const actor = await requireTokenActorAndTouch(ctx, args.token);
     await reorderQuestions(ctx, actor, args.assessmentId, args.questionIds);
     return null;
+  },
+});
+
+/**
+ * Dry run for a code question: runs every check on the starter files and on the
+ * solution without saving anything, so an agent can fix its task before
+ * add_questions (which refuses tasks whose solution fails a check).
+ */
+export const checkCodeTask = query({
+  args: { ...tokenArg, question: codeQuestionInputValidator },
+  returns: codeTaskReportValidator,
+  handler: async (ctx, args) => {
+    await requireTokenActor(ctx, args.token);
+    return testCodeTask(args.question);
   },
 });

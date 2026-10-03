@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 
-const PRODUCTION_ORIGIN = "https://anticheat.kalami.space";
+const PRODUCTION_ORIGIN = "https://staff.kalami.space";
 
 // The origin never changes while the page is open, so there is nothing to subscribe to.
 const subscribe = () => () => {};

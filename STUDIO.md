@@ -2,7 +2,7 @@
 
 > How lecturers build quizzes, midterms, finals and (later) animated lectures, by hand or
 > through their own AI agent. Companion to `KALAMI.md`; this file is the working plan for
-> the staff app (`kalami-stuff`, anticheat.kalami.space) and the backend it owns.
+> the staff app (`kalami-stuff`, staff.kalami.space) and the backend it owns.
 
 ---
 
@@ -72,7 +72,7 @@ of it.
 
 ## 4. The MCP connector
 
-**Endpoint:** `https://anticheat.kalami.space/api/mcp` (Streamable HTTP, stateless).
+**Endpoint:** `https://staff.kalami.space/api/mcp` (Streamable HTTP, stateless).
 **Auth:** `Authorization: Bearer klm_…` personal token, created on `/agents`. The token is
 hashed in Convex on every call; revoking it stops the agent on its next call.
 
@@ -91,13 +91,13 @@ Client recipes (also shown on `/agents` with the real token filled in):
 
 ```bash
 # Claude Code
-claude mcp add --transport http kalami https://anticheat.kalami.space/api/mcp \
+claude mcp add --transport http kalami https://staff.kalami.space/api/mcp \
   --header "Authorization: Bearer klm_…"
 ```
 
 ```json
 // Cursor (.cursor/mcp.json)
-{ "mcpServers": { "kalami": { "url": "https://anticheat.kalami.space/api/mcp",
+{ "mcpServers": { "kalami": { "url": "https://staff.kalami.space/api/mcp",
                               "headers": { "Authorization": "Bearer klm_…" } } } }
 ```
 
@@ -182,7 +182,7 @@ Screens with sample data, no account needed: `/dev/ui` (development only).
 Smoke-test the connector with any MCP client, or by hand:
 
 ```bash
-curl -s https://anticheat.kalami.space/api/mcp -X POST \
+curl -s https://staff.kalami.space/api/mcp -X POST \
   -H "Authorization: Bearer klm_…" -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'

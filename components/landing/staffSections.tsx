@@ -225,7 +225,7 @@ export function StaffFooter() {
         </div>
         <div className="flex flex-col gap-2 pt-6 text-sm text-paper/45 sm:flex-row sm:justify-between">
           <p>© 2026 Kalami. Hard to cheat, easy to see.</p>
-          <p>anticheat.kalami.space</p>
+          <p>staff.kalami.space</p>
         </div>
       </div>
     </footer>

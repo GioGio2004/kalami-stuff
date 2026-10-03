@@ -10,6 +10,9 @@ import { Pill, statusLabel, statusTone } from "@/components/ui/Pill";
 import { errorMessage } from "@/lib/errors";
 import { fromLocalInputValue, toLocalInputValue } from "@/lib/format";
 import { QuestionForm } from "./QuestionForm";
+import { Submissions } from "./Submissions";
+import { CodeTaskForm } from "./CodeTaskForm";
+import { TaskTryout } from "./TaskTryout";
 import {
   INTEGRITY_LABEL,
   KIND_LABEL,
@@ -68,6 +71,9 @@ export function AssessmentBuilder({
   const { assessment, questions, canEdit, course } = detail;
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<QuestionWithKey | null>(null);
+  const [trying, setTrying] = useState<QuestionWithKey | null>(null);
+  const [codeForm, setCodeForm] = useState<{ question?: QuestionWithKey } | null>(null);
+  const hasCode = questions.some((q) => q.type === "code");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -160,10 +166,16 @@ export function AssessmentBuilder({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-xl font-medium tracking-tight">Questions</h2>
             {canEdit && (
-              <Button size="sm" onClick={() => setAdding(true)}>
-                <Plus className="size-4" />
-                Add question
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant={assessment.kind === "task" ? "lime" : "outline"} onClick={() => setCodeForm({})}>
+                  <Plus className="size-4" />
+                  Code task
+                </Button>
+                <Button size="sm" variant={assessment.kind === "task" ? "outline" : "ink"} onClick={() => setAdding(true)}>
+                  <Plus className="size-4" />
+                  Question
+                </Button>
+              </div>
             )}
           </div>
 
@@ -184,7 +196,8 @@ export function AssessmentBuilder({
                     index={index}
                     total={questions.length}
                     canEdit={canEdit}
-                    onEdit={() => setEditing(question)}
+                    onEdit={() => (question.type === "code" ? setCodeForm({ question }) : setEditing(question))}
+                    onTry={() => setTrying(question)}
                     onDelete={() => act(() => onDeleteQuestion(question._id))}
                     onMove={(direction) => move(index, direction)}
                   />
@@ -196,6 +209,7 @@ export function AssessmentBuilder({
 
         <div className="space-y-4 lg:col-span-5">
           <SettingsCard key={assessment._id} assessment={assessment} canEdit={canEdit} onUpdate={onUpdate} />
+          {hasCode && <Submissions detail={detail} />}
         </div>
       </div>
 
@@ -223,6 +237,23 @@ export function AssessmentBuilder({
           />
         )}
       </Dialog>
+
+      {trying && <TaskTryout question={trying} title={assessment.title} onClose={() => setTrying(null)} />}
+
+      {codeForm && (
+        <CodeTaskForm
+          question={codeForm.question}
+          onSubmit={async (input) => {
+            if (codeForm.question) {
+              await onUpdateQuestion(codeForm.question._id, input);
+            } else {
+              await onAddQuestion(input);
+            }
+            setCodeForm(null);
+          }}
+          onCancel={() => setCodeForm(null)}
+        />
+      )}
 
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} label="Delete draft">
         {confirmDelete && (
@@ -309,6 +340,7 @@ function QuestionCard({
   total,
   canEdit,
   onEdit,
+  onTry,
   onDelete,
   onMove,
 }: {
@@ -317,6 +349,7 @@ function QuestionCard({
   total: number;
   canEdit: boolean;
   onEdit: () => void;
+  onTry: () => void;
   onDelete: () => void;
   onMove: (direction: -1 | 1) => void;
 }) {
@@ -366,6 +399,13 @@ function QuestionCard({
             <p className="mt-3 text-sm text-graphite">
               Rubric: <span className="text-ink">{key.rubric}</span>
             </p>
+          )}
+          {question.code && (
+            <CodeTaskSummary
+              code={question.code}
+              hiddenCount={key.type === "code" ? key.hiddenChecks.length : 0}
+              onTry={onTry}
+            />
           )}
           {question.explanation && <p className="mt-2 text-xs text-graphite">Explanation: {question.explanation}</p>}
         </div>
@@ -580,5 +620,49 @@ function SettingsCard({
         )}
       </fieldset>
     </form>
+  );
+}
+
+/** A code task in the question list: its steps and checks at a glance, and a way to try it. */
+function CodeTaskSummary({
+  code,
+  hiddenCount,
+  onTry,
+}: {
+  code: NonNullable<QuestionWithKey["code"]>;
+  hiddenCount: number;
+  onTry: () => void;
+}) {
+  const checkCount = code.steps.reduce((sum, step) => sum + step.checks.length, 0);
+  return (
+    <div className="mt-3 rounded-2xl bg-panel p-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-graphite">
+        <span className="font-mono">{code.files.map((f) => f.name).join(" · ")}</span>
+        <span>
+          {code.steps.length} step{code.steps.length === 1 ? "" : "s"} · {checkCount} check{checkCount === 1 ? "" : "s"}
+          {hiddenCount > 0 && ` + ${hiddenCount} on submit`}
+        </span>
+        {code.assets.length > 0 && <span>{code.assets.length} image{code.assets.length === 1 ? "" : "s"}</span>}
+      </div>
+      <ol className="mt-3 space-y-1.5">
+        {code.steps.map((step, i) => (
+          <li key={i} className="flex gap-2.5 text-sm">
+            <span className="grid size-5 shrink-0 place-items-center rounded-full bg-card text-[11px] font-semibold tabular-nums">
+              {i + 1}
+            </span>
+            <span className="min-w-0">
+              <span className="font-medium">{step.title}</span>
+              <span className="text-graphite"> · {step.checks.map((c) => c.label).join(" · ")}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <Button size="sm" variant="lime" onClick={onTry}>
+          Try it as a student
+        </Button>
+        <span className="text-xs text-graphite">Edit it by hand, or ask your agent to update this question.</span>
+      </div>
+    </div>
   );
 }

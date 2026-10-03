@@ -7,10 +7,13 @@ import { Cross, Plus } from "@/components/ui/icons";
 import { errorMessage } from "@/lib/errors";
 import { TYPE_LABEL, type QuestionInput, type QuestionType, type QuestionWithKey } from "./types";
 
+/** Code tasks come from an agent (a task builder comes later), not this form. */
+type HandType = Exclude<QuestionType, "code">;
+
 type Option = { text: string; correct: boolean };
 
 type Draft = {
-  type: QuestionType;
+  type: HandType;
   prompt: string;
   points: string;
   explanation: string;
@@ -20,9 +23,11 @@ type Draft = {
   rubric: string;
 };
 
-const TYPES = (Object.keys(TYPE_LABEL) as QuestionType[]).map((value) => ({ value, label: TYPE_LABEL[value] }));
+const TYPES = (Object.keys(TYPE_LABEL) as QuestionType[])
+  .filter((value): value is HandType => value !== "code")
+  .map((value) => ({ value, label: TYPE_LABEL[value] }));
 
-const TYPE_HINT: Record<QuestionType, string> = {
+const TYPE_HINT: Record<HandType, string> = {
   single: "Students pick one option. Marked automatically.",
   multiple: "Students tick every option they think is right. Marked automatically.",
   short: "Students type a word or short phrase, matched against your accepted answers.",
@@ -44,7 +49,7 @@ function fromQuestion(question: QuestionWithKey): Draft {
     key.type === "single" ? [key.correctOptionId] : key.type === "multiple" ? key.correctOptionIds : [],
   );
   return {
-    type: question.type,
+    type: question.type === "code" ? "essay" : question.type,
     prompt: question.prompt,
     points: String(question.points),
     explanation: question.explanation ?? "",
@@ -86,7 +91,7 @@ export function QuestionForm({
   onCancel,
 }: {
   question?: QuestionWithKey;
-  defaultType?: QuestionType;
+  defaultType?: HandType;
   onSubmit: (input: QuestionInput) => Promise<void>;
   onCancel: () => void;
 }) {

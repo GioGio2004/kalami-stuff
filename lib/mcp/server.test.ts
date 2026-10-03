@@ -53,6 +53,7 @@ describe("MCP server", () => {
     const names = (result?.tools as { name: string }[]).map((tool) => tool.name).sort();
     expect(names).toEqual([
       "add_questions",
+      "check_code_task",
       "create_assessment",
       "create_course",
       "delete_question",

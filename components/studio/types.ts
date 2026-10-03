@@ -23,6 +23,7 @@ export type NewAssessmentArgs = Omit<FunctionArgs<typeof api.assessments.create>
 export type UpdateAssessmentArgs = Omit<FunctionArgs<typeof api.assessments.update>, "assessmentId">;
 
 export const KIND_LABEL: Record<AssessmentKind, string> = {
+  task: "Task",
   quiz: "Quiz",
   midterm: "Midterm",
   final: "Final exam",
@@ -33,6 +34,7 @@ export const TYPE_LABEL: Record<QuestionType, string> = {
   multiple: "Multiple choice",
   short: "Short answer",
   essay: "Essay",
+  code: "Code task",
 };
 
 export const INTEGRITY_LABEL: Record<AssessmentSettings["integrityLevel"], string> = {

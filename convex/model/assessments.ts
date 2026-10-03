@@ -59,6 +59,15 @@ export function toAssessment(doc: Doc<"assessments">) {
 /** What a new quiz or exam starts with; the lecturer can change all of it. */
 export function defaultSettings(kind: AssessmentKind): AssessmentSettings {
   switch (kind) {
+    case "task":
+      // Homework in the code sandbox: no timer, one submission, the score straight after.
+      return {
+        attemptsAllowed: 1,
+        shuffleQuestions: false,
+        shuffleOptions: false,
+        integrityLevel: "standard",
+        resultsVisibility: "score",
+      };
     case "quiz":
       return {
         attemptsAllowed: 1,
@@ -113,9 +122,9 @@ export function validateSettings(settings: AssessmentSettings): AssessmentSettin
   return settings;
 }
 
-const KIND_ORDER: Record<AssessmentKind, number> = { quiz: 0, midterm: 1, final: 2 };
+const KIND_ORDER: Record<AssessmentKind, number> = { task: 0, quiz: 1, midterm: 2, final: 3 };
 
-/** A course's assessments: quizzes first, then the midterm, then the final. */
+/** A course's assessments: tasks and quizzes first, then the midterm, then the final. */
 export async function listAssessmentsIn(ctx: QueryCtx, courseId: Id<"courses">) {
   const rows = await ctx.db
     .query("assessments")

@@ -31,6 +31,7 @@ export const courseRoleValidator = v.union(
 );
 
 export const courseCountsValidator = v.object({
+  tasks: v.number(),
   quizzes: v.number(),
   midterms: v.number(),
   finals: v.number(),
@@ -72,12 +73,13 @@ async function assessmentCounts(ctx: QueryCtx, courseId: Id<"courses">) {
     .query("assessments")
     .withIndex("by_courseId", (q) => q.eq("courseId", courseId))
     .take(500);
-  const counts = { quizzes: 0, midterms: 0, finals: 0, drafts: 0, published: 0 };
+  const counts = { tasks: 0, quizzes: 0, midterms: 0, finals: 0, drafts: 0, published: 0 };
   for (const row of rows) {
     if (row.status === "archived") {
       continue;
     }
-    if (row.kind === "quiz") counts.quizzes++;
+    if (row.kind === "task") counts.tasks++;
+    else if (row.kind === "quiz") counts.quizzes++;
     else if (row.kind === "midterm") counts.midterms++;
     else counts.finals++;
     if (row.status === "draft") counts.drafts++;

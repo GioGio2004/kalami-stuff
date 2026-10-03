@@ -2,6 +2,12 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import {
   answerKeyValidator,
+  attemptStatusValidator,
+  checkOutcomeValidator,
+  codeTaskValidator,
+  integrityCountsValidator,
+  enrollmentStatusValidator,
+  responseValueValidator,
   assessmentKindValidator,
   assessmentSettingsValidator,
   assessmentStatusValidator,
@@ -142,6 +148,8 @@ export default defineSchema({
     options: v.optional(v.array(optionValidator)),
     // Shown with full results after the assessment closes.
     explanation: v.optional(v.string()),
+    // Only for code questions: starter files, steps with their visible checks, images.
+    code: v.optional(codeTaskValidator),
     createdVia: viaValidator,
   }).index("by_assessmentId_and_order", ["assessmentId", "order"]),
 
@@ -153,6 +161,77 @@ export default defineSchema({
   })
     .index("by_questionId", ["questionId"])
     .index("by_assessmentId", ["assessmentId"]),
+
+  // -------------------------------------------------------------------------
+  // Students
+  // -------------------------------------------------------------------------
+
+  // A student in a course, after typing its join code.
+  enrollments: defineTable({
+    courseId: v.id("courses"),
+    userId: v.id("users"),
+    status: enrollmentStatusValidator,
+    enrolledAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_courseId", ["courseId"])
+    .index("by_courseId_and_userId", ["courseId", "userId"]),
+
+  // One student working on one assessment. Created on the first save.
+  attempts: defineTable({
+    assessmentId: v.id("assessments"),
+    courseId: v.id("courses"),
+    userId: v.id("users"),
+    number: v.number(),
+    status: attemptStatusValidator,
+    startedAt: v.number(),
+    submittedAt: v.optional(v.number()),
+    score: v.optional(v.number()),
+    maxScore: v.number(),
+    integrity: integrityCountsValidator,
+    // Submitted by the server when the task closed, not by the student.
+    autoSubmitted: v.optional(v.boolean()),
+    // Grading: the lecturer's overall note and, if they change it, the score that counts.
+    feedback: v.optional(v.string()),
+    manualScore: v.optional(v.number()),
+    gradedAt: v.optional(v.number()),
+    gradedBy: v.optional(v.id("users")),
+  })
+    .index("by_userId_and_assessmentId", ["userId", "assessmentId"])
+    .index("by_assessmentId", ["assessmentId"])
+    .index("by_status", ["status"]),
+
+  // What a student saved for one question of an attempt (autosaved while they work).
+  responses: defineTable({
+    attemptId: v.id("attempts"),
+    questionId: v.id("questions"),
+    userId: v.id("users"),
+    value: responseValueValidator,
+    // Code: the first step with a failing check, and the visible checks that pass.
+    progress: v.optional(v.object({ step: v.number(), passed: v.array(v.string()) })),
+    savedAt: v.number(),
+    // Written by the server on submit, from every check including hidden ones.
+    checkResults: v.optional(v.array(checkOutcomeValidator)),
+    autoScore: v.optional(v.number()),
+  }).index("by_attemptId_and_questionId", ["attemptId", "questionId"]),
+
+  // Red-pen notes a lecturer leaves on a line of a student's code.
+  codeComments: defineTable({
+    attemptId: v.id("attempts"),
+    questionId: v.id("questions"),
+    file: v.string(),
+    line: v.number(),
+    text: v.string(),
+    authorId: v.id("users"),
+    createdAt: v.number(),
+  }).index("by_attemptId", ["attemptId"]),
+
+  // Wrong join codes per student, so codes can't be guessed by trying many.
+  joinAttempts: defineTable({
+    userId: v.id("users"),
+    windowStart: v.number(),
+    failures: v.number(),
+  }).index("by_userId", ["userId"]),
 
   // Personal access tokens for the MCP connector. Only the SHA-256 of a token is
   // stored; the token itself is shown once when created.

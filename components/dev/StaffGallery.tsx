@@ -18,7 +18,6 @@ import type {
   CourseDetail,
   CourseSummary,
   QuestionWithKey,
-  TokenRow,
 } from "@/components/studio/types";
 import { LoadingScreen } from "@/components/ui/StatusScreen";
 
@@ -278,11 +277,6 @@ const courseDetail: CourseDetail = {
   ],
 };
 
-const tokens: TokenRow[] = [
-  { _id: "t1" as TokenRow["_id"], _creationTime: NOW - 3 * DAY, name: "Claude Code on my laptop", prefix: "klm_1a2b3c", lastUsedAt: NOW - 2 * 60 * 1000, revokedAt: undefined },
-  { _id: "t2" as TokenRow["_id"], _creationTime: NOW - 30 * DAY, name: "Old desktop", prefix: "klm_9f8e7d", lastUsedAt: NOW - 20 * DAY, revokedAt: NOW - 10 * DAY },
-];
-
 const fakeAvatar = (
   <span className="grid size-10 place-items-center rounded-full bg-highlighter text-sm font-semibold">GK</span>
 );
@@ -311,7 +305,7 @@ const views: Record<string, string> = {
   "studio-intro": "Studio · first-visit intro card",
   course: "Studio · course page",
   builder: "Studio · assessment builder",
-  agents: "Agents · MCP tokens and setup",
+  agents: "Agents · connect an MCP client",
   admin: "Admin · super admin",
   "admin-empty": "Admin · no universities yet",
   "invite-signed-out": "Invite · signed out",
@@ -397,16 +391,7 @@ export function StaffGallery({ view }: { view?: string }) {
         />,
       );
     case "agents":
-      return staffPage(
-        <AgentsView
-          tokens={tokens}
-          onCreateToken={async () => {
-            await pause();
-            return "klm_0123456789abcdef0123456789abcdef01234567";
-          }}
-          onRevokeToken={pause}
-        />,
-      );
+      return staffPage(<AgentsView />);
     case "admin":
       return staffPage(
         <AdminView isSuperAdmin universities={[gori]} onCreateUniversity={pause} renderInvites={() => board} />,

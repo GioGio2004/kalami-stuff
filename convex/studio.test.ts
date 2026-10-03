@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import type { UserIdentity } from "convex/server";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { HONESTY_NOTICE } from "./lib/honestyNotice";
@@ -9,6 +9,26 @@ import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
 const ISSUER = "https://test.clerk.accounts.dev";
+const SECRET = "test-service-secret-0123456789abcdef";
+
+beforeEach(() => vi.stubEnv("MCP_SERVICE_SECRET", SECRET));
+afterEach(() => vi.unstubAllEnvs());
+
+const b64url = (bytes: Uint8Array) =>
+  btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+/**
+ * What the staff app's lib/mcp/oauth.ts serviceCredential() sends Convex after
+ * a lecturer signs in with Kalami in their assistant.
+ */
+async function credential(clerkUserId: string, { expiresIn = 60_000, secret = SECRET } = {}) {
+  const payload = b64url(new TextEncoder().encode(JSON.stringify({ u: clerkUserId, e: Date.now() + expiresIn })));
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, [
+    "sign",
+  ]);
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)));
+  return `svc.${payload}.${b64url(signature)}`;
+}
 
 function person(name: string, claims: Record<string, unknown> = {}): Partial<UserIdentity> {
   return {
@@ -137,10 +157,11 @@ describe("courses", () => {
   });
 
   test("students can't use the studio at all", async () => {
-    const { ana } = await setup();
+    const { t, ana } = await setup();
     await expectAppError(ana.query(api.courses.listMine, {}), "FORBIDDEN");
     await expectAppError(ana.mutation(api.courses.create, { title: "Nope" }), "FORBIDDEN");
-    await expectAppError(ana.mutation(api.mcpTokens.create, { name: "Nope" }), "FORBIDDEN");
+    // Signing in with Kalami in an assistant doesn't help either.
+    expect(await t.query(api.mcp.whoami, { token: await credential("ana") })).toBeNull();
   });
 
   test("who can see and edit a course", async () => {
@@ -370,7 +391,7 @@ describe("assessments and questions", () => {
       title: "Quiz",
     });
     const [questionId] = await nino.mutation(api.questions.add, { assessmentId, questions: [single] });
-    const { token } = await nino.mutation(api.mcpTokens.create, { name: "Agent" });
+    const token = await credential("nino");
 
     await nino.mutation(api.courses.update, { courseId, status: "archived" });
     await expectAppError(
@@ -408,11 +429,10 @@ describe("assessments and questions", () => {
 });
 
 describe("MCP connector", () => {
-  test("a token acts as its owner, is audited as the agent, and dies when revoked", async () => {
+  test("a signed-in lecturer's agent acts as them, is audited as the agent, and stops with the staff role", async () => {
     const { t, nino } = await setup();
     const courseId = await nino.mutation(api.courses.create, { title: "Web basics" });
-    const { tokenId, token } = await nino.mutation(api.mcpTokens.create, { name: "Claude Code" });
-    expect(token).toMatch(/^klm_[0-9a-f]{40}$/);
+    const token = await credential("nino");
 
     const me = await t.query(api.mcp.whoami, { token });
     expect(me).toMatchObject({ email: "nino@example.com", isSuperAdmin: false });
@@ -433,11 +453,15 @@ describe("MCP connector", () => {
     const activity = await nino.query(api.audit.recentForMe, {});
     expect(activity[0]).toMatchObject({ via: "mcp", action: "question.add", mine: true });
 
-    const tokens = await nino.query(api.mcpTokens.list, {});
-    expect(tokens[0]).toMatchObject({ _id: tokenId, name: "Claude Code", prefix: token.slice(0, 10) });
-    expect(tokens[0].lastUsedAt).toBeDefined();
-
-    await nino.mutation(api.mcpTokens.revoke, { tokenId });
+    // Losing the staff role cuts the agent off on its next call.
+    await t.run(async (ctx) => {
+      for (const membership of await ctx.db
+        .query("memberships")
+        .withIndex("by_userId", (q) => q.eq("userId", me!.userId))
+        .take(10)) {
+        await ctx.db.delete("memberships", membership._id);
+      }
+    });
     expect(await t.query(api.mcp.whoami, { token })).toBeNull();
     await expectAppError(
       t.mutation(api.mcp.addQuestionsAsAgent, { token, assessmentId, questions: [short] }),
@@ -445,23 +469,40 @@ describe("MCP connector", () => {
     );
   });
 
-  test("tokens are scoped to their owner's courses and can't be revoked by others", async () => {
-    const { t, nino, luka } = await setup();
+  test("an agent only reaches its own lecturer's courses", async () => {
+    const { t, nino } = await setup();
     const courseId = await nino.mutation(api.courses.create, { title: "Nino's course" });
-    const { tokenId, token } = await luka.mutation(api.mcpTokens.create, { name: "Luka's agent" });
     await expectAppError(
-      t.mutation(api.mcp.createAssessmentAsAgent, { token, courseId, kind: "quiz", title: "x" }),
+      t.mutation(api.mcp.createAssessmentAsAgent, { token: await credential("luka"), courseId, kind: "quiz", title: "x" }),
       "NOT_FOUND",
     );
-    await expectAppError(nino.mutation(api.mcpTokens.revoke, { tokenId }), "NOT_FOUND");
-    expect(await t.query(api.mcp.whoami, { token: "klm_not_a_real_token" })).toBeNull();
+  });
+
+  test("forged, expired, unknown and retired credentials get nothing", async () => {
+    const { t } = await setup();
+    expect(await t.query(api.mcp.whoami, { token: await credential("nino", { secret: "wrong" }) })).toBeNull();
+    expect(await t.query(api.mcp.whoami, { token: await credential("nino", { expiresIn: -1 }) })).toBeNull();
+    expect(await t.query(api.mcp.whoami, { token: await credential("nobody") })).toBeNull();
+    // One person's signature on another person's payload.
+    const [prefix, , signature] = (await credential("nino")).split(".");
+    const otherPayload = (await credential("admin")).split(".")[1];
+    expect(await t.query(api.mcp.whoami, { token: `${prefix}.${otherPayload}.${signature}` })).toBeNull();
+    // The personal tokens Kalami used to hand out.
+    expect(await t.query(api.mcp.whoami, { token: "klm_0123456789abcdef0123456789abcdef01234567" })).toBeNull();
     expect(await t.query(api.mcp.whoami, { token: "" })).toBeNull();
+  });
+
+  test("without the secret configured, no credential works", async () => {
+    const { t } = await setup();
+    const token = await credential("nino");
+    vi.stubEnv("MCP_SERVICE_SECRET", "");
+    expect(await t.query(api.mcp.whoami, { token })).toBeNull();
   });
 
   test("agents can only edit drafts; people can still edit published assessments", async () => {
     const { t, nino } = await setup();
     const courseId = await nino.mutation(api.courses.create, { title: "Web basics" });
-    const { token } = await nino.mutation(api.mcpTokens.create, { name: "Agent" });
+    const token = await credential("nino");
     const assessmentId = await t.mutation(api.mcp.createAssessmentAsAgent, {
       token,
       courseId,
@@ -499,73 +540,26 @@ describe("MCP connector", () => {
     expect((await t.query(api.mcp.getAssessment, { token, assessmentId })).canEdit).toBe(true);
   });
 
-  test("lastUsedAt is written at most once a minute", async () => {
-    const { t, nino } = await setup();
-    const { tokenId, token } = await nino.mutation(api.mcpTokens.create, { name: "Agent" });
-    const lastUsed = async () => (await t.run((ctx) => ctx.db.get("mcpTokens", tokenId)))!.lastUsedAt;
-
-    await t.mutation(api.mcp.createCourseAsAgent, { token, title: "One" });
-    const first = await lastUsed();
-    expect(first).toBeDefined();
-    await t.mutation(api.mcp.createCourseAsAgent, { token, title: "Two" });
-    expect(await lastUsed()).toBe(first);
-
-    const stale = Date.now() - 2 * 60_000;
-    await t.run((ctx) => ctx.db.patch("mcpTokens", tokenId, { lastUsedAt: stale }));
-    await t.mutation(api.mcp.createCourseAsAgent, { token, title: "Three" });
-    expect(await lastUsed()).toBeGreaterThan(stale);
-  });
-
-  test("the active-token limit counts every active token, not just the oldest rows", async () => {
-    const { t, nino } = await setup();
-    const userId = (await nino.query(api.users.me, {}))!._id;
-    // 120 revoked tokens first, so a scan of the oldest 100 would see no active ones.
-    await t.run(async (ctx) => {
-      for (let i = 0; i < 120; i++) {
-        await ctx.db.insert("mcpTokens", {
-          userId,
-          name: `old ${i}`,
-          tokenHash: `revoked-${i}`,
-          prefix: "klm_old",
-          revokedAt: 1,
-        });
-      }
-    });
-    const created = [];
-    for (let i = 0; i < 10; i++) {
-      created.push(await nino.mutation(api.mcpTokens.create, { name: `Agent ${i}` }));
-    }
-    await expectAppError(nino.mutation(api.mcpTokens.create, { name: "Eleventh" }), "CONFLICT");
-    await nino.mutation(api.mcpTokens.revoke, { tokenId: created[0].tokenId });
-    await nino.mutation(api.mcpTokens.create, { name: "Replacement" });
-  });
-
-  test("deleting a user in Clerk removes their tokens and course staff seats", async () => {
+  test("deleting a user in Clerk removes their course staff seats and their agent's access", async () => {
     const { t, nino } = await setup();
     const userId = (await nino.query(api.users.me, {}))!._id;
     await nino.mutation(api.courses.create, { title: "Web basics" });
-    const { tokenId, token } = await nino.mutation(api.mcpTokens.create, { name: "Agent" });
-    await nino.mutation(api.mcpTokens.revoke, { tokenId });
-    await nino.mutation(api.mcpTokens.create, { name: "Agent 2" });
+    const token = await credential("nino");
+    expect(await t.query(api.mcp.whoami, { token })).not.toBeNull();
 
     // A repeat delivery falls back to the issuer-based lookup, which needs this.
     vi.stubEnv("CLERK_FRONTEND_API_URL", ISSUER);
     await t.mutation(internal.users.deleteFromClerk, { clerkUserId: "nino" });
     await t.mutation(internal.users.deleteFromClerk, { clerkUserId: "nino" });
-    vi.unstubAllEnvs();
 
     const leftovers = await t.run(async (ctx) => ({
       user: await ctx.db.get("users", userId),
-      tokens: await ctx.db
-        .query("mcpTokens")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .take(10),
       seats: await ctx.db
         .query("courseStaff")
         .withIndex("by_userId", (q) => q.eq("userId", userId))
         .take(10),
     }));
-    expect(leftovers).toEqual({ user: null, tokens: [], seats: [] });
+    expect(leftovers).toEqual({ user: null, seats: [] });
     expect(await t.query(api.mcp.whoami, { token })).toBeNull();
   });
 

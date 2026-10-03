@@ -33,7 +33,6 @@ import type * as lib_integrity from "../lib/integrity.js";
 import type * as lib_tokens from "../lib/tokens.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as mcp from "../mcp.js";
-import type * as mcpTokens from "../mcpTokens.js";
 import type * as model_assessments from "../model/assessments.js";
 import type * as model_audit from "../model/audit.js";
 import type * as model_codeTasks from "../model/codeTasks.js";
@@ -77,7 +76,6 @@ declare const fullApi: ApiFromModules<{
   "lib/tokens": typeof lib_tokens;
   "lib/validators": typeof lib_validators;
   mcp: typeof mcp;
-  mcpTokens: typeof mcpTokens;
   "model/assessments": typeof model_assessments;
   "model/audit": typeof model_audit;
   "model/codeTasks": typeof model_codeTasks;

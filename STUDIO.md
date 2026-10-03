@@ -16,7 +16,7 @@
 | Dashboard with course cards and recent activity | ✅ | `components/studio/StudioDashboard.tsx` |
 | First-visit intro card (how it works + how to connect an agent) | ✅ | `components/studio/StudioIntro.tsx` |
 | MCP connector for personal agents | ✅ | `app/api/mcp/route.ts`, `convex/mcp.ts` |
-| Agents page: personal tokens + setup snippets per client | ✅ | `/agents` |
+| Agents page: sign-in setup steps per client | ✅ | `/agents` |
 | Audit log of every change, marked web or agent | ✅ | `convex/audit.ts` |
 | Access: lecturers, university admins, super admin only | ✅ | `convex/lib/access.ts` |
 | Tests for roles, validation and the token flow | ✅ | `convex/studio.test.ts` |
@@ -59,7 +59,6 @@ assessments    courseId, kind (quiz|midterm|final), title, instructions?, status
                questionCount, totalPoints (denormalised), createdBy, createdVia, publishedAt?
 questions      assessmentId, courseId, order, type, prompt, points, options?[{id,text}], explanation?
 answerKeys     questionId, assessmentId, key (single | multiple | short | essay)
-mcpTokens      userId, name, tokenHash (SHA-256), prefix, lastUsedAt?, revokedAt?
 auditLog       actorId, via (web|mcp), action, targetTable, targetId, courseId?, summary, at
 users          + studioIntroSeenAt?
 ```
@@ -73,27 +72,29 @@ of it.
 ## 4. The MCP connector
 
 **Endpoint:** `https://staff.kalami.space/api/mcp` (Streamable HTTP, stateless).
-**Auth, two ways, both ending in the same staff-only checks in Convex:**
+**Auth: Sign in with Kalami (OAuth), for every client.** One address for everyone; each
+lecturer signs in with their own account in their assistant and presses Allow, so there is
+no token or link to copy, share or leak.
 
-- **Sign in with Kalami (OAuth)** for claude.ai, ChatGPT and other web assistants. Clerk is
-  the authorization server (CIMD and dynamic client registration switched on in Clerk →
-  OAuth applications → Settings). The lecturer signs in with their own account and presses
-  Allow; nothing to copy or leak. `/api/mcp` answers 401 with `resource_metadata` →
-  `/.well-known/oauth-protected-resource` (also under `/api/mcp`) → Clerk
-  (`/.well-known/oauth-authorization-server` is mirrored on our origin). The route checks
-  the Clerk access token (`lib/mcp/oauth.ts`) and hands Convex a 10-minute
-  `svc.<payload>.<HMAC>` credential naming the Clerk user, signed with
-  `MCP_SERVICE_SECRET` (set on Convex dev/prod and on the staff app in Vercel). Convex
-  verifies it and still refuses non-staff, so a student who signs in gets nothing.
-- **Personal token** `Authorization: Bearer klm_…`, created on `/agents`, for clients with
-  config files (Claude Code, Cursor, VS Code…). Hashed in Convex on every call; revoking it
-  stops the agent on its next call.
+- Clerk is the authorization server (CIMD and dynamic client registration switched on in
+  Clerk → OAuth applications → Settings). `/api/mcp` answers 401 with `resource_metadata`
+  → `/.well-known/oauth-protected-resource` (also under `/api/mcp`) → Clerk
+  (`/.well-known/oauth-authorization-server` is mirrored on our origin).
+- The route checks the Clerk access token (`lib/mcp/oauth.ts`) and hands Convex a
+  10-minute `svc.<payload>.<HMAC>` credential naming the Clerk user, signed with
+  `MCP_SERVICE_SECRET`. That secret is server-to-server only, set once on Convex dev/prod,
+  in the staff app's `.env.local` and in Vercel; lecturers never see it.
+- Convex verifies the credential and still refuses non-staff, so a student who signs in
+  gets nothing, and a lecturer who loses the role is cut off on the next call.
+- To disconnect an agent, the lecturer removes Kalami in that app's settings.
 
-The old secret links (`/api/mcp/k/klm_…`) are retired and answer 410.
+Retired: personal `klm_` tokens (the `mcpTokens` table, created on `/agents`) and the secret
+links (`/api/mcp/k/klm_…`, which answer 410). Old tokens no longer work anywhere. Any
+leftover `mcpTokens` rows are inert and can be deleted in the Convex dashboard.
 
 | Tool | Does |
 |---|---|
-| `whoami` | who the token acts for, their roles, the universities they can create in |
+| `whoami` | who signed in, their roles, the universities they can create in |
 | `list_courses`, `get_course`, `create_course` | courses the person can edit |
 | `create_assessment`, `update_assessment`, `get_assessment` | drafts; settings; questions with keys |
 | `add_questions` (≤ 50 per call), `update_question`, `delete_question`, `reorder_questions` | the heavy lifting |
@@ -102,25 +103,25 @@ Not exposed on purpose: publish, archive, delete, anything about students, attem
 grades. The server's `instructions` tell the agent to ask the lecturer to review and
 publish in the dashboard.
 
-Client recipes (also shown on `/agents` with the real token filled in):
+Client recipes (all on `/agents`, step by step). Each one only needs the address; the
+client then opens Kalami's sign-in page:
 
 ```bash
-# Claude Code
-claude mcp add --transport http kalami https://staff.kalami.space/api/mcp \
-  --header "Authorization: Bearer klm_…"
+# Claude Code: add once, then /mcp → kalami → Authenticate
+claude mcp add --transport http kalami https://staff.kalami.space/api/mcp
 ```
 
 ```json
-// Cursor (.cursor/mcp.json)
-{ "mcpServers": { "kalami": { "url": "https://staff.kalami.space/api/mcp",
-                              "headers": { "Authorization": "Bearer klm_…" } } } }
+// Cursor (.cursor/mcp.json): then log in from Cursor Settings → MCP
+{ "mcpServers": { "kalami": { "url": "https://staff.kalami.space/api/mcp" } } }
 ```
 
-Claude Desktop goes through `mcp-remote` with the same `--header`. VS Code uses
+claude.ai / Claude Desktop: Settings → Connectors → Add custom connector, Authentication
+"Sign in now", OAuth client "Use Claude's published identity". VS Code uses
 `.vscode/mcp.json` with `"type": "http"`.
 
-**Later:** a rate limit per token and per OAuth user (`@convex-dev/rate-limiter`) before
-the pilot opens to other lecturers.
+**Later:** a rate limit per OAuth user (`@convex-dev/rate-limiter`) before the pilot opens
+to other lecturers.
 
 ---
 
@@ -186,17 +187,17 @@ functions as MCP).
 # backend + staff app (kalami-stuff)
 npm run dev:backend     # convex dev, pushes functions on save
 npm run dev             # Next.js on :3101
-npm test                # convex-test suite (roles, validation, MCP tokens)
+npm test                # convex-test suite (roles, validation, MCP sign-in)
 npm run api:student     # regenerate ../kalami/convex-api/api.ts after backend changes
 ```
 
 Screens with sample data, no account needed: `/dev/ui` (development only).
 
-Smoke-test the connector with any MCP client, or by hand:
+Smoke-test the connector with any MCP client (it signs you in). By hand, check discovery:
+`/api/mcp` without a token must answer 401 with a `resource_metadata` link, and
+`/.well-known/oauth-protected-resource` must name `https://clerk.kalami.space`.
 
 ```bash
-curl -s https://staff.kalami.space/api/mcp -X POST \
-  -H "Authorization: Bearer klm_…" -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+curl -si https://staff.kalami.space/api/mcp -X POST | grep -i www-authenticate
+curl -s https://staff.kalami.space/.well-known/oauth-protected-resource
 ```

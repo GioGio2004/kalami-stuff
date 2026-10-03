@@ -14,10 +14,10 @@ beforeAll(async () => {
   server = await import("./server");
 });
 
-const authInfo = { token: "klm_test", clientId: "user_1", scopes: ["studio"], extra: { origin: "https://staff.test" } };
+const authInfo = { token: "svc.test", clientId: "user_1", scopes: ["openid"], extra: { origin: "https://staff.test" } };
 
 function rpc(id: number, method: string, params: Record<string, unknown> = {}): Request {
-  return new Request("https://staff.test/api/mcp/k/klm_test", {
+  return new Request("https://staff.test/api/mcp", {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
     body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),

@@ -98,8 +98,8 @@ export const upsertFromClerk = internalMutation({
 const DELETE_BATCH = 200;
 
 /**
- * Clerk `user.deleted`: removes the person, their roles, their agent tokens and
- * their seats on course staff. Safe to receive twice.
+ * Clerk `user.deleted`: removes the person, their roles and their seats on
+ * course staff. Safe to receive twice.
  */
 export const deleteFromClerk = internalMutation({
   args: { clerkUserId: v.string() },
@@ -114,21 +114,7 @@ export const deleteFromClerk = internalMutation({
     for (const membership of await getMemberships(ctx, user._id)) {
       await ctx.db.delete("memberships", membership._id);
     }
-    // Tokens die with the account (actorFromToken already refuses them, but a
-    // row pointing at a missing user shouldn't linger). Batched because revoked
-    // tokens accumulate; deletes are visible to the next take in this mutation.
-    for (;;) {
-      const tokens = await ctx.db
-        .query("mcpTokens")
-        .withIndex("by_userId", (q) => q.eq("userId", user._id))
-        .take(DELETE_BATCH);
-      for (const token of tokens) {
-        await ctx.db.delete("mcpTokens", token._id);
-      }
-      if (tokens.length < DELETE_BATCH) {
-        break;
-      }
-    }
+    // Batched; deletes are visible to the next take in this mutation.
     for (;;) {
       const seats = await ctx.db
         .query("courseStaff")

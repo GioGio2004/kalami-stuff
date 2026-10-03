@@ -11,12 +11,11 @@ import type { Id } from "@/convex/_generated/dataModel";
  * Kalami's MCP connector: lets a lecturer's own AI agent (Claude, ChatGPT,
  * Cursor, …) draft courses, quizzes and exams for them.
  *
- * Auth on /api/mcp, two ways: web assistants (claude.ai, ChatGPT) use "Sign in
- * with Kalami", OAuth through Clerk (see oauth.ts); clients with config files
- * use a personal token from /agents as `Authorization: Bearer klm_…`. Either
- * way Convex checks the person is staff on every call, so revoking access cuts
- * the agent off immediately. Agents only edit drafts; publishing stays a human
- * click in the dashboard.
+ * Auth on /api/mcp is "Sign in with Kalami": OAuth through Clerk (see
+ * oauth.ts), so each lecturer signs in with their own account in their
+ * assistant and there are no keys to hand around. Convex checks the person is
+ * staff on every call, so losing the role cuts the agent off immediately.
+ * Agents only edit drafts; publishing stays a human click in the dashboard.
  */
 
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -300,13 +299,13 @@ const handler = createMcpHandler(
       {
         title: "Who am I",
         description:
-          "The lecturer this token belongs to, their roles, and the universities they can create courses in.",
+          "The signed-in lecturer, their roles, and the universities they can create courses in.",
         inputSchema: z.object({}),
       },
       async (_args, ctx) =>
         run(async () => {
           const me = await convex.query(api.mcp.whoami, { token: tokenOf(ctx) });
-          return me ?? "This token is invalid or was revoked.";
+          return me ?? "Not signed in to Kalami as staff. Reconnect Kalami and sign in again.";
         }),
     );
 
@@ -536,31 +535,23 @@ const handler = createMcpHandler(
 );
 
 /**
- * Checks the bearer token of an MCP request. Two kinds are accepted:
- * - a personal token (klm_…) from the Agents page, for clients with config files
- *   (Claude Code, Cursor, …);
- * - a Clerk OAuth access token, from "Sign in with Kalami" (claude.ai, ChatGPT).
- *   It becomes a short signed credential that tells Convex which Clerk user this is.
- * Either way Convex decides whether the person is staff: a student who signs in
- * gets undefined here, so a 401.
+ * Checks the bearer token of an MCP request: a Clerk OAuth access token from
+ * "Sign in with Kalami". It becomes a short signed credential that tells Convex
+ * which Clerk user this is, and Convex decides whether the person is staff: a
+ * student who signs in gets undefined here, so a 401.
  */
 export async function verifyToken(req: Request, token: string | undefined): Promise<AuthInfo | undefined> {
   if (!token) {
     return undefined;
   }
-  let credential = token;
-  let scopes = ["studio"];
-  if (!token.startsWith("klm_")) {
-    const oauth = await verifyOAuthToken(req).catch((error: unknown) => {
-      console.error("MCP OAuth token check failed", error);
-      return null;
-    });
-    if (oauth === null) {
-      return undefined;
-    }
-    credential = await serviceCredential(oauth.userId);
-    scopes = oauth.scopes;
+  const oauth = await verifyOAuthToken(req).catch((error: unknown) => {
+    console.error("MCP OAuth token check failed", error);
+    return null;
+  });
+  if (oauth === null) {
+    return undefined;
   }
+  const credential = await serviceCredential(oauth.userId);
   const me = await convex.query(api.mcp.whoami, { token: credential });
   if (me === null) {
     return undefined;
@@ -568,7 +559,7 @@ export async function verifyToken(req: Request, token: string | undefined): Prom
   return {
     token: credential,
     clientId: me.userId,
-    scopes,
+    scopes: oauth.scopes,
     extra: { email: me.email, origin: publicOrigin(req) },
   };
 }

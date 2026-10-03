@@ -1,14 +1,14 @@
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
+import type { QueryCtx } from "../_generated/server";
 import { getMemberships, isStaffRole, isSuperAdmin, requireUser, userByClerkUserId } from "./auth";
 import { appError } from "./errors";
-import { hashToken, looksLikeToken, SERVICE_CREDENTIAL_PREFIX, verifyServiceCredential } from "./tokens";
+import { verifyServiceCredential } from "./tokens";
 import type { Via } from "./validators";
 
 /**
  * Who is acting, resolved once per function call. The studio's model functions
  * take an Actor so the same code serves the web app (Clerk session) and the MCP
- * connector (personal access token). Both paths end in the same role checks.
+ * connector (Sign in with Kalami). Both paths end in the same role checks.
  */
 export type Actor = {
   user: Doc<"users">;
@@ -32,80 +32,30 @@ export async function requireStaffActor(ctx: QueryCtx): Promise<Actor> {
 }
 
 /**
- * The owner of a personal access token, if it is valid, live and still belongs
- * to a staff member. The token is the credential: a revoked token, a deleted
- * account or a lost staff role all make it stop working at once.
+ * The staff member an MCP request acts for. The lecturer signed in with Kalami
+ * (Clerk OAuth) in their assistant; the staff app checked that access token and
+ * sent `token`, a short-lived credential naming the Clerk user, signed with
+ * MCP_SERVICE_SECRET. A forged or expired credential, a deleted account or a
+ * lost staff role all get null.
  */
 export async function actorFromToken(ctx: QueryCtx, token: string): Promise<Actor | null> {
-  return (await resolveToken(ctx, token))?.actor ?? null;
-}
-
-/**
- * The actor and the token row it came from, so callers don't hash and look up
- * twice. A "Sign in with Kalami" (OAuth) request has no row: the staff app
- * checked the Clerk token and sent a signed credential naming the Clerk user.
- */
-async function resolveToken(
-  ctx: QueryCtx,
-  token: string,
-): Promise<{ actor: Actor; row: Doc<"mcpTokens"> | null } | null> {
-  if (token.startsWith(SERVICE_CREDENTIAL_PREFIX)) {
-    const clerkUserId = await verifyServiceCredential(token);
-    const user = clerkUserId === null ? null : await userByClerkUserId(ctx, clerkUserId);
-    if (user === null) {
-      return null;
-    }
-    const memberships = await getMemberships(ctx, user._id);
-    // Students can sign in to Clerk too; only staff get the tools.
-    if (!canCreateCourses(memberships)) {
-      return null;
-    }
-    return { actor: { user, memberships, via: "mcp" }, row: null };
-  }
-  if (!looksLikeToken(token)) {
-    return null;
-  }
-  const tokenHash = await hashToken(token);
-  const row = await ctx.db
-    .query("mcpTokens")
-    .withIndex("by_tokenHash", (q) => q.eq("tokenHash", tokenHash))
-    .unique();
-  if (row === null || row.revokedAt !== undefined) {
-    return null;
-  }
-  const user = await ctx.db.get("users", row.userId);
+  const clerkUserId = await verifyServiceCredential(token);
+  const user = clerkUserId === null ? null : await userByClerkUserId(ctx, clerkUserId);
   if (user === null) {
     return null;
   }
   const memberships = await getMemberships(ctx, user._id);
+  // Students can sign in to Clerk too; only staff get the tools.
   if (!canCreateCourses(memberships)) {
     return null;
   }
-  return { actor: { user, memberships, via: "mcp" }, row };
+  return { user, memberships, via: "mcp" };
 }
 
 export async function requireTokenActor(ctx: QueryCtx, token: string): Promise<Actor> {
   const actor = await actorFromToken(ctx, token);
   if (actor === null) {
-    throw appError("UNAUTHENTICATED", "This access token is invalid or was revoked.");
-  }
-  return actor;
-}
-
-// "Last used" only needs minute precision. Writing it on every call would make
-// an agent's back-to-back mutations conflict on the token row.
-const LAST_USED_RESOLUTION_MS = 60_000;
-
-/** Mutations also record that the token is in use; queries can't write. */
-export async function requireTokenActorAndTouch(ctx: MutationCtx, token: string): Promise<Actor> {
-  const resolved = await resolveToken(ctx, token);
-  if (resolved === null) {
-    throw appError("UNAUTHENTICATED", "This access token is invalid or was revoked.");
-  }
-  const { actor, row } = resolved;
-  const now = Date.now();
-  if (row !== null && (row.lastUsedAt === undefined || now - row.lastUsedAt > LAST_USED_RESOLUTION_MS)) {
-    await ctx.db.patch("mcpTokens", row._id, { lastUsedAt: now });
+    throw appError("UNAUTHENTICATED", "Not signed in to Kalami as staff. Reconnect Kalami in your assistant.");
   }
   return actor;
 }

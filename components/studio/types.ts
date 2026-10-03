@@ -14,7 +14,6 @@ export type AssessmentSettings = Assessment["settings"];
 export type AssessmentKind = Assessment["kind"];
 export type AssessmentStatus = Assessment["status"];
 export type AuditEntry = FunctionReturnType<typeof api.audit.recentForMe>[number];
-export type TokenRow = FunctionReturnType<typeof api.mcpTokens.list>[number];
 export type UniversityOption = FunctionReturnType<typeof api.courses.universitiesForNewCourse>[number];
 
 export type NewCourseArgs = FunctionArgs<typeof api.courses.create>;

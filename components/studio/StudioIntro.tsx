@@ -59,17 +59,17 @@ const STEPS: Step[] = [
         write the drafts
       </>
     ),
-    body: "Kalami speaks MCP, so Claude Code, Claude Desktop, Cursor and friends can draft whole assessments for you. Create a personal token on the Agents page, paste one line into your agent, and ask.",
+    body: "Kalami speaks MCP, so Claude, ChatGPT, Cursor and friends can draft whole assessments for you. Add Kalami as a connector (the Agents page shows how), sign in with your Kalami account, press Allow, and ask.",
     points: [
       "Your agent can list courses, create assessments and add questions",
       "It works as you: it only sees courses you can edit",
-      "Revoke the token any time; it stops working instantly",
+      "Disconnect it in your assistant’s settings any time",
     ],
     icon: <Robot className="size-5" />,
     visual: (origin) => (
       <div className="space-y-3" aria-hidden>
         <pre className="no-scrollbar overflow-x-auto rounded-2xl bg-charcoal px-5 py-4 font-mono text-[12.5px] leading-relaxed text-paper">
-          {`claude mcp add --transport http kalami \\\n  ${origin}/api/mcp \\\n  --header "Authorization: Bearer klm_…"`}
+          {`Add custom connector\n  ${origin}/api/mcp\n  Sign in now → Allow`}
         </pre>
         <div className="flex justify-end">
           <p className="max-w-[85%] rounded-[1.4rem] rounded-br-md bg-highlighter px-4 py-3 text-sm leading-snug text-ink">
@@ -107,7 +107,7 @@ const STEPS: Step[] = [
           ["Draft quiz “CSS selectors”", "by your agent · 2 min ago", true],
           ["Added 10 questions", "by your agent · 2 min ago", true],
           ["Published “HTML basics”", "by you · yesterday", false],
-          ["Revoked token “Old laptop”", "by you · 3 d ago", false],
+          ["Moved “Midterm” back to draft", "by you · 3 d ago", false],
         ].map(([what, who, agent]) => (
           <li key={String(what)} className="flex items-center gap-3 rounded-2xl bg-charcoal-soft px-4 py-2.5 text-sm">
             <span className={`grid size-7 shrink-0 place-items-center rounded-full ${agent ? "bg-highlighter text-ink" : "bg-paper/15 text-paper"}`}>

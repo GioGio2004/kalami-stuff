@@ -233,22 +233,6 @@ export default defineSchema({
     failures: v.number(),
   }).index("by_userId", ["userId"]),
 
-  // Personal access tokens for the MCP connector. Only the SHA-256 of a token is
-  // stored; the token itself is shown once when created.
-  mcpTokens: defineTable({
-    userId: v.id("users"),
-    name: v.string(),
-    tokenHash: v.string(),
-    // The first characters of the token, so people can tell their tokens apart.
-    prefix: v.string(),
-    lastUsedAt: v.optional(v.number()),
-    revokedAt: v.optional(v.number()),
-  })
-    .index("by_userId", ["userId"])
-    // revokedAt === undefined selects a user's active tokens.
-    .index("by_userId_and_revokedAt", ["userId", "revokedAt"])
-    .index("by_tokenHash", ["tokenHash"]),
-
   // Who changed what, and whether a person or their agent did it.
   auditLog: defineTable({
     actorId: v.id("users"),

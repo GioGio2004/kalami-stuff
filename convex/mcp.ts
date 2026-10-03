@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { actorFromToken, requireTokenActor, requireTokenActorAndTouch } from "./lib/access";
+import { actorFromToken, requireTokenActor } from "./lib/access";
 import { isSuperAdmin } from "./lib/auth";
 import {
   assessmentKindValidator,
@@ -34,9 +34,10 @@ import {
 
 /**
  * The MCP connector's view of the backend. Each function is called by the
- * staff app's /api/mcp route on behalf of an AI agent and authenticates with a
- * personal access token instead of a Clerk session. The token identifies a
- * staff member; every check after that is the same as in the web app.
+ * staff app's /api/mcp route on behalf of an AI agent. Instead of a Clerk
+ * session it gets `token`, the staff app's signed credential for the lecturer
+ * who signed in with Kalami in their assistant (see lib/access.ts
+ * actorFromToken); every check after that is the same as in the web app.
  *
  * Deliberately missing: publishing, deleting and anything about students.
  * Agents draft; people review and publish in the dashboard.
@@ -120,7 +121,7 @@ export const createCourseAsAgent = mutation({
   },
   returns: v.id("courses"),
   handler: async (ctx, { token, ...args }) => {
-    const actor = await requireTokenActorAndTouch(ctx, token);
+    const actor = await requireTokenActor(ctx, token);
     return await createCourse(ctx, actor, args);
   },
 });
@@ -145,7 +146,7 @@ export const createAssessmentAsAgent = mutation({
   },
   returns: v.id("assessments"),
   handler: async (ctx, { token, ...args }) => {
-    const actor = await requireTokenActorAndTouch(ctx, token);
+    const actor = await requireTokenActor(ctx, token);
     return await createAssessment(ctx, actor, args);
   },
 });
@@ -161,7 +162,7 @@ export const updateAssessmentAsAgent = mutation({
   },
   returns: v.null(),
   handler: async (ctx, { token, assessmentId, ...patch }) => {
-    const actor = await requireTokenActorAndTouch(ctx, token);
+    const actor = await requireTokenActor(ctx, token);
     await updateAssessment(ctx, actor, assessmentId, patch);
     return null;
   },
@@ -175,7 +176,7 @@ export const addQuestionsAsAgent = mutation({
   },
   returns: v.array(v.id("questions")),
   handler: async (ctx, args) => {
-    const actor = await requireTokenActorAndTouch(ctx, args.token);
+    const actor = await requireTokenActor(ctx, args.token);
     return await addQuestions(ctx, actor, args.assessmentId, args.questions);
   },
 });
@@ -184,7 +185,7 @@ export const updateQuestionAsAgent = mutation({
   args: { ...tokenArg, questionId: v.id("questions"), question: questionInputValidator },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const actor = await requireTokenActorAndTouch(ctx, args.token);
+    const actor = await requireTokenActor(ctx, args.token);
     await updateQuestion(ctx, actor, args.questionId, args.question);
     return null;
   },
@@ -194,7 +195,7 @@ export const deleteQuestionAsAgent = mutation({
   args: { ...tokenArg, questionId: v.id("questions") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const actor = await requireTokenActorAndTouch(ctx, args.token);
+    const actor = await requireTokenActor(ctx, args.token);
     await deleteQuestion(ctx, actor, args.questionId);
     return null;
   },
@@ -208,7 +209,7 @@ export const reorderQuestionsAsAgent = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const actor = await requireTokenActorAndTouch(ctx, args.token);
+    const actor = await requireTokenActor(ctx, args.token);
     await reorderQuestions(ctx, actor, args.assessmentId, args.questionIds);
     return null;
   },

@@ -19,6 +19,7 @@ import {
   type AssessmentStatus,
 } from "../lib/validators";
 import { logAudit } from "./audit";
+import { notifyOnce } from "./notifications";
 
 export const MAX_QUESTIONS_PER_ASSESSMENT = 200;
 
@@ -280,7 +281,7 @@ export async function setAssessmentStatus(
   assessmentId: Id<"assessments">,
   status: AssessmentStatus,
 ): Promise<void> {
-  const { assessment } = await requireAssessmentAccess(ctx, actor, assessmentId, "edit");
+  const { assessment, access } = await requireAssessmentAccess(ctx, actor, assessmentId, "edit");
   if (assessment.status === status) {
     return;
   }
@@ -292,6 +293,10 @@ export async function setAssessmentStatus(
     publishedAt: status === "published" ? Date.now() : assessment.publishedAt,
     updatedAt: Date.now(),
   });
+  // Students hear about it the first time it's published to a course they can see.
+  if (status === "published" && access.course.status === "published") {
+    await notifyOnce(ctx, assessmentId, "published");
+  }
   const verb =
     status === "published" ? "Published" : status === "archived" ? "Archived" : "Moved back to draft";
   await logAudit(ctx, actor, {

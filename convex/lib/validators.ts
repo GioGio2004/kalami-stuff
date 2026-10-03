@@ -310,3 +310,13 @@ export const answerValueValidator = v.union(
 export type AnswerValue = Infer<typeof answerValueValidator>;
 
 export const checkOutcomeValidator = v.object({ id: v.string(), passed: v.boolean() });
+
+// --- Notifications ---------------------------------------------------------------
+
+/** What a notification tells a student: new work, or a deadline reminder. */
+export const notificationKindValidator = v.union(
+  v.literal("published"),
+  v.literal("due_24h"),
+  v.literal("due_1h"),
+);
+export type NotificationKind = Infer<typeof notificationKindValidator>;

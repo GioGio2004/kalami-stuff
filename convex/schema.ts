@@ -16,6 +16,7 @@ import {
   inviteRoleValidator,
   localeValidator,
   localizedTextValidator,
+  notificationKindValidator,
   optionValidator,
   questionTypeValidator,
   roleValidator,
@@ -247,6 +248,40 @@ export default defineSchema({
     windowStart: v.number(),
     failures: v.number(),
   }).index("by_userId", ["userId"]),
+
+  // -------------------------------------------------------------------------
+  // Notifications
+  // -------------------------------------------------------------------------
+
+  // A student's inbox: one row per event per enrolled student. The bell counts
+  // the unread ones; push and email deliver the same rows.
+  notifications: defineTable({
+    userId: v.id("users"),
+    kind: notificationKindValidator,
+    courseId: v.id("courses"),
+    assessmentId: v.id("assessments"),
+    assessmentKind: assessmentKindValidator,
+    // Copied here so a row reads on its own, in the bell, a push or an email.
+    title: v.string(),
+    courseTitle: v.string(),
+    // The closing time, shown as "due …" in the student's own time zone.
+    dueAt: v.optional(v.number()),
+    // Where tapping it goes, as a path in the student app.
+    href: v.string(),
+    readAt: v.optional(v.number()),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_readAt", ["userId", "readAt"]),
+
+  // One row per (assessment, kind) once its notifications went out, so a cron
+  // run or a second publish never sends them twice.
+  notificationRuns: defineTable({
+    assessmentId: v.id("assessments"),
+    kind: notificationKindValidator,
+    at: v.number(),
+    // Students told so far; the fan-out adds to it batch by batch.
+    sent: v.number(),
+  }).index("by_assessmentId_and_kind", ["assessmentId", "kind"]),
 
   // Who changed what, and whether a person or their agent did it.
   auditLog: defineTable({

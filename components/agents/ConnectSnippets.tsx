@@ -30,46 +30,41 @@ const CLIENTS: { value: Client; label: string }[] = [
 
 export const TOKEN_PLACEHOLDER = "klm_YOUR_TOKEN";
 
-/** The secret link for web assistants that can't send headers. The token is part of the path. */
-export function secretLink(origin: string, token: string): string {
-  return `${origin}/api/mcp/k/${token}`;
-}
-
 type Snippet = {
   /** Numbered steps, in the words the client's own UI uses. */
   steps: string[];
   code: string;
-  /** True when `code` is the secret link, which deserves a password warning. */
-  usesLink?: boolean;
+  /** "Sign in with Kalami": no token involved, the person signs in with their own account. */
+  signIn?: boolean;
   note?: string;
 };
 
 /** What to do where, per MCP client. `token` is the real one right after creation. */
 export function snippetFor(client: Client, origin: string, token: string): Snippet {
   const endpoint = `${origin}/api/mcp`;
-  const link = secretLink(origin, token);
   const bearer = `Bearer ${token}`;
   switch (client) {
     case "claude":
       return {
         steps: [
-          "Open claude.ai (or the Claude desktop app) → Settings → Connectors.",
-          "Click “Add custom connector”, name it Kalami and paste the link below. Leave the OAuth fields empty.",
-          "In a chat, open the tools menu and switch Kalami on.",
+          "Open claude.ai (or the Claude desktop app) → Settings → Connectors → Add custom connector.",
+          "Name it Kalami, paste the address below and click Continue.",
+          "Authentication: Sign in now. OAuth client: Use Claude’s published identity. Click Add.",
+          "Click Connect, sign in with your Kalami staff account and press Allow. In a chat, switch Kalami on in the tools menu.",
         ],
-        code: link,
-        usesLink: true,
+        code: endpoint,
+        signIn: true,
         note: "Added once, it works on claude.ai, Claude Desktop and the Claude phone apps.",
       };
     case "chatgpt":
       return {
         steps: [
           "Settings → Apps & Connectors → Advanced settings: turn on Developer mode.",
-          "Back in Apps & Connectors, click Create. Name: Kalami. MCP server URL: the link below. Authentication: No authentication.",
-          "Tick “I trust this application” and create it. In a new chat, add Kalami from the + menu.",
+          "Back in Apps & Connectors, click Create. Name: Kalami. MCP server URL: the address below. Authentication: OAuth.",
+          "Create it, sign in with your Kalami staff account and press Allow. In a new chat, add Kalami from the + menu.",
         ],
-        code: link,
-        usesLink: true,
+        code: endpoint,
+        signIn: true,
         note: "Developer mode is only on some ChatGPT plans. If you don't see it, use another agent.",
       };
     case "claude-code":
@@ -113,9 +108,9 @@ export function snippetFor(client: Client, origin: string, token: string): Snipp
     case "other":
       return {
         steps: [
-          "Any MCP client that speaks Streamable HTTP works. Use the header if it can send one, otherwise the link.",
+          "Any MCP client that speaks Streamable HTTP works: with OAuth sign-in if it supports it (no token needed), otherwise with the header below.",
         ],
-        code: `URL:    ${endpoint}\nHeader: Authorization: ${bearer}\n\nNo headers? Use this link instead:\n${link}`,
+        code: `URL:    ${endpoint}\nHeader: Authorization: ${bearer}`,
       };
   }
 }
@@ -146,16 +141,16 @@ export function ConnectSnippets({ origin, token }: { origin: string; token?: str
         <CopyButton value={snippet.code} variant="lime" className="absolute right-3 top-3" />
       </div>
       {snippet.note && <p className="text-xs leading-relaxed text-graphite">{snippet.note}</p>}
-      {snippet.usesLink && (
+      {snippet.signIn && (
         <p className="flex items-start gap-2 rounded-2xl bg-highlighter/30 px-4 py-3 text-xs leading-relaxed text-ink">
           <Lock className="mt-0.5 size-3.5 shrink-0" />
           <span>
-            This link has your token inside, so treat it like a password: anyone who has it can draft in your courses.
-            Revoke the token above and the link stops working.
+            No token needed: you sign in with your own Kalami account and press Allow. Only staff accounts get the tools,
+            and you can disconnect any time in the assistant’s settings.
           </span>
         </p>
       )}
-      {!token && (
+      {!token && !snippet.signIn && (
         <p className="text-xs leading-relaxed text-graphite">
           Replace <code className="rounded bg-panel px-1.5 py-0.5 font-mono">{TOKEN_PLACEHOLDER}</code> with your
           token. Tokens are shown only once, when you create them, so if you lost yours, create a new one above.

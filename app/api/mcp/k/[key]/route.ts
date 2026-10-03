@@ -1,28 +1,20 @@
-import type { NextRequest } from "next/server";
-import { handleVerified, verifyToken } from "@/lib/mcp/server";
-
 /**
- * The secret-link MCP connector: /api/mcp/k/klm_…, for web assistants that
- * can't send an Authorization header (claude.ai, ChatGPT, Le Chat, …). The
- * token in the path works exactly like the bearer token on /api/mcp, so the
- * link is a password: revoking the token on /agents kills the link too.
+ * The old secret-link connector (/api/mcp/k/klm_…). Retired: a link with the
+ * token in it could be shared or leaked, and anyone holding it acted as the
+ * lecturer. claude.ai and ChatGPT now use "Sign in with Kalami" on /api/mcp,
+ * where each person signs in with their own account.
  */
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
 
-async function serve(req: NextRequest, ctx: RouteContext<"/api/mcp/k/[key]">): Promise<Response> {
-  const { key } = await ctx.params;
-  const authInfo = await verifyToken(req, key);
-  if (!authInfo) {
-    // No WWW-Authenticate challenge on purpose: there is no OAuth to fall back
-    // to, and a challenge would send web clients looking for a sign-in page.
-    return Response.json(
-      { error: "This Kalami link is invalid or its token was revoked. Create a new one on the Agents page." },
-      { status: 401 },
-    );
-  }
-  return handleVerified(req, authInfo);
+function gone(): Response {
+  return Response.json(
+    {
+      error:
+        "Kalami links were replaced by “Sign in with Kalami”. Add https://staff.kalami.space/api/mcp as the connector URL and choose Sign in now.",
+    },
+    { status: 410 },
+  );
 }
 
-export { serve as GET, serve as POST, serve as DELETE };
+export { gone as GET, gone as POST, gone as DELETE };

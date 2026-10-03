@@ -4,18 +4,19 @@ import { ConvexError } from "convex/values";
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
 import { api } from "@/convex/_generated/api";
+import { publicOrigin, serviceCredential, verifyOAuthToken } from "./oauth";
 import type { Id } from "@/convex/_generated/dataModel";
 
 /**
  * Kalami's MCP connector: lets a lecturer's own AI agent (Claude, ChatGPT,
  * Cursor, …) draft courses, quizzes and exams for them.
  *
- * Auth is a personal access token created on /agents in the staff app. Clients
- * that can send headers use `Authorization: Bearer klm_…` on /api/mcp; web
- * assistants that can't (claude.ai, ChatGPT) use the secret link
- * /api/mcp/k/klm_…. Either way the token is verified by Convex on every call,
- * so revoking it in the dashboard cuts the agent off immediately. Agents only
- * edit drafts; publishing stays a human click in the dashboard.
+ * Auth on /api/mcp, two ways: web assistants (claude.ai, ChatGPT) use "Sign in
+ * with Kalami", OAuth through Clerk (see oauth.ts); clients with config files
+ * use a personal token from /agents as `Authorization: Bearer klm_…`. Either
+ * way Convex checks the person is staff on every call, so revoking access cuts
+ * the agent off immediately. Agents only edit drafts; publishing stays a human
+ * click in the dashboard.
  */
 
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -534,34 +535,45 @@ const handler = createMcpHandler(
   },
 );
 
-/** The origin people see (Vercel sits behind a proxy), for links back to the dashboard. */
-function publicOrigin(req: Request): string {
-  const host = req.headers.get("x-forwarded-host")?.split(",")[0].trim();
-  if (host) {
-    const proto = req.headers.get("x-forwarded-proto")?.split(",")[0].trim() || "https";
-    return `${proto}://${host}`;
-  }
-  return new URL(req.url).origin;
-}
-
-/** Checks a personal token against Convex. Undefined for a missing, invalid or revoked one. */
+/**
+ * Checks the bearer token of an MCP request. Two kinds are accepted:
+ * - a personal token (klm_…) from the Agents page, for clients with config files
+ *   (Claude Code, Cursor, …);
+ * - a Clerk OAuth access token, from "Sign in with Kalami" (claude.ai, ChatGPT).
+ *   It becomes a short signed credential that tells Convex which Clerk user this is.
+ * Either way Convex decides whether the person is staff: a student who signs in
+ * gets undefined here, so a 401.
+ */
 export async function verifyToken(req: Request, token: string | undefined): Promise<AuthInfo | undefined> {
   if (!token) {
     return undefined;
   }
-  const me = await convex.query(api.mcp.whoami, { token });
+  let credential = token;
+  let scopes = ["studio"];
+  if (!token.startsWith("klm_")) {
+    const oauth = await verifyOAuthToken(req).catch((error: unknown) => {
+      console.error("MCP OAuth token check failed", error);
+      return null;
+    });
+    if (oauth === null) {
+      return undefined;
+    }
+    credential = await serviceCredential(oauth.userId);
+    scopes = oauth.scopes;
+  }
+  const me = await convex.query(api.mcp.whoami, { token: credential });
   if (me === null) {
     return undefined;
   }
   return {
-    token,
+    token: credential,
     clientId: me.userId,
-    scopes: ["studio"],
+    scopes,
     extra: { email: me.email, origin: publicOrigin(req) },
   };
 }
 
-/** Serves an MCP request for a token that was already verified (the secret-link route). */
+/** Serves an MCP request for a caller that was already verified (used by the tests). */
 export function handleVerified(req: Request, authInfo: AuthInfo): Promise<Response> {
   // mcp-handler reads the caller from `req.auth`, the same field withMcpAuth sets.
   (req as Request & { auth?: AuthInfo }).auth = authInfo;

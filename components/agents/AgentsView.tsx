@@ -10,7 +10,7 @@ import { errorMessage } from "@/lib/errors";
 import { formatDate, timeAgo } from "@/lib/format";
 import { useOrigin } from "@/lib/useOrigin";
 import type { TokenRow } from "@/components/studio/types";
-import { ConnectSnippets, secretLink } from "./ConnectSnippets";
+import { ConnectSnippets } from "./ConnectSnippets";
 
 const EXAMPLE_PROMPTS = [
   "List my courses and tell me which ones have no final yet.",
@@ -104,12 +104,11 @@ export function AgentsView({
               <p className="mt-2 break-all font-mono text-[15px] leading-relaxed">{fresh.token}</p>
               <div className="mt-4 flex flex-wrap items-center gap-3">
                 <CopyButton value={fresh.token} variant="lime" label="Copy token" />
-                <CopyButton value={secretLink(origin, fresh.token)} variant="lime" label="Copy link" />
               </div>
               <p className="mt-3 text-sm leading-relaxed text-paper/65">
                 “{fresh.name}”. Copy it now; Kalami only keeps a fingerprint and can’t show it again. Step 2 below
-                already has it filled in. Use the token for apps with settings files, the link for claude.ai and
-                ChatGPT.
+                already has it filled in. Tokens are for apps with settings files (Claude Code, Cursor…); claude.ai and
+                ChatGPT need none, they use Sign in with Kalami.
               </p>
             </div>
           )}

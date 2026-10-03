@@ -73,8 +73,23 @@ of it.
 ## 4. The MCP connector
 
 **Endpoint:** `https://staff.kalami.space/api/mcp` (Streamable HTTP, stateless).
-**Auth:** `Authorization: Bearer klm_…` personal token, created on `/agents`. The token is
-hashed in Convex on every call; revoking it stops the agent on its next call.
+**Auth, two ways, both ending in the same staff-only checks in Convex:**
+
+- **Sign in with Kalami (OAuth)** for claude.ai, ChatGPT and other web assistants. Clerk is
+  the authorization server (CIMD and dynamic client registration switched on in Clerk →
+  OAuth applications → Settings). The lecturer signs in with their own account and presses
+  Allow; nothing to copy or leak. `/api/mcp` answers 401 with `resource_metadata` →
+  `/.well-known/oauth-protected-resource` (also under `/api/mcp`) → Clerk
+  (`/.well-known/oauth-authorization-server` is mirrored on our origin). The route checks
+  the Clerk access token (`lib/mcp/oauth.ts`) and hands Convex a 10-minute
+  `svc.<payload>.<HMAC>` credential naming the Clerk user, signed with
+  `MCP_SERVICE_SECRET` (set on Convex dev/prod and on the staff app in Vercel). Convex
+  verifies it and still refuses non-staff, so a student who signs in gets nothing.
+- **Personal token** `Authorization: Bearer klm_…`, created on `/agents`, for clients with
+  config files (Claude Code, Cursor, VS Code…). Hashed in Convex on every call; revoking it
+  stops the agent on its next call.
+
+The old secret links (`/api/mcp/k/klm_…`) are retired and answer 410.
 
 | Tool | Does |
 |---|---|
@@ -104,10 +119,8 @@ claude mcp add --transport http kalami https://staff.kalami.space/api/mcp \
 Claude Desktop goes through `mcp-remote` with the same `--header`. VS Code uses
 `.vscode/mcp.json` with `"type": "http"`.
 
-**Later:** OAuth sign-in for clients that can't send headers (claude.ai web connectors).
-Clerk can act as the authorization server; `mcp-handler` already serves the RFC 9728
-metadata. Also: a rate limit per token (`@convex-dev/rate-limiter`) before the pilot
-opens to other lecturers.
+**Later:** a rate limit per token and per OAuth user (`@convex-dev/rate-limiter`) before
+the pilot opens to other lecturers.
 
 ---
 

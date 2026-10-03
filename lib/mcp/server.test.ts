@@ -2,8 +2,8 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
 
 // The real MCP server, driven over HTTP-shaped requests without a network or a
-// token: handleVerified is what the secret-link route calls once Convex has
-// accepted the token. Calls that would reach Convex are not exercised here
+// token: handleVerified serves a request for a caller Convex has already
+// accepted. Calls that would reach Convex are not exercised here
 // (convex/studio.test.ts covers those).
 
 type Server = typeof import("./server");

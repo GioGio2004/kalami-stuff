@@ -1,8 +1,8 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { getMemberships, isStaffRole, isSuperAdmin, requireUser } from "./auth";
+import { getMemberships, isStaffRole, isSuperAdmin, requireUser, userByClerkUserId } from "./auth";
 import { appError } from "./errors";
-import { hashToken, looksLikeToken } from "./tokens";
+import { hashToken, looksLikeToken, SERVICE_CREDENTIAL_PREFIX, verifyServiceCredential } from "./tokens";
 import type { Via } from "./validators";
 
 /**
@@ -40,11 +40,28 @@ export async function actorFromToken(ctx: QueryCtx, token: string): Promise<Acto
   return (await resolveToken(ctx, token))?.actor ?? null;
 }
 
-/** The actor and the token row it came from, so callers don't hash and look up twice. */
+/**
+ * The actor and the token row it came from, so callers don't hash and look up
+ * twice. A "Sign in with Kalami" (OAuth) request has no row: the staff app
+ * checked the Clerk token and sent a signed credential naming the Clerk user.
+ */
 async function resolveToken(
   ctx: QueryCtx,
   token: string,
-): Promise<{ actor: Actor; row: Doc<"mcpTokens"> } | null> {
+): Promise<{ actor: Actor; row: Doc<"mcpTokens"> | null } | null> {
+  if (token.startsWith(SERVICE_CREDENTIAL_PREFIX)) {
+    const clerkUserId = await verifyServiceCredential(token);
+    const user = clerkUserId === null ? null : await userByClerkUserId(ctx, clerkUserId);
+    if (user === null) {
+      return null;
+    }
+    const memberships = await getMemberships(ctx, user._id);
+    // Students can sign in to Clerk too; only staff get the tools.
+    if (!canCreateCourses(memberships)) {
+      return null;
+    }
+    return { actor: { user, memberships, via: "mcp" }, row: null };
+  }
   if (!looksLikeToken(token)) {
     return null;
   }
@@ -87,7 +104,7 @@ export async function requireTokenActorAndTouch(ctx: MutationCtx, token: string)
   }
   const { actor, row } = resolved;
   const now = Date.now();
-  if (row.lastUsedAt === undefined || now - row.lastUsedAt > LAST_USED_RESOLUTION_MS) {
+  if (row !== null && (row.lastUsedAt === undefined || now - row.lastUsedAt > LAST_USED_RESOLUTION_MS)) {
     await ctx.db.patch("mcpTokens", row._id, { lastUsedAt: now });
   }
   return actor;

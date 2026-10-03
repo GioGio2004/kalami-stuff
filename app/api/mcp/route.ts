@@ -1,9 +1,9 @@
 import { headerAuthHandler } from "@/lib/mcp/server";
 
 /**
- * The MCP connector for clients that can send headers (Claude Code, Cursor,
- * VS Code, Gemini CLI, …): `Authorization: Bearer klm_…`. The server itself
- * lives in lib/mcp/server.ts; /api/mcp/k/[key] is the secret-link variant.
+ * The MCP connector. Web assistants sign in with Kalami (OAuth via Clerk, see
+ * lib/mcp/oauth.ts); clients with config files send `Authorization: Bearer klm_…`.
+ * The server itself lives in lib/mcp/server.ts.
  */
 
 export const dynamic = "force-dynamic";

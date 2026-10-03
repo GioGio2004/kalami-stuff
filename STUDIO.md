@@ -134,16 +134,22 @@ their whole semester's quizzes and exams, by hand or with an agent.
 
 ### Phase B — Students take them
 
-1. `enrollments` + `courses.join(joinCode)` in the student app; course list on the
-   student dashboard.
-2. `attempts` (server-created, `deadlineAt = min(now + timeLimit, closesAt)`, shuffled
-   `questionOrder`) and `responses` (autosave every 3 s after typing stops).
-3. Student player: start screen with rules, one question per page, navigator, flag for
-   review, server timer, scheduled auto-submit.
-4. Auto-grading for single / multiple / short; grading queue with red-pen notes for essays.
-5. Results per `resultsVisibility`. Lock editing of an assessment once it has attempts
-   (today only *archived* is read-only).
-6. Integrity collector per level (from `KALAMI.md` §6) and the live monitor.
+1. ✅ `enrollments` + join code in the student app; course list and Up next on the dashboard.
+2. ✅ `attempts` created by the start screen (`learn.startAttempt`), `deadlineAt = min(start +
+   timeLimit, closesAt)`; question and option order shuffled per student from a seed (no
+   stored order); `responses` autosave (choices at once, typing after a pause).
+3. ✅ Quiz player (`kalami/components/quiz`, route `/quizzes/[id]`): start screen with the
+   rules, one question per page, navigator, flag for review, server deadline with a
+   countdown; the page submits at zero and the cron submits anything left
+   (`learn.autoSubmit`, closesAt or deadline + 15 s grace). Code questions inside a quiz
+   open the sandbox on their page. Retries follow `attemptsAllowed`; the best score counts.
+4. ✅ Auto-grading for single (exact), multiple (exact set, all or nothing) and short
+   (trimmed, spaces collapsed, case-insensitive unless set); essays wait for points per
+   answer in the lecturer's review (`submissions.setQuestionPoints`), which re-adds the score.
+5. ✅ Results per `resultsVisibility`: hidden, score only, or questions + answers + key
+   after close. **Still open:** lock editing of an assessment once it has attempts (today
+   only *archived* is read-only).
+6. Integrity collector per level ✅ (tasks and quizzes); the live monitor is still to build.
 
 ### Phase C — Lectures with animations
 

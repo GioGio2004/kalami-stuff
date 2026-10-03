@@ -5,7 +5,10 @@ import { requireStaffActor, type Actor } from "./lib/access";
 import { appError } from "./lib/errors";
 import { requireText } from "./lib/input";
 import { integrityColor, integrityScore } from "./lib/integrity";
+import { awaitsGrading } from "./lib/grading";
 import {
+  answerKeyValidator,
+  answerValueValidator,
   attemptStatusValidator,
   checkOutcomeValidator,
   checkRuleValidator,
@@ -14,13 +17,16 @@ import {
   codeStepValidator,
   integrityColorValidator,
   integrityCountsValidator,
+  optionValidator,
 } from "./lib/validators";
 import { requireAssessmentAccess } from "./model/assessments";
 import { displayName, logAudit } from "./model/audit";
-import { hiddenChecksFor, listComments, taskFor } from "./model/learn";
+import { hiddenChecksFor, listComments, recomputeScore, taskFor } from "./model/learn";
 
 // Staff app (Clerk session): who worked on an assessment, what they wrote, and grading it.
 // Anyone who can see the course (owner, assistant, admin) can grade.
+
+const answerTypeValidator = v.union(v.literal("single"), v.literal("multiple"), v.literal("short"), v.literal("essay"));
 
 async function requireAttempt(ctx: QueryCtx, actor: Actor, attemptId: Id<"attempts">) {
   const attempt = await ctx.db.get("attempts", attemptId);
@@ -37,6 +43,8 @@ export const forAssessment = query({
     v.object({
       attemptId: v.id("attempts"),
       student: v.string(),
+      /** 1 for the first attempt; more only when retries are allowed. */
+      number: v.number(),
       status: attemptStatusValidator,
       autoSubmitted: v.boolean(),
       startedAt: v.number(),
@@ -44,8 +52,14 @@ export const forAssessment = query({
       score: v.optional(v.number()),
       maxScore: v.number(),
       graded: v.boolean(),
+      /** Code questions: steps done across all of them. */
       stepsDone: v.number(),
       stepsTotal: v.number(),
+      /** Every other question: how many have an answer. */
+      answered: v.number(),
+      questionsTotal: v.number(),
+      /** An essay with an answer and no points yet. */
+      needsGrading: v.boolean(),
       integrity: integrityCountsValidator,
       integrityScore: v.number(),
       integrityColor: integrityColorValidator,
@@ -59,6 +73,7 @@ export const forAssessment = query({
       .withIndex("by_assessmentId_and_order", (q) => q.eq("assessmentId", args.assessmentId))
       .take(200);
     const stepsTotal = questions.reduce((sum, q) => sum + (q.code?.steps.length ?? 0), 0);
+    const questionsTotal = questions.filter((q) => q.type !== "code").length;
     const attempts = await ctx.db
       .query("attempts")
       .withIndex("by_assessmentId", (q) => q.eq("assessmentId", args.assessmentId))
@@ -66,6 +81,8 @@ export const forAssessment = query({
     const rows = [];
     for (const attempt of attempts) {
       let stepsDone = 0;
+      let answered = 0;
+      let needsGrading = false;
       for (const question of questions) {
         const response = await ctx.db
           .query("responses")
@@ -73,12 +90,19 @@ export const forAssessment = query({
             q.eq("attemptId", attempt._id).eq("questionId", question._id),
           )
           .unique();
-        stepsDone += response?.progress?.step ?? 0;
+        if (response === null) continue;
+        if (response.value.type === "code") {
+          stepsDone += response.progress?.step ?? 0;
+        } else {
+          answered++;
+          needsGrading ||= attempt.status === "submitted" && awaitsGrading(response.value, response.manualPoints);
+        }
       }
       const score = integrityScore(attempt.integrity);
       rows.push({
         attemptId: attempt._id,
         student: displayName(await ctx.db.get("users", attempt.userId)),
+        number: attempt.number,
         status: attempt.status,
         autoSubmitted: attempt.autoSubmitted ?? false,
         startedAt: attempt.startedAt,
@@ -88,12 +112,15 @@ export const forAssessment = query({
         graded: attempt.gradedAt !== undefined,
         stepsDone,
         stepsTotal,
+        answered,
+        questionsTotal,
+        needsGrading,
         integrity: attempt.integrity,
         integrityScore: score,
         integrityColor: integrityColor(score),
       });
     }
-    rows.sort((a, b) => a.student.localeCompare(b.student));
+    rows.sort((a, b) => a.student.localeCompare(b.student) || a.number - b.number);
     return rows;
   },
 });
@@ -102,6 +129,7 @@ export const detail = query({
   args: { attemptId: v.id("attempts") },
   returns: v.object({
     student: v.string(),
+    number: v.number(),
     status: attemptStatusValidator,
     autoSubmitted: v.boolean(),
     autoScore: v.optional(v.number()),
@@ -127,6 +155,21 @@ export const detail = query({
         autoScore: v.optional(v.number()),
       }),
     ),
+    /** Every question that isn't code, in order, with its key and the student's answer. */
+    answers: v.array(
+      v.object({
+        questionId: v.id("questions"),
+        type: answerTypeValidator,
+        prompt: v.string(),
+        points: v.number(),
+        options: v.optional(v.array(optionValidator)),
+        key: v.union(v.null(), answerKeyValidator),
+        value: v.optional(answerValueValidator),
+        savedAt: v.optional(v.number()),
+        autoScore: v.optional(v.number()),
+        manualPoints: v.optional(v.number()),
+      }),
+    ),
     comments: v.array(
       v.object({
         _id: v.id("codeComments"),
@@ -150,9 +193,8 @@ export const detail = query({
       .withIndex("by_assessmentId_and_order", (q) => q.eq("assessmentId", attempt.assessmentId))
       .take(200);
     const out = [];
+    const answers = [];
     for (const question of questions) {
-      if (question.type !== "code" || question.code === undefined) continue;
-      const { code, values } = taskFor(question.code, user, attempt.assessmentId);
       const key = await ctx.db
         .query("answerKeys")
         .withIndex("by_questionId", (q) => q.eq("questionId", question._id))
@@ -161,12 +203,29 @@ export const detail = query({
         .query("responses")
         .withIndex("by_attemptId_and_questionId", (q) => q.eq("attemptId", attempt._id).eq("questionId", question._id))
         .unique();
+      if (question.type !== "code") {
+        answers.push({
+          questionId: question._id,
+          type: question.type,
+          prompt: question.prompt,
+          points: question.points,
+          options: question.options,
+          key: key?.key ?? null,
+          value: response === null || response.value.type === "code" ? undefined : response.value,
+          savedAt: response?.savedAt,
+          autoScore: response?.autoScore,
+          manualPoints: response?.manualPoints,
+        });
+        continue;
+      }
+      if (question.code === undefined) continue;
+      const { code, values } = taskFor(question.code, user, attempt.assessmentId);
       out.push({
         questionId: question._id,
         prompt: question.prompt,
         code,
         hiddenChecks: hiddenChecksFor(key?.key.type === "code" ? key.key.hiddenChecks : [], values),
-        files: response?.value.files,
+        files: response?.value.type === "code" ? response.value.files : undefined,
         savedAt: response?.savedAt,
         checkResults: response?.checkResults,
         autoScore: response?.autoScore,
@@ -174,6 +233,7 @@ export const detail = query({
     }
     return {
       student: displayName(user),
+      number: attempt.number,
       status: attempt.status,
       autoSubmitted: attempt.autoSubmitted ?? false,
       autoScore: attempt.score,
@@ -183,8 +243,56 @@ export const detail = query({
       integrity: attempt.integrity,
       integrityColor: integrityColor(integrityScore(attempt.integrity)),
       questions: out,
+      answers,
       comments: await listComments(ctx, attempt._id),
     };
+  },
+});
+
+/**
+ * Points for one answer, mostly essays. They replace the automatic points of
+ * that answer and the attempt's score is added up again; undefined goes back to
+ * the automatic points.
+ */
+export const setQuestionPoints = mutation({
+  args: {
+    attemptId: v.id("attempts"),
+    questionId: v.id("questions"),
+    points: v.optional(v.number()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireStaffActor(ctx);
+    const { attempt, assessment } = await requireAttempt(ctx, actor, args.attemptId);
+    if (attempt.status !== "submitted") {
+      throw appError("CONFLICT", "Grade the work once it is submitted.");
+    }
+    const question = await ctx.db.get("questions", args.questionId);
+    if (question === null || question.assessmentId !== attempt.assessmentId) {
+      throw appError("NOT_FOUND", "Question not found.");
+    }
+    if (args.points !== undefined && (!Number.isFinite(args.points) || args.points < 0 || args.points > question.points)) {
+      throw appError("INVALID_INPUT", `Give between 0 and ${question.points} points.`);
+    }
+    const response = await ctx.db
+      .query("responses")
+      .withIndex("by_attemptId_and_questionId", (q) => q.eq("attemptId", attempt._id).eq("questionId", question._id))
+      .unique();
+    if (response === null) {
+      throw appError("CONFLICT", "The student didn't answer this question, so it counts as 0.");
+    }
+    await ctx.db.patch("responses", response._id, {
+      manualPoints: args.points === undefined ? undefined : Math.round(args.points * 100) / 100,
+    });
+    await recomputeScore(ctx, attempt);
+    await logAudit(ctx, actor, {
+      action: "grading.points",
+      targetTable: "attempts",
+      targetId: attempt._id,
+      courseId: attempt.courseId,
+      summary: `Gave points for question ${question.order + 1} in “${assessment.title}”`,
+    });
+    return null;
   },
 });
 

@@ -47,6 +47,14 @@ export function pickValues(
   return withStudent(values, student);
 }
 
+/** The same order every time for the same `seed`, a different one for another seed. */
+export function seededShuffle<T>(items: readonly T[], seed: string): T[] {
+  return items
+    .map((item, index) => ({ item, rank: hash(`${seed}:${index}`) }))
+    .sort((a, b) => a.rank - b.rank)
+    .map((entry) => entry.item);
+}
+
 /** Combination `index` for testing a task: every variable takes its value at `index` (wrapping). */
 export function sampleValues(variables: Variable[], index: number, student = SAMPLE_STUDENT): VariantValues {
   const values: VariantValues = {};

@@ -96,9 +96,9 @@ export function TaskTryout({ question, title, onClose }: { question: QuestionWit
   );
 }
 
-const COLOR_TONE: Record<"green" | "yellow" | "red", PillTone> = { green: "ok", yellow: "lime", red: "red" };
+export const COLOR_TONE: Record<"green" | "yellow" | "red", PillTone> = { green: "ok", yellow: "lime", red: "red" };
 
-function integritySummary(c: {
+export function integritySummary(c: {
   pasteBlocked: number;
   dropBlocked: number;
   largeInserts: number;
@@ -121,7 +121,7 @@ function integritySummary(c: {
 }
 
 /** The overall note and a score that replaces the automatic one. */
-function GradeBar({
+export function GradeBar({
   attemptId,
   autoScore,
   manualScore,

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { requireStudent } from "./lib/auth";
-import { codeFileValidator, integrityCountsValidator } from "./lib/validators";
+import { answerValueValidator, codeFileValidator, integrityCountsValidator } from "./lib/validators";
 import {
   autoSubmitClosed,
   getStudentCourse,
@@ -18,8 +18,9 @@ import {
   submitTask,
   upNextValidator,
 } from "./model/learn";
+import { getStudentQuiz, saveAnswer, startQuiz, studentQuizValidator } from "./model/quiz";
 
-// Student app (Clerk session): joining courses and working on code tasks.
+// Student app (Clerk session): joining courses, code tasks, quizzes and exams.
 
 /** A delta of integrity counters; every field optional. */
 const integrityDeltaValidator = integrityCountsValidator.partial();
@@ -83,6 +84,40 @@ export const saveCodeWork = mutation({
   handler: async (ctx, args) => {
     const student = await requireStudent(ctx);
     return await saveCode(ctx, student, args);
+  },
+});
+
+/** A quiz, midterm or final: the start screen, the running attempt, or the results. */
+export const quiz = query({
+  args: { assessmentId: v.id("assessments") },
+  returns: studentQuizValidator,
+  handler: async (ctx, args) => {
+    const student = await requireStudent(ctx);
+    return await getStudentQuiz(ctx, student, args.assessmentId);
+  },
+});
+
+/** The start screen's button. Returns the attempt in progress if there already is one. */
+export const startAttempt = mutation({
+  args: { assessmentId: v.id("assessments") },
+  returns: v.id("attempts"),
+  handler: async (ctx, args) => {
+    const student = await requireStudent(ctx);
+    return await startQuiz(ctx, student, args.assessmentId);
+  },
+});
+
+export const saveQuizAnswer = mutation({
+  args: {
+    assessmentId: v.id("assessments"),
+    questionId: v.id("questions"),
+    answer: answerValueValidator,
+    integrity: v.optional(integrityDeltaValidator),
+  },
+  returns: v.object({ savedAt: v.number() }),
+  handler: async (ctx, args) => {
+    const student = await requireStudent(ctx);
+    return await saveAnswer(ctx, student, args);
   },
 });
 

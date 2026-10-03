@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import type { UserIdentity } from "convex/server";
+import type { FunctionArgs, UserIdentity } from "convex/server";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -328,5 +328,155 @@ describe("students and code tasks", () => {
     // An unknown placeholder, or a solution that only works for one colour, is refused.
     const typo = { ...colorful, prompt: "Make it {{colour}}" };
     await expectAppError(nino.mutation(api.questions.add, { assessmentId, questions: [typo] }), "INVALID_INPUT");
+  });
+});
+
+describe("students and quizzes", () => {
+  const QUESTIONS = [
+    {
+      type: "single" as const,
+      prompt: "Which tag makes a link?",
+      points: 2,
+      options: [
+        { text: "<a>", correct: true },
+        { text: "<link>", correct: false },
+        { text: "<href>", correct: false },
+      ],
+    },
+    {
+      type: "multiple" as const,
+      prompt: "Which are block elements?",
+      points: 1,
+      options: [
+        { text: "<div>", correct: true },
+        { text: "<span>", correct: false },
+        { text: "<p>", correct: true },
+      ],
+    },
+    { type: "short" as const, prompt: "What does CSS stand for?", points: 1.5, acceptedAnswers: ["Cascading Style Sheets"] },
+    { type: "essay" as const, prompt: "Why do semantic tags matter?", points: 3 },
+  ];
+
+  async function quiz(settings: Record<string, unknown> = {}) {
+    const ctx = await setup();
+    const { nino, ana, courseId } = ctx;
+    const quizId = await nino.mutation(api.assessments.create, { courseId, kind: "quiz", title: "Quiz 1" });
+    await nino.mutation(api.assessments.update, { assessmentId: quizId, settings });
+    const questionIds = await nino.mutation(api.questions.add, { assessmentId: quizId, questions: QUESTIONS });
+    await nino.mutation(api.assessments.setStatus, { assessmentId: quizId, status: "published" });
+    await nino.mutation(api.courses.update, { courseId, status: "published" });
+    const { joinCode } = await nino.query(api.courses.get, { courseId });
+    await ana.mutation(api.learn.join, { code: joinCode });
+    return { ...ctx, quizId, questionIds };
+  }
+
+  test("questions stay hidden until Start, answers are graded on submit, essays wait for the lecturer", async () => {
+    const { nino, ana, courseId, quizId, questionIds } = await quiz({
+      timeLimitMin: 20,
+      attemptsAllowed: 2,
+      resultsVisibility: "full_after_close",
+      shuffleQuestions: false,
+    });
+    const [single, multiple, short, essay] = questionIds;
+
+    const before = await ana.query(api.learn.quiz, { assessmentId: quizId });
+    expect(before).toMatchObject({ attempt: null, attemptsUsed: 0, questions: [], assessment: { questionCount: 4, totalPoints: 7.5 } });
+    expect(JSON.stringify(before)).not.toContain("Which tag");
+    expect((await ana.query(api.learn.course, { courseId })).assessments[0]).toMatchObject({ kind: "quiz", playable: true });
+    await expectAppError(
+      ana.mutation(api.learn.saveQuizAnswer, { assessmentId: quizId, questionId: short, answer: { type: "short", text: "x" } }),
+      "CONFLICT",
+    );
+
+    const attemptId = await ana.mutation(api.learn.startAttempt, { assessmentId: quizId });
+    expect(await ana.mutation(api.learn.startAttempt, { assessmentId: quizId })).toBe(attemptId);
+    const running = await ana.query(api.learn.quiz, { assessmentId: quizId });
+    expect(running.questions.map((q) => q._id)).toEqual(questionIds);
+    expect(running.attempt!.deadlineAt! - running.attempt!.startedAt).toBe(20 * 60_000);
+    // No keys while it runs.
+    expect(running.review).toEqual([]);
+    expect(JSON.stringify(running)).not.toContain("correct");
+
+    const option = (questionId: Id<"questions">, text: string) =>
+      running.questions.find((q) => q._id === questionId)!.options!.find((o) => o.text === text)!.id;
+    const save = (questionId: Id<"questions">, answer: FunctionArgs<typeof api.learn.saveQuizAnswer>["answer"]) =>
+      ana.mutation(api.learn.saveQuizAnswer, { assessmentId: quizId, questionId, answer });
+    await save(single, { type: "single", optionId: option(single, "<link>") });
+    await save(single, { type: "single", optionId: option(single, "<a>") });
+    await save(multiple, { type: "multiple", optionIds: [option(multiple, "<p>"), option(multiple, "<div>")] });
+    await save(short, { type: "short", text: "  cascading   style sheets " });
+    await save(essay, { type: "essay", text: "They tell browsers and screen readers what things are." });
+    await expectAppError(save(single, { type: "short", text: "<a>" }), "INVALID_INPUT");
+    await expectAppError(save(single, { type: "single", optionId: "nope" }), "INVALID_INPUT");
+
+    await ana.mutation(api.learn.submit, { assessmentId: quizId });
+    const done = await ana.query(api.learn.quiz, { assessmentId: quizId });
+    // 2 + 1 + 1.5; the essay waits.
+    expect(done.attempt).toMatchObject({ status: "submitted", score: 4.5, pendingGrading: true, autoSubmitted: false });
+    expect(done.review.find((r) => r.questionId === single)).toMatchObject({ points: 2, correctOptionIds: [option(single, "<a>")] });
+    expect(done.review.find((r) => r.questionId === short)).toMatchObject({ acceptedAnswers: ["Cascading Style Sheets"] });
+    expect(done.review.find((r) => r.questionId === essay)?.points).toBeUndefined();
+
+    const [row] = await nino.query(api.submissions.forAssessment, { assessmentId: quizId });
+    expect(row).toMatchObject({ number: 1, answered: 4, questionsTotal: 4, needsGrading: true, score: 4.5 });
+    const detail = await nino.query(api.submissions.detail, { attemptId });
+    expect(detail.answers.map((a) => a.type)).toEqual(["single", "multiple", "short", "essay"]);
+    expect(detail.answers[0]).toMatchObject({ autoScore: 2, key: { type: "single" } });
+
+    await expectAppError(
+      nino.mutation(api.submissions.setQuestionPoints, { attemptId, questionId: essay, points: 4 }),
+      "INVALID_INPUT",
+    );
+    await nino.mutation(api.submissions.setQuestionPoints, { attemptId, questionId: essay, points: 2.5 });
+    expect((await ana.query(api.learn.quiz, { assessmentId: quizId })).attempt).toMatchObject({ score: 7, pendingGrading: false });
+    expect((await nino.query(api.submissions.forAssessment, { assessmentId: quizId }))[0].needsGrading).toBe(false);
+
+    // A second try, allowed by the settings, starts empty; the best score counts.
+    const second = await ana.mutation(api.learn.startAttempt, { assessmentId: quizId });
+    expect(second).not.toBe(attemptId);
+    const retry = await ana.query(api.learn.quiz, { assessmentId: quizId });
+    expect(retry).toMatchObject({ attemptsUsed: 2, attempt: { number: 2, status: "in_progress" }, answers: [] });
+    await ana.mutation(api.learn.submit, { assessmentId: quizId });
+    expect((await ana.query(api.learn.course, { courseId })).assessments[0].result).toMatchObject({ status: "submitted", score: 7 });
+    await expectAppError(ana.mutation(api.learn.startAttempt, { assessmentId: quizId }), "CONFLICT");
+  });
+
+  test("a timed attempt stops taking answers when time is up and is submitted for the student", async () => {
+    const closesAt = Date.now() + 5 * 60_000;
+    const { t, nino, ana, quizId, questionIds } = await quiz({ timeLimitMin: 60, closesAt, resultsVisibility: "score" });
+    const attemptId = await ana.mutation(api.learn.startAttempt, { assessmentId: quizId });
+    // The time limit never runs past the closing time.
+    expect((await ana.query(api.learn.quiz, { assessmentId: quizId })).attempt?.deadlineAt).toBe(closesAt);
+    await ana.mutation(api.learn.saveQuizAnswer, {
+      assessmentId: quizId,
+      questionId: questionIds[2],
+      answer: { type: "short", text: "Cascading Style Sheets" },
+    });
+
+    await t.run((ctx) => ctx.db.patch("attempts", attemptId, { deadlineAt: Date.now() - 60_000 }));
+    await expectAppError(
+      ana.mutation(api.learn.saveQuizAnswer, {
+        assessmentId: quizId,
+        questionId: questionIds[3],
+        answer: { type: "essay", text: "late" },
+      }),
+      "CONFLICT",
+    );
+    expect(await t.mutation(internal.learn.autoSubmit, {})).toBe(1);
+    const after = await ana.query(api.learn.quiz, { assessmentId: quizId });
+    // "Score only": the score, but not the questions.
+    expect(after).toMatchObject({ attempt: { status: "submitted", autoSubmitted: true, score: 1.5 }, questions: [], review: [] });
+    const rows = await nino.query(api.submissions.forAssessment, { assessmentId: quizId });
+    expect(rows).toMatchObject([{ autoSubmitted: true, answered: 1 }]);
+  });
+
+  test("shuffled quizzes keep one order per student", async () => {
+    const { ana, quizId, questionIds } = await quiz({ shuffleQuestions: true, shuffleOptions: true });
+    await ana.mutation(api.learn.startAttempt, { assessmentId: quizId });
+    const first = await ana.query(api.learn.quiz, { assessmentId: quizId });
+    const again = await ana.query(api.learn.quiz, { assessmentId: quizId });
+    expect(again.questions).toEqual(first.questions);
+    expect([...first.questions.map((q) => q._id)].sort()).toEqual([...questionIds].sort());
+    expect(first.questions.find((q) => q.type === "single")!.options!.map((o) => o.text).sort()).toEqual(["<a>", "<href>", "<link>"]);
   });
 });

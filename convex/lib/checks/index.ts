@@ -13,6 +13,7 @@ export {
   SAMPLE_STUDENT,
   sampleCount,
   sampleValues,
+  seededShuffle,
   unknownPlaceholders,
 } from "./variants";
 export type { Variable, VariantValues } from "./variants";

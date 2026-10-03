@@ -4,6 +4,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { requireStudent } from "../lib/auth";
 import { fill, fillRule, fillTask, pickValues, runChecks, type CheckRule, type CodeFile } from "../lib/checks";
 import { appError } from "../lib/errors";
+import { awaitsGrading, scoreAnswer } from "../lib/grading";
 import { addCounts, hasCounts, NO_COUNTS } from "../lib/integrity";
 import {
   assessmentKindValidator,
@@ -22,13 +23,17 @@ import { displayName } from "./audit";
 import { MAX_FILE_CHARS, MAX_FILES } from "./codeTasks";
 
 /**
- * The student side: joining courses, seeing what's open, and working on code
- * tasks. Everything goes through an active enrollment; answer keys and hidden
- * checks never leave the server before the results say so, and every student
- * gets the task with their own variant values filled in.
+ * The student side: joining courses, seeing what's open, working on code tasks,
+ * and the grading every assessment shares (quizzes and exams: model/quiz.ts).
+ * Everything goes through an active enrollment; answer keys and hidden checks
+ * never leave the server before the results say so, and every student gets the
+ * task with their own variant values filled in.
  */
 
-type Student = Awaited<ReturnType<typeof requireStudent>>;
+export type Student = Awaited<ReturnType<typeof requireStudent>>;
+
+/** Saves still in flight when a timed attempt runs out are accepted for this long. */
+export const DEADLINE_GRACE_MS = 15_000;
 
 // --- Variants ------------------------------------------------------------------------
 
@@ -139,14 +144,14 @@ async function requireEnrolledCourse(ctx: QueryCtx, student: Student, courseId: 
 
 type WindowState = "upcoming" | "open" | "closed";
 
-function windowState(assessment: Doc<"assessments">, course: Doc<"courses">, now: number): WindowState {
+export function windowState(assessment: Doc<"assessments">, course: Doc<"courses">, now: number): WindowState {
   const { opensAt, closesAt } = assessment.settings;
   if (opensAt !== undefined && now < opensAt) return "upcoming";
   if (course.status === "archived" || (closesAt !== undefined && now >= closesAt)) return "closed";
   return "open";
 }
 
-async function latestAttempt(ctx: QueryCtx, userId: Id<"users">, assessmentId: Id<"assessments">) {
+export async function latestAttempt(ctx: QueryCtx, userId: Id<"users">, assessmentId: Id<"assessments">) {
   return await ctx.db
     .query("attempts")
     .withIndex("by_userId_and_assessmentId", (q) => q.eq("userId", userId).eq("assessmentId", assessmentId))
@@ -154,8 +159,17 @@ async function latestAttempt(ctx: QueryCtx, userId: Id<"users">, assessmentId: I
     .first();
 }
 
+/** A student's attempts at one assessment, newest first. attemptsAllowed is at most 10. */
+export async function attemptsOf(ctx: QueryCtx, userId: Id<"users">, assessmentId: Id<"assessments">) {
+  return await ctx.db
+    .query("attempts")
+    .withIndex("by_userId_and_assessmentId", (q) => q.eq("userId", userId).eq("assessmentId", assessmentId))
+    .order("desc")
+    .take(20);
+}
+
 /** What the results setting lets the student see right now. */
-function visibleResults(assessment: Doc<"assessments">, state: WindowState): "none" | "score" | "full" {
+export function visibleResults(assessment: Doc<"assessments">, state: WindowState): "none" | "score" | "full" {
   switch (assessment.settings.resultsVisibility) {
     case "hidden":
       return "none";
@@ -167,7 +181,7 @@ function visibleResults(assessment: Doc<"assessments">, state: WindowState): "no
 }
 
 /** The score that counts: the lecturer's, if they changed it. */
-function finalScore(attempt: Doc<"attempts">): number | undefined {
+export function finalScore(attempt: Doc<"attempts">): number | undefined {
   return attempt.manualScore ?? attempt.score;
 }
 
@@ -250,7 +264,7 @@ export async function listUpNext(ctx: QueryCtx, student: Student) {
         courseTitle: course.title,
         closesAt: assessment.settings.closesAt,
         started: attempt !== null,
-        playable: assessment.kind === "task",
+        playable: true,
       });
     }
   }
@@ -281,8 +295,9 @@ export const studentCourseValidator = v.object({
       closesAt: v.optional(v.number()),
       totalPoints: v.number(),
       questionCount: v.number(),
-      /** Whether the student app can run it yet (code tasks for now). */
+      /** Whether the student app can run it (every kind can now; kept for new kinds). */
       playable: v.boolean(),
+      /** The latest attempt; its score is the best of all submitted attempts. */
       result: v.union(v.null(), resultValidator),
     }),
   ),
@@ -296,8 +311,10 @@ export async function getStudentCourse(ctx: QueryCtx, student: Student, courseId
   const assessments = [];
   for (const assessment of published) {
     const state = windowState(assessment, course, now);
-    const attempt = await latestAttempt(ctx, student.user._id, assessment._id);
+    const attempts = await attemptsOf(ctx, student.user._id, assessment._id);
+    const attempt = attempts[0] ?? null;
     const results = visibleResults(assessment, state);
+    const scores = attempts.filter((a) => a.status === "submitted").map((a) => finalScore(a) ?? 0);
     assessments.push({
       _id: assessment._id,
       kind: assessment.kind,
@@ -307,14 +324,14 @@ export async function getStudentCourse(ctx: QueryCtx, student: Student, courseId
       closesAt: assessment.settings.closesAt,
       totalPoints: assessment.totalPoints,
       questionCount: assessment.questionCount,
-      playable: assessment.kind === "task",
+      playable: true,
       result:
         attempt === null
           ? null
           : {
               status: attempt.status,
               submittedAt: attempt.submittedAt,
-              score: results !== "none" ? finalScore(attempt) : undefined,
+              score: results !== "none" && scores.length > 0 ? Math.max(...scores) : undefined,
             },
     });
   }
@@ -331,7 +348,7 @@ export async function getStudentCourse(ctx: QueryCtx, student: Student, courseId
 
 // --- Code tasks ----------------------------------------------------------------------
 
-const commentValidator = v.object({
+export const commentValidator = v.object({
   _id: v.id("codeComments"),
   questionId: v.id("questions"),
   file: v.string(),
@@ -395,39 +412,45 @@ export const studentTaskValidator = v.object({
   unsupported: v.number(),
 });
 
-async function requireOpenableAssessment(ctx: QueryCtx, student: Student, assessmentId: Id<"assessments">) {
+export async function requireOpenableAssessment(ctx: QueryCtx, student: Student, assessmentId: Id<"assessments">) {
   const assessment = await ctx.db.get("assessments", assessmentId);
   if (assessment === null || assessment.status !== "published") {
-    throw appError("NOT_FOUND", "Task not found.");
+    throw appError("NOT_FOUND", "Not found.");
   }
   const course = await requireEnrolledCourse(ctx, student, assessment.courseId);
   const state = windowState(assessment, course, Date.now());
   if (state === "upcoming") {
-    throw appError("CONFLICT", "This task hasn't opened yet.");
+    throw appError("CONFLICT", "This hasn't opened yet.");
   }
   return { assessment, course, state };
 }
 
-async function questionsOf(ctx: QueryCtx, assessmentId: Id<"assessments">) {
+export async function questionsOf(ctx: QueryCtx, assessmentId: Id<"assessments">) {
   return await ctx.db
     .query("questions")
     .withIndex("by_assessmentId_and_order", (q) => q.eq("assessmentId", assessmentId))
     .take(200);
 }
 
-async function responseFor(ctx: QueryCtx, attemptId: Id<"attempts">, questionId: Id<"questions">) {
+export async function responseFor(ctx: QueryCtx, attemptId: Id<"attempts">, questionId: Id<"questions">) {
   return await ctx.db
     .query("responses")
     .withIndex("by_attemptId_and_questionId", (q) => q.eq("attemptId", attemptId).eq("questionId", questionId))
     .unique();
 }
 
-async function keyFor(ctx: QueryCtx, questionId: Id<"questions">) {
+/** Staff-side data: never return it to a student before full results. */
+export async function answerKeyOf(ctx: QueryCtx, questionId: Id<"questions">) {
   const row = await ctx.db
     .query("answerKeys")
     .withIndex("by_questionId", (q) => q.eq("questionId", questionId))
     .unique();
-  return row?.key.type === "code" ? row.key : null;
+  return row?.key ?? null;
+}
+
+async function keyFor(ctx: QueryCtx, questionId: Id<"questions">) {
+  const key = await answerKeyOf(ctx, questionId);
+  return key?.type === "code" ? key : null;
 }
 
 export async function listComments(ctx: QueryCtx, attemptId: Id<"attempts">) {
@@ -470,7 +493,7 @@ export async function getStudentTask(ctx: QueryCtx, student: Student, assessment
   if (attempt !== null) {
     for (const question of questions) {
       const response = await responseFor(ctx, attempt._id, question._id);
-      if (response === null) continue;
+      if (response === null || response.value.type !== "code") continue;
       responses.push({
         questionId: question._id,
         files: response.value.files,
@@ -552,18 +575,28 @@ export function stepProgress(code: { steps: { checks: CheckRuleDoc[] }[] }, file
   };
 }
 
-/** The student's in-progress attempt, started now if they have none. Refuses closed or submitted work. */
-async function ensureAttempt(ctx: MutationCtx, student: Student, assessmentId: Id<"assessments">) {
+/**
+ * The student's in-progress attempt. A code task starts one on the first save;
+ * quizzes and exams only through their start screen (model/quiz.ts), and
+ * refuse work after the attempt's deadline. Refuses closed or submitted work.
+ */
+export async function ensureAttempt(ctx: MutationCtx, student: Student, assessmentId: Id<"assessments">) {
   const { assessment, state } = await requireOpenableAssessment(ctx, student, assessmentId);
   if (state === "closed") {
-    throw appError("CONFLICT", "This task is closed, so changes can't be saved.");
+    throw appError("CONFLICT", "This is closed, so changes can't be saved.");
   }
   const attempt = await latestAttempt(ctx, student.user._id, assessment._id);
   if (attempt?.status === "submitted") {
-    throw appError("CONFLICT", "You already submitted this task.");
+    throw appError("CONFLICT", "You already submitted this.");
   }
   if (attempt !== null) {
+    if (attempt.deadlineAt !== undefined && Date.now() > attempt.deadlineAt + DEADLINE_GRACE_MS) {
+      throw appError("CONFLICT", "Time is up, so changes can't be saved.");
+    }
     return { assessment, attempt };
+  }
+  if (assessment.kind !== "task") {
+    throw appError("CONFLICT", "Press Start first.");
   }
   const attemptId = await ctx.db.insert("attempts", {
     assessmentId: assessment._id,
@@ -590,7 +623,7 @@ export async function saveCode(
 ) {
   const { assessment, attempt } = await ensureAttempt(ctx, student, args.assessmentId);
   const question = await ctx.db.get("questions", args.questionId);
-  if (question === null || question.assessmentId !== assessment._id || question.code === undefined) {
+  if (question === null || question.assessmentId !== assessment._id || question.type !== "code" || question.code === undefined) {
     throw appError("NOT_FOUND", "Question not found.");
   }
   const { code } = taskFor(question.code, student.user, assessment._id);
@@ -625,30 +658,50 @@ export async function reportIntegrity(
   counts: Partial<IntegrityCounts>,
 ) {
   if (!hasCounts(counts)) return null;
-  const { attempt } = await ensureAttempt(ctx, student, assessmentId);
-  await ctx.db.patch("attempts", attempt._id, { integrity: addCounts(attempt.integrity, counts) });
+  const { assessment } = await requireOpenableAssessment(ctx, student, assessmentId);
+  const latest = await latestAttempt(ctx, student.user._id, assessmentId);
+  // A code task counts from the moment it's open; a quiz only during an attempt.
+  const attempt =
+    latest?.status === "in_progress"
+      ? latest
+      : latest === null && assessment.kind === "task"
+        ? (await ensureAttempt(ctx, student, assessmentId)).attempt
+        : null;
+  if (attempt !== null) {
+    await ctx.db.patch("attempts", attempt._id, { integrity: addCounts(attempt.integrity, counts) });
+  }
   return null;
 }
 
 /**
- * Grades every code question with all of its checks (hidden ones included, the
- * student's own variant) and closes the attempt. Used on submit and when a task closes.
+ * Grades every question and closes the attempt: code with all of its checks
+ * (hidden ones included, the student's own variant), choices and short answers
+ * against the key. Essays stay ungraded until a lecturer gives them points.
+ * Used on submit, when a timed attempt runs out and when an assessment closes.
  */
 export async function gradeAttempt(ctx: MutationCtx, attempt: Doc<"attempts">, options: { auto: boolean }) {
   const user = await ctx.db.get("users", attempt.userId);
   if (user === null) return;
   let score = 0;
   for (const question of await questionsOf(ctx, attempt.assessmentId)) {
-    if (question.type !== "code" || question.code === undefined) continue;
+    if (question.type !== "code" || question.code === undefined) {
+      const response = await responseFor(ctx, attempt._id, question._id);
+      const autoScore = scoreAnswer(await answerKeyOf(ctx, question._id), response?.value, question.points);
+      if (response !== null) {
+        await ctx.db.patch("responses", response._id, { autoScore });
+      }
+      score += response?.manualPoints ?? autoScore ?? 0;
+      continue;
+    }
     const { code, values } = taskFor(question.code, user, attempt.assessmentId);
     const key = await keyFor(ctx, question._id);
     const rules = [...code.steps.flatMap((s) => s.checks), ...hiddenChecksFor(key?.hiddenChecks ?? [], values)];
     const response = await responseFor(ctx, attempt._id, question._id);
-    const files = response?.value.files ?? code.files;
+    const files = (response?.value.type === "code" ? response.value.files : undefined) ?? code.files;
     const checkResults = runChecks(files, rules as CheckRule[]).map((r) => ({ id: r.id, passed: r.passed }));
     const passed = checkResults.filter((r) => r.passed).length;
     const autoScore = rules.length === 0 ? 0 : Math.round((question.points * passed * 100) / rules.length) / 100;
-    score += autoScore;
+    score += response?.manualPoints ?? autoScore;
     if (response === null) {
       await ctx.db.insert("responses", {
         attemptId: attempt._id,
@@ -676,16 +729,41 @@ export async function submitTask(ctx: MutationCtx, student: Student, assessmentI
   const { assessment } = await requireOpenableAssessment(ctx, student, assessmentId);
   const attempt = await latestAttempt(ctx, student.user._id, assessment._id);
   if (attempt === null) {
-    throw appError("CONFLICT", "Write some code before submitting.");
+    throw appError("CONFLICT", assessment.kind === "task" ? "Write some code before submitting." : "Press Start first.");
   }
   if (attempt.status === "submitted") {
-    throw appError("CONFLICT", "You already submitted this task.");
+    throw appError("CONFLICT", "You already submitted this.");
   }
-  await gradeAttempt(ctx, attempt, { auto: false });
+  // The page submits when its timer runs out; that counts as automatic.
+  const late = attempt.deadlineAt !== undefined && Date.now() >= attempt.deadlineAt;
+  await gradeAttempt(ctx, attempt, { auto: late });
   return null;
 }
 
-/** Cron: grade the work of everyone still in progress on a task that has closed. */
+/** The attempt's score from its answers, after a lecturer changed the points of one. */
+export async function recomputeScore(ctx: MutationCtx, attempt: Doc<"attempts">) {
+  let score = 0;
+  for (const question of await questionsOf(ctx, attempt.assessmentId)) {
+    const response = await responseFor(ctx, attempt._id, question._id);
+    score += response?.manualPoints ?? response?.autoScore ?? 0;
+  }
+  await ctx.db.patch("attempts", attempt._id, { score: Math.round(score * 100) / 100 });
+}
+
+/** Whether any essay in this attempt still waits for a lecturer's points. */
+export async function hasUngradedEssays(ctx: QueryCtx, attemptId: Id<"attempts">, questions: Doc<"questions">[]) {
+  for (const question of questions) {
+    if (question.type !== "essay") continue;
+    const response = await responseFor(ctx, attemptId, question._id);
+    if (response !== null && awaitsGrading(response.value, response.manualPoints)) return true;
+  }
+  return false;
+}
+
+/**
+ * Cron: grade the work of everyone still in progress on an assessment that has
+ * closed, or whose own time limit ran out (the page usually submits first).
+ */
 export async function autoSubmitClosed(ctx: MutationCtx): Promise<number> {
   const now = Date.now();
   const open = await ctx.db
@@ -702,8 +780,9 @@ export async function autoSubmitClosed(ctx: MutationCtx): Promise<number> {
       closed = assessment !== null && closesAt !== undefined && closesAt <= now;
       closedCache.set(attempt.assessmentId, closed);
     }
+    const timeUp = attempt.deadlineAt !== undefined && attempt.deadlineAt + DEADLINE_GRACE_MS <= now;
     // Keep each run small; the next minute picks up the rest.
-    if (closed && submitted < 50) {
+    if ((closed || timeUp) && submitted < 50) {
       await gradeAttempt(ctx, attempt, { auto: true });
       submitted++;
     }

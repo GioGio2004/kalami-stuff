@@ -209,7 +209,7 @@ export function AssessmentBuilder({
 
         <div className="space-y-4 lg:col-span-5">
           <SettingsCard key={assessment._id} assessment={assessment} canEdit={canEdit} onUpdate={onUpdate} />
-          {hasCode && <Submissions detail={detail} />}
+          {(hasCode || assessment.status !== "draft") && <Submissions detail={detail} />}
         </div>
       </div>
 

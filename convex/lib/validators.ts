@@ -290,10 +290,23 @@ export type IntegrityCounts = Infer<typeof integrityCountsValidator>;
 
 export const integrityColorValidator = v.union(v.literal("green"), v.literal("yellow"), v.literal("red"));
 
-/** What a student saved for one question. A union once other question types join. */
-export const responseValueValidator = v.object({
-  type: v.literal("code"),
-  files: v.array(codeFileValidator),
-});
+/** What a student saved for one question; `type` matches the question's. */
+export const responseValueValidator = v.union(
+  v.object({ type: v.literal("code"), files: v.array(codeFileValidator) }),
+  v.object({ type: v.literal("single"), optionId: v.string() }),
+  v.object({ type: v.literal("multiple"), optionIds: v.array(v.string()) }),
+  v.object({ type: v.literal("short"), text: v.string() }),
+  v.object({ type: v.literal("essay"), text: v.string() }),
+);
+export type ResponseValue = Infer<typeof responseValueValidator>;
+
+/** A quiz answer as the student app sends it: every type except code (code saves whole files). */
+export const answerValueValidator = v.union(
+  v.object({ type: v.literal("single"), optionId: v.string() }),
+  v.object({ type: v.literal("multiple"), optionIds: v.array(v.string()) }),
+  v.object({ type: v.literal("short"), text: v.string() }),
+  v.object({ type: v.literal("essay"), text: v.string() }),
+);
+export type AnswerValue = Infer<typeof answerValueValidator>;
 
 export const checkOutcomeValidator = v.object({ id: v.string(), passed: v.boolean() });

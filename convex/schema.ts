@@ -185,6 +185,8 @@ export default defineSchema({
     number: v.number(),
     status: attemptStatusValidator,
     startedAt: v.number(),
+    // Timed quizzes and exams: min(start + time limit, closesAt). Answers after it are refused.
+    deadlineAt: v.optional(v.number()),
     submittedAt: v.optional(v.number()),
     score: v.optional(v.number()),
     maxScore: v.number(),
@@ -212,7 +214,10 @@ export default defineSchema({
     savedAt: v.number(),
     // Written by the server on submit, from every check including hidden ones.
     checkResults: v.optional(v.array(checkOutcomeValidator)),
+    // Points the server gave on submit. Essays have none until a lecturer grades them.
     autoScore: v.optional(v.number()),
+    // Points a lecturer gave this answer; they replace autoScore.
+    manualPoints: v.optional(v.number()),
   }).index("by_attemptId_and_questionId", ["attemptId", "questionId"]),
 
   // Red-pen notes a lecturer leaves on a line of a student's code.

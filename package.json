@@ -1,0 +1,40 @@
+{
+  "name": "kalami-stuff",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3101",
+    "dev:backend": "convex dev",
+    "build": "next build",
+    "start": "next start --port 3101",
+    "lint": "eslint",
+    "test": "vitest run",
+    "api:student": "convex-helpers ts-api-spec --output-file ../kalami/convex-api/api.ts"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "^7.9.10",
+    "@modelcontextprotocol/server": "^2.3.0",
+    "convex": "^1.46.0",
+    "mcp-handler": "^2.2.0",
+    "motion": "^14.0.0",
+    "next": "16.3.8",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "svix": "^2.6.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^24.19.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "convex-helpers": "^0.1.125",
+    "convex-test": "^0.0.60",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.8",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^5.0.3"
+  }
+}

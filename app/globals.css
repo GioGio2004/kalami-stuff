@@ -1,0 +1,107 @@
+/* Clerk's component styles sit in their own layer so Tailwind utilities can override them. */
+@layer theme, base, clerk, components, utilities;
+@import "tailwindcss";
+
+/*
+ * Kalami palette: paper, ink, a highlighter and a red pen.
+ * A theme only redefines these variables; components never hard-code colours.
+ */
+:root {
+  --paper: #fafaf7;
+  --panel: #eeede8;
+  --panel-strong: #e3e2dc;
+  --card: #ffffff;
+  --ink: #141414;
+  --graphite: #64635e;
+  --line: #deddd6;
+  --charcoal: #2b2b29;
+  --charcoal-soft: #3a3a37;
+  --highlighter: #dcf35a;
+  --highlighter-deep: #b5d22b;
+  --red-pen: #ee4a2e;
+  --ok: #2c9e62;
+  --warn: #dd9a00;
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-panel: var(--panel);
+  --color-panel-strong: var(--panel-strong);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-graphite: var(--graphite);
+  --color-line: var(--line);
+  --color-charcoal: var(--charcoal);
+  --color-charcoal-soft: var(--charcoal-soft);
+  --color-highlighter: var(--highlighter);
+  --color-highlighter-deep: var(--highlighter-deep);
+  --color-red-pen: var(--red-pen);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  /* Latin fonts first; Georgian letters fall through to Noto Sans Georgian. */
+  --font-sans: var(--font-geist-sans), var(--font-georgian), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-hand: var(--font-caveat), var(--font-georgian), cursive;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  /* Elements that slide in from the side start offset; they must not widen the page. */
+  overflow-x: clip;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+::selection {
+  background: var(--highlighter);
+  color: var(--ink);
+}
+
+/* Ticket notches, cut with masks so they stay transparent on any background. */
+@utility notch-top {
+  mask: radial-gradient(34px 20px at 50% 0, #0000 98%, #000 100%);
+}
+
+@utility notch-sides {
+  --notch-y: 62%;
+  mask:
+    radial-gradient(circle 16px at 0 var(--notch-y), #0000 98%, #000 100%),
+    radial-gradient(circle 16px at 100% var(--notch-y), #0000 98%, #000 100%);
+  mask-composite: intersect;
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@keyframes marquee {
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@utility animate-marquee {
+  animation: marquee 42s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .animate-marquee {
+    animation: none;
+  }
+}

@@ -1,0 +1,222 @@
+import { v } from "convex/values";
+import type { QueryCtx } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
+import {
+  ensureUser,
+  getMemberships,
+  isSuperAdmin,
+  requireIdentity,
+  requireUniversityAdmin,
+} from "./lib/auth";
+import { appError } from "./lib/errors";
+import { requireEmail } from "./lib/input";
+import { inviteRoleValidator, localizedTextValidator } from "./lib/validators";
+
+const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** 192 random bits. Mutation randomness comes from a per-execution seed clients can't see. */
+function generateToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function inviteByToken(ctx: QueryCtx, token: string) {
+  return await ctx.db
+    .query("invites")
+    .withIndex("by_token", (q) => q.eq("token", token))
+    .unique();
+}
+
+/** University admins invite lecturers; only the super admin can invite university admins. */
+export const create = mutation({
+  args: {
+    universityId: v.id("universities"),
+    email: v.string(),
+    role: inviteRoleValidator,
+  },
+  returns: v.object({ inviteId: v.id("invites"), token: v.string() }),
+  handler: async (ctx, args) => {
+    const { user, isSuperAdmin } = await requireUniversityAdmin(ctx, args.universityId);
+    if (args.role === "uni_admin" && !isSuperAdmin) {
+      throw appError("FORBIDDEN", "Only the platform admin can appoint university admins.");
+    }
+    const university = await ctx.db.get("universities", args.universityId);
+    if (university === null || university.status !== "active") {
+      throw appError("NOT_FOUND", "That university isn't available.");
+    }
+    const token = generateToken();
+    const inviteId = await ctx.db.insert("invites", {
+      email: requireEmail(args.email),
+      universityId: university._id,
+      role: args.role,
+      token,
+      invitedBy: user._id,
+      expiresAt: Date.now() + INVITE_TTL_MS,
+    });
+    return { inviteId, token };
+  },
+});
+
+export const listForUniversity = query({
+  args: { universityId: v.id("universities") },
+  returns: v.array(
+    v.object({
+      _id: v.id("invites"),
+      _creationTime: v.number(),
+      email: v.string(),
+      role: inviteRoleValidator,
+      // Only for pending invites the caller may send or withdraw.
+      token: v.optional(v.string()),
+      expiresAt: v.number(),
+      acceptedAt: v.optional(v.number()),
+      revokedAt: v.optional(v.number()),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const { isSuperAdmin } = await requireUniversityAdmin(ctx, args.universityId);
+    const invites = await ctx.db
+      .query("invites")
+      .withIndex("by_universityId", (q) => q.eq("universityId", args.universityId))
+      .order("desc")
+      .take(100);
+    return invites.map((invite) => {
+      const pending = invite.acceptedAt === undefined && invite.revokedAt === undefined;
+      const manageable = invite.role === "lecturer" || isSuperAdmin;
+      return {
+        _id: invite._id,
+        _creationTime: invite._creationTime,
+        email: invite.email,
+        role: invite.role,
+        token: pending && manageable ? invite.token : undefined,
+        expiresAt: invite.expiresAt,
+        acceptedAt: invite.acceptedAt,
+        revokedAt: invite.revokedAt,
+      };
+    });
+  },
+});
+
+/**
+ * Deliberately public: the invitee opens the link before they have an account.
+ * The unguessable token is the secret, and accepting still requires the invited email.
+ * Expiry is left to the caller because queries must not read the clock.
+ */
+export const getByToken = query({
+  args: { token: v.string() },
+  returns: v.union(
+    v.null(),
+    v.object({
+      email: v.string(),
+      role: inviteRoleValidator,
+      universityName: localizedTextValidator,
+      expiresAt: v.number(),
+      status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("revoked")),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    if (args.token.length > 128) {
+      return null;
+    }
+    const invite = await inviteByToken(ctx, args.token);
+    if (invite === null) {
+      return null;
+    }
+    const university = await ctx.db.get("universities", invite.universityId);
+    if (university === null) {
+      return null;
+    }
+    return {
+      email: invite.email,
+      role: invite.role,
+      universityName: university.name,
+      expiresAt: invite.expiresAt,
+      status:
+        invite.revokedAt !== undefined
+          ? ("revoked" as const)
+          : invite.acceptedAt !== undefined
+            ? ("accepted" as const)
+            : ("pending" as const),
+    };
+  },
+});
+
+export const accept = mutation({
+  args: { token: v.string() },
+  returns: v.object({ universityId: v.id("universities"), role: inviteRoleValidator }),
+  handler: async (ctx, args) => {
+    const user = await ensureUser(ctx);
+    const invite = await inviteByToken(ctx, args.token);
+    if (invite === null || invite.revokedAt !== undefined) {
+      throw appError("NOT_FOUND", "This invite doesn't exist or was withdrawn.");
+    }
+    const result = { universityId: invite.universityId, role: invite.role };
+    if (invite.acceptedAt !== undefined) {
+      if (invite.acceptedBy === user._id) {
+        return result;
+      }
+      throw appError("CONFLICT", "This invite has already been used.");
+    }
+    if (invite.expiresAt < Date.now()) {
+      throw appError("EXPIRED", "This invite has expired. Ask for a new one.");
+    }
+    // ensureUser just copied the email from the verified session token.
+    if (user.email !== invite.email) {
+      throw appError(
+        "FORBIDDEN",
+        `This invite is for ${invite.email}, but you're signed in as ${user.email}.`,
+      );
+    }
+    // Owning the invited mailbox is the only thing between a token and a staff role,
+    // so anything short of an explicit `true` (missing or null claim) is refused.
+    const identity = await requireIdentity(ctx);
+    if (identity.emailVerified !== true) {
+      throw appError("FORBIDDEN", "Verify your email address first.");
+    }
+    const memberships = await getMemberships(ctx, user._id);
+    if (!isSuperAdmin(memberships) && memberships.some((m) => m.role === "student")) {
+      throw appError(
+        "CONFLICT",
+        "This is a student account. Staff need a separate account: ask for the invite to go to another email.",
+      );
+    }
+    const university = await ctx.db.get("universities", invite.universityId);
+    if (university === null || university.status !== "active") {
+      throw appError("NOT_FOUND", "That university isn't available.");
+    }
+
+    const alreadyMember = memberships.some(
+      (m) => m.role === invite.role && m.universityId === invite.universityId,
+    );
+    if (!alreadyMember) {
+      await ctx.db.insert("memberships", {
+        userId: user._id,
+        universityId: invite.universityId,
+        role: invite.role,
+      });
+    }
+    await ctx.db.patch("invites", invite._id, { acceptedAt: Date.now(), acceptedBy: user._id });
+    return result;
+  },
+});
+
+export const revoke = mutation({
+  args: { inviteId: v.id("invites") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const invite = await ctx.db.get("invites", args.inviteId);
+    if (invite === null) {
+      throw appError("NOT_FOUND", "Invite not found.");
+    }
+    const { isSuperAdmin } = await requireUniversityAdmin(ctx, invite.universityId);
+    if (invite.role === "uni_admin" && !isSuperAdmin) {
+      throw appError("FORBIDDEN", "Only the platform admin can withdraw admin invites.");
+    }
+    if (invite.acceptedAt !== undefined) {
+      throw appError("CONFLICT", "This invite was already accepted.");
+    }
+    if (invite.revokedAt === undefined) {
+      await ctx.db.patch("invites", invite._id, { revokedAt: Date.now() });
+    }
+    return null;
+  },
+});

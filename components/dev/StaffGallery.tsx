@@ -101,6 +101,7 @@ const webBasics: CourseSummary = {
   role: "owner",
   canEdit: true,
   counts: { tasks: 0, quizzes: 3, midterms: 1, finals: 0, drafts: 2, published: 2 },
+  students: 28,
   createdVia: "web",
   updatedAt: NOW - 2 * 60 * 60 * 1000,
 };

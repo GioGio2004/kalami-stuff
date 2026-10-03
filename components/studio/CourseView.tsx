@@ -168,9 +168,13 @@ export function CourseView({
             <p className={`mt-2 font-mono text-4xl font-semibold tracking-[0.16em] ${course.joinEnabled ? "" : "text-paper/40 line-through"}`}>
               {course.joinCode}
             </p>
-            <p className="mt-3 text-sm leading-relaxed text-paper/65">
-              Students will use this code to join your course in the student app. Joining by code is coming soon, so
-              you can share it ahead of time.{" "}
+            <p className={`mt-3 text-sm font-medium ${course.students === 0 ? "text-highlighter" : "text-paper"}`}>
+              {course.students === 0
+                ? "No students yet. They only see this course after joining with the code."
+                : `${course.students} student${course.students === 1 ? "" : "s"} joined`}
+            </p>
+            <p className="mt-2 text-sm leading-relaxed text-paper/65">
+              Students type this code on their dashboard in the student app.{" "}
               {course.joinEnabled
                 ? "Switch it off once everyone is in; New code replaces this one and the old code stops working."
                 : "Joining is switched off: nobody new can join with it."}

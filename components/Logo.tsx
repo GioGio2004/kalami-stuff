@@ -16,11 +16,12 @@ export function KalamiMark({ className }: { className?: string }) {
   );
 }
 
-export function Logo({ tone = "ink" }: { tone?: "ink" | "paper" }) {
+/** `compact` drops the wordmark on phones, where a header needs the room for its links. */
+export function Logo({ tone = "ink", compact = false }: { tone?: "ink" | "paper"; compact?: boolean }) {
   return (
     <span className="flex items-center gap-2.5">
       <KalamiMark className="size-9 shrink-0" />
-      <span className="flex flex-col leading-none">
+      <span className={`flex-col leading-none ${compact ? "hidden sm:flex" : "flex"}`}>
         <span
           className={`text-[1.3rem] font-semibold tracking-[-0.03em] ${tone === "paper" ? "text-paper" : "text-ink"}`}
         >

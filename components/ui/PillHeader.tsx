@@ -29,7 +29,7 @@ export function PillHeader({
         transition={{ type: "spring", stiffness: 140, damping: 18 }}
         className="mx-auto flex max-w-6xl items-center gap-2 rounded-full border border-line bg-paper/80 py-2 pl-4 pr-2 shadow-[0_10px_40px_-18px_rgba(20,20,20,0.35)] backdrop-blur-md sm:gap-3 sm:pl-5">
         <Link href={homeHref} className="flex shrink-0 items-center gap-2.5" aria-label="Home">
-          <Logo />
+          <Logo compact={links.length > 0} />
           {tag && (
             <span className="hidden rounded-full bg-ink px-2.5 py-1 text-xs font-semibold text-highlighter sm:inline">
               {tag}
@@ -37,7 +37,7 @@ export function PillHeader({
           )}
         </Link>
         {links.length > 0 && (
-          <nav className="ml-1 flex min-w-0 items-center gap-1 overflow-x-auto sm:ml-4">
+          <nav className="no-scrollbar ml-1 flex min-w-0 items-center gap-0.5 overflow-x-auto sm:ml-4 sm:gap-1">
             {links.map((link) => {
               const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
               return (
@@ -45,7 +45,7 @@ export function PillHeader({
                   key={link.href}
                   href={link.href}
                   aria-current={active ? "page" : undefined}
-                  className={`relative shrink-0 rounded-full px-3.5 py-2 text-[15px] transition-colors ${
+                  className={`relative shrink-0 rounded-full px-3 py-2 text-sm transition-colors sm:px-3.5 sm:text-[15px] ${
                     active ? "font-medium text-ink" : "text-graphite hover:bg-panel hover:text-ink"
                   }`}
                 >

@@ -3,9 +3,10 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { requireStudent } from "./lib/auth";
 import { answerValueValidator, codeFileValidator, integrityCountsValidator } from "./lib/validators";
 import {
-  autoSubmitClosed,
+  autoSubmitDue,
   getStudentCourse,
   getStudentTask,
+  gradeDue as gradeDueAttempt,
   joinCourse,
   joinResultValidator,
   listMyCourses,
@@ -139,9 +140,19 @@ export const submit = mutation({
   },
 });
 
-/** Every minute (crons.ts): submit the work left in progress on tasks that have closed. */
+/** Every minute (crons.ts): hand out the work whose time ran out, or whose assessment closed, for grading. */
 export const autoSubmit = internalMutation({
   args: {},
   returns: v.number(),
-  handler: async (ctx) => await autoSubmitClosed(ctx),
+  handler: async (ctx) => await autoSubmitDue(ctx),
+});
+
+/** Scheduled by autoSubmit, one per attempt. */
+export const gradeDue = internalMutation({
+  args: { attemptId: v.id("attempts") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await gradeDueAttempt(ctx, args.attemptId);
+    return null;
+  },
 });

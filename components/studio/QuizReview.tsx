@@ -10,6 +10,8 @@ import { WritingDots } from "@/components/ui/StatusScreen";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { errorMessage } from "@/lib/errors";
+import { useIsMobile } from "@/lib/useDevice";
+import { OnComputer } from "./OnComputer";
 import { COLOR_TONE, FullScreen, GradeBar, integritySummary, SubmissionReview } from "./TaskTryout";
 
 type Detail = FunctionReturnType<typeof api.submissions.detail>;
@@ -19,9 +21,14 @@ type Answer = Detail["answers"][number];
 export function QuizReview({ attemptId, title, onClose }: { attemptId: Id<"attempts">; title: string; onClose: () => void }) {
   const detail = useQuery(api.submissions.detail, { attemptId });
   const [showCode, setShowCode] = useState(false);
+  const mobile = useIsMobile();
 
   if (showCode) {
-    return <SubmissionReview attemptId={attemptId} title={title} onClose={() => setShowCode(false)} />;
+    return mobile ? (
+      <OnComputer what="Reviewing code" onClose={() => setShowCode(false)} />
+    ) : (
+      <SubmissionReview attemptId={attemptId} title={title} onClose={() => setShowCode(false)} />
+    );
   }
   return (
     <FullScreen label="Student answers" onClose={onClose}>

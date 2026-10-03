@@ -3,6 +3,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { fill, seededShuffle } from "../lib/checks";
 import { appError } from "../lib/errors";
+import { isAnswered } from "../lib/grading";
 import { addCounts, hasCounts, NO_COUNTS } from "../lib/integrity";
 import {
   assessmentKindValidator,
@@ -76,6 +77,8 @@ export const studentQuizValidator = v.object({
     resultsVisibility: resultsVisibilityValidator,
     totalPoints: v.number(),
     questionCount: v.number(),
+    /** Code questions open the sandbox, which phones don't get; the start screen warns about them. */
+    codeQuestionCount: v.number(),
     attemptsAllowed: v.number(),
   }),
   attemptsUsed: v.number(),
@@ -87,6 +90,7 @@ export const studentQuizValidator = v.object({
       number: v.number(),
       status: attemptStatusValidator,
       startedAt: v.number(),
+      /** When this attempt ends: its time limit or the closing time, whichever comes first. */
       deadlineAt: v.optional(v.number()),
       submittedAt: v.optional(v.number()),
       autoSubmitted: v.boolean(),
@@ -113,6 +117,10 @@ export const studentQuizValidator = v.object({
   /** The lecturer's red-pen notes on code questions, once submitted. */
   comments: v.array(commentValidator),
 });
+
+function effectiveDeadline(limitEnd: number | undefined, closesAt: number | undefined): number | undefined {
+  return limitEnd !== undefined && closesAt !== undefined ? Math.min(limitEnd, closesAt) : (limitEnd ?? closesAt);
+}
 
 /** A question as this student sees it: their option order, their code variant. */
 function studentQuestion(question: Doc<"questions">, student: Student, assessment: Doc<"assessments">) {
@@ -188,6 +196,7 @@ export async function getStudentQuiz(
       resultsVisibility: assessment.settings.resultsVisibility,
       totalPoints: assessment.totalPoints,
       questionCount: assessment.questionCount,
+      codeQuestionCount: all.filter((q) => q.type === "code").length,
       attemptsAllowed: assessment.settings.attemptsAllowed,
     },
     attemptsUsed: attempts.length,
@@ -199,7 +208,7 @@ export async function getStudentQuiz(
             number: attempt.number,
             status: attempt.status,
             startedAt: attempt.startedAt,
-            deadlineAt: attempt.deadlineAt,
+            deadlineAt: effectiveDeadline(attempt.deadlineAt, assessment.settings.closesAt),
             submittedAt: attempt.submittedAt,
             autoSubmitted: attempt.autoSubmitted ?? false,
             score: results !== "none" ? finalScore(attempt) : undefined,
@@ -238,10 +247,7 @@ export async function startQuiz(ctx: MutationCtx, student: Student, assessmentId
     throw appError("CONFLICT", "There are no questions yet. Ask your lecturer.");
   }
   const now = Date.now();
-  const { timeLimitMin, closesAt } = assessment.settings;
-  const limitEnd = timeLimitMin === undefined ? undefined : now + timeLimitMin * 60_000;
-  const deadlineAt =
-    limitEnd !== undefined && closesAt !== undefined ? Math.min(limitEnd, closesAt) : (limitEnd ?? closesAt);
+  const { timeLimitMin } = assessment.settings;
   return await ctx.db.insert("attempts", {
     assessmentId: assessment._id,
     courseId: assessment.courseId,
@@ -249,7 +255,8 @@ export async function startQuiz(ctx: MutationCtx, student: Student, assessmentId
     number: attempts.length + 1,
     status: "in_progress",
     startedAt: now,
-    deadlineAt,
+    // The closing time isn't copied in, so a lecturer who moves it moves it for everyone.
+    deadlineAt: timeLimitMin === undefined ? undefined : now + timeLimitMin * 60_000,
     maxScore: assessment.totalPoints,
     integrity: NO_COUNTS,
   });
@@ -299,11 +306,17 @@ export async function saveAnswer(
     throw appError("NOT_FOUND", "Question not found.");
   }
   const value = checkAnswer(question, args.answer);
-  if (hasCounts(args.integrity)) {
-    await ctx.db.patch("attempts", attempt._id, { integrity: addCounts(attempt.integrity, args.integrity!) });
-  }
   const now = Date.now();
   const existing = await responseFor(ctx, attempt._id, question._id);
+  // The attempt is only written when its counters change, so typing in an essay
+  // doesn't wake up the lecturer's list.
+  const answeredDelta = Number(isAnswered(value)) - Number(isAnswered(existing?.value));
+  if (answeredDelta !== 0 || hasCounts(args.integrity)) {
+    await ctx.db.patch("attempts", attempt._id, {
+      answered: (attempt.answered ?? 0) + answeredDelta,
+      integrity: hasCounts(args.integrity) ? addCounts(attempt.integrity, args.integrity!) : attempt.integrity,
+    });
+  }
   if (existing === null) {
     await ctx.db.insert("responses", {
       attemptId: attempt._id,

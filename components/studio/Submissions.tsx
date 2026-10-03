@@ -1,10 +1,13 @@
 "use client";
 
-import { useQuery } from "convex/react";
+import { usePaginatedQuery } from "convex/react";
 import { useState } from "react";
+import { Button } from "@/components/ui/buttons";
 import { Pill } from "@/components/ui/Pill";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { useIsMobile } from "@/lib/useDevice";
+import { OnComputer } from "./OnComputer";
 import { QuizReview } from "./QuizReview";
 import { SubmissionReview } from "./TaskTryout";
 import type { AssessmentDetail } from "./types";
@@ -15,19 +18,30 @@ const DOT: Record<"green" | "yellow" | "red", string> = {
   red: "bg-red-pen",
 };
 
-/** Who has started, how far they are, integrity and score. Live. */
+/** Rows per page: the list stays cheap however big the class is. */
+const PAGE_SIZE = 50;
+
+/** Who has started, how far they are, integrity and score. Live, a page at a time. */
 export function Submissions({ detail }: { detail: AssessmentDetail }) {
-  const rows = useQuery(api.submissions.forAssessment, { assessmentId: detail.assessment._id });
+  const { results: rows, status, loadMore } = usePaginatedQuery(
+    api.submissions.forAssessment,
+    { assessmentId: detail.assessment._id },
+    { initialNumItems: PAGE_SIZE },
+  );
   const [open, setOpen] = useState<Id<"attempts"> | null>(null);
   const codeOnly = detail.questions.length > 0 && detail.questions.every((q) => q.type === "code");
+  const mobile = useIsMobile();
+  const loading = status === "LoadingFirstPage";
 
   return (
     <section className="rounded-[2rem] bg-card p-5 sm:p-6">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-xl font-medium tracking-tight">Student work</h2>
-        <span className="rounded-full bg-panel px-3 py-1 text-sm tabular-nums text-graphite">{rows?.length ?? "…"}</span>
+        <span className="rounded-full bg-panel px-3 py-1 text-sm tabular-nums text-graphite">
+          {loading ? "…" : `${rows.length}${status === "CanLoadMore" ? "+" : ""}`}
+        </span>
       </div>
-      {rows === undefined ? null : rows.length === 0 ? (
+      {loading ? null : rows.length === 0 ? (
         <p className="mt-3 text-sm leading-relaxed text-graphite">
           {detail.assessment.status === "published"
             ? "Nobody has started yet. Work appears here live as students save."
@@ -84,6 +98,17 @@ export function Submissions({ detail }: { detail: AssessmentDetail }) {
               );
             })}
           </ul>
+          {status !== "Exhausted" && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-3"
+              disabled={status === "LoadingMore"}
+              onClick={() => loadMore(PAGE_SIZE)}
+            >
+              {status === "LoadingMore" ? "Loading…" : "Show more"}
+            </Button>
+          )}
           <p className="mt-3 text-xs leading-relaxed text-graphite">
             The dot is the integrity colour: advice from the counters, never a verdict. Open a row to read the answers,
             {codeOnly ? " leave red-pen notes" : " give points for written answers"} and grade.
@@ -91,7 +116,9 @@ export function Submissions({ detail }: { detail: AssessmentDetail }) {
         </>
       )}
       {open !== null &&
-        (codeOnly ? (
+        (codeOnly && mobile ? (
+          <OnComputer what="Reviewing code" onClose={() => setOpen(null)} />
+        ) : codeOnly ? (
           <SubmissionReview attemptId={open} title={detail.assessment.title} onClose={() => setOpen(null)} />
         ) : (
           <QuizReview attemptId={open} title={detail.assessment.title} onClose={() => setOpen(null)} />

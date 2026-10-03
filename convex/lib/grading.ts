@@ -39,6 +39,21 @@ export function scoreAnswer(key: AnswerKey | null, value: ResponseValue | undefi
   }
 }
 
+/** Whether a saved answer counts as answered on the lecturer's list. Code counts steps instead. */
+export function isAnswered(value: ResponseValue | undefined): boolean {
+  switch (value?.type) {
+    case "single":
+      return true;
+    case "multiple":
+      return value.optionIds.length > 0;
+    case "short":
+    case "essay":
+      return value.text.trim() !== "";
+    default:
+      return false;
+  }
+}
+
 /** An essay the student wrote something for that no lecturer has scored yet. */
 export function awaitsGrading(value: ResponseValue, manualPoints: number | undefined): boolean {
   return value.type === "essay" && value.text.trim() !== "" && manualPoints === undefined;

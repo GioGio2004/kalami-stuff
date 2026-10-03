@@ -54,6 +54,8 @@ export const courseSummaryValidator = v.object({
   role: courseRoleValidator,
   canEdit: v.boolean(),
   counts: courseCountsValidator,
+  /** Students who joined. Only they see the course's published work. */
+  students: v.number(),
   createdVia: viaValidator,
   updatedAt: v.number(),
 });
@@ -114,9 +116,21 @@ async function toSummary(
     role: access.role,
     canEdit: access.canEdit,
     counts: await assessmentCounts(ctx, course._id),
+    students: await studentCount(ctx, course._id),
     createdVia: course.createdVia,
     updatedAt: course.updatedAt,
   };
+}
+
+/** Active enrollments, counted up to a cap no single course reaches. */
+const STUDENT_COUNT_CAP = 2000;
+
+async function studentCount(ctx: QueryCtx, courseId: Id<"courses">) {
+  const rows = await ctx.db
+    .query("enrollments")
+    .withIndex("by_courseId", (q) => q.eq("courseId", courseId))
+    .take(STUDENT_COUNT_CAP);
+  return rows.filter((row) => row.status === "active").length;
 }
 
 /** Universities the actor may create courses in (all active ones for the super admin). */

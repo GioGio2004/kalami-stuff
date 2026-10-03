@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { requireStudent } from "../lib/auth";
@@ -628,12 +629,17 @@ export async function saveCode(
   }
   const { code } = taskFor(question.code, student.user, assessment._id);
   const files = cleanFiles(code, args.files);
-  if (hasCounts(args.integrity)) {
-    await ctx.db.patch("attempts", attempt._id, { integrity: addCounts(attempt.integrity, args.integrity!) });
-  }
   const now = Date.now();
   const progress = stepProgress(code, files);
   const existing = await responseFor(ctx, attempt._id, question._id);
+  // Written only when a step is gained or lost, so typing doesn't wake up the lecturer's list.
+  const stepsDelta = progress.step - (existing?.progress?.step ?? 0);
+  if (stepsDelta !== 0 || hasCounts(args.integrity)) {
+    await ctx.db.patch("attempts", attempt._id, {
+      stepsDone: (attempt.stepsDone ?? 0) + stepsDelta,
+      integrity: hasCounts(args.integrity) ? addCounts(attempt.integrity, args.integrity!) : attempt.integrity,
+    });
+  }
   const value = { type: "code" as const, files };
   if (existing === null) {
     await ctx.db.insert("responses", {
@@ -683,12 +689,15 @@ export async function gradeAttempt(ctx: MutationCtx, attempt: Doc<"attempts">, o
   const user = await ctx.db.get("users", attempt.userId);
   if (user === null) return;
   let score = 0;
+  let stepsDone = 0;
+  let needsGrading = false;
   for (const question of await questionsOf(ctx, attempt.assessmentId)) {
     if (question.type !== "code" || question.code === undefined) {
       const response = await responseFor(ctx, attempt._id, question._id);
       const autoScore = scoreAnswer(await answerKeyOf(ctx, question._id), response?.value, question.points);
       if (response !== null) {
         await ctx.db.patch("responses", response._id, { autoScore });
+        needsGrading ||= awaitsGrading(response.value, response.manualPoints);
       }
       score += response?.manualPoints ?? autoScore ?? 0;
       continue;
@@ -703,17 +712,20 @@ export async function gradeAttempt(ctx: MutationCtx, attempt: Doc<"attempts">, o
     const autoScore = rules.length === 0 ? 0 : Math.round((question.points * passed * 100) / rules.length) / 100;
     score += response?.manualPoints ?? autoScore;
     if (response === null) {
+      const progress = stepProgress(code, files);
+      stepsDone += progress.step;
       await ctx.db.insert("responses", {
         attemptId: attempt._id,
         questionId: question._id,
         userId: attempt.userId,
         value: { type: "code", files },
-        progress: stepProgress(code, files),
+        progress,
         savedAt: Date.now(),
         checkResults,
         autoScore,
       });
     } else {
+      stepsDone += response.progress?.step ?? 0;
       await ctx.db.patch("responses", response._id, { checkResults, autoScore });
     }
   }
@@ -721,12 +733,14 @@ export async function gradeAttempt(ctx: MutationCtx, attempt: Doc<"attempts">, o
     status: "submitted",
     submittedAt: Date.now(),
     score: Math.round(score * 100) / 100,
+    stepsDone,
+    needsGrading: needsGrading || undefined,
     autoSubmitted: options.auto ? true : undefined,
   });
 }
 
 export async function submitTask(ctx: MutationCtx, student: Student, assessmentId: Id<"assessments">) {
-  const { assessment } = await requireOpenableAssessment(ctx, student, assessmentId);
+  const { assessment, state } = await requireOpenableAssessment(ctx, student, assessmentId);
   const attempt = await latestAttempt(ctx, student.user._id, assessment._id);
   if (attempt === null) {
     throw appError("CONFLICT", assessment.kind === "task" ? "Write some code before submitting." : "Press Start first.");
@@ -735,7 +749,7 @@ export async function submitTask(ctx: MutationCtx, student: Student, assessmentI
     throw appError("CONFLICT", "You already submitted this.");
   }
   // The page submits when its timer runs out; that counts as automatic.
-  const late = attempt.deadlineAt !== undefined && Date.now() >= attempt.deadlineAt;
+  const late = state === "closed" || (attempt.deadlineAt !== undefined && Date.now() >= attempt.deadlineAt);
   await gradeAttempt(ctx, attempt, { auto: late });
   return null;
 }
@@ -743,11 +757,16 @@ export async function submitTask(ctx: MutationCtx, student: Student, assessmentI
 /** The attempt's score from its answers, after a lecturer changed the points of one. */
 export async function recomputeScore(ctx: MutationCtx, attempt: Doc<"attempts">) {
   let score = 0;
+  let needsGrading = false;
   for (const question of await questionsOf(ctx, attempt.assessmentId)) {
     const response = await responseFor(ctx, attempt._id, question._id);
     score += response?.manualPoints ?? response?.autoScore ?? 0;
+    needsGrading ||= response !== null && awaitsGrading(response.value, response.manualPoints);
   }
-  await ctx.db.patch("attempts", attempt._id, { score: Math.round(score * 100) / 100 });
+  await ctx.db.patch("attempts", attempt._id, {
+    score: Math.round(score * 100) / 100,
+    needsGrading: needsGrading || undefined,
+  });
 }
 
 /** Whether any essay in this attempt still waits for a lecturer's points. */
@@ -760,32 +779,51 @@ export async function hasUngradedEssays(ctx: QueryCtx, attemptId: Id<"attempts">
   return false;
 }
 
+/** How far back the cron looks for assessments that closed with work still open. */
+const CLOSED_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+/** Attempts handed out per cron run; the next minute takes the rest. */
+const AUTO_SUBMIT_BATCH = 500;
+
 /**
- * Cron: grade the work of everyone still in progress on an assessment that has
- * closed, or whose own time limit ran out (the page usually submits first).
+ * Cron: finds work still in progress whose time limit ran out, or whose
+ * assessment closed, straight from indexes (never a scan of every open
+ * attempt), and grades each in its own scheduled mutation, so one exam's
+ * thousands of attempts never have to fit in one function's time limit.
  */
-export async function autoSubmitClosed(ctx: MutationCtx): Promise<number> {
+export async function autoSubmitDue(ctx: MutationCtx): Promise<number> {
   const now = Date.now();
-  const open = await ctx.db
+  const due = new Set<Id<"attempts">>();
+  const timedOut = await ctx.db
     .query("attempts")
-    .withIndex("by_status", (q) => q.eq("status", "in_progress"))
-    .take(200);
-  let submitted = 0;
-  const closedCache = new Map<Id<"assessments">, boolean>();
-  for (const attempt of open) {
-    let closed = closedCache.get(attempt.assessmentId);
-    if (closed === undefined) {
-      const assessment = await ctx.db.get("assessments", attempt.assessmentId);
-      const closesAt = assessment?.settings.closesAt;
-      closed = assessment !== null && closesAt !== undefined && closesAt <= now;
-      closedCache.set(attempt.assessmentId, closed);
-    }
-    const timeUp = attempt.deadlineAt !== undefined && attempt.deadlineAt + DEADLINE_GRACE_MS <= now;
-    // Keep each run small; the next minute picks up the rest.
-    if ((closed || timeUp) && submitted < 50) {
-      await gradeAttempt(ctx, attempt, { auto: true });
-      submitted++;
-    }
+    .withIndex("by_status_and_deadlineAt", (q) =>
+      q.eq("status", "in_progress").gte("deadlineAt", 0).lte("deadlineAt", now - DEADLINE_GRACE_MS),
+    )
+    .take(AUTO_SUBMIT_BATCH);
+  for (const attempt of timedOut) due.add(attempt._id);
+  const closed = await ctx.db
+    .query("assessments")
+    .withIndex("by_status_and_closesAt", (q) =>
+      q.eq("status", "published").gte("settings.closesAt", now - CLOSED_LOOKBACK_MS).lte("settings.closesAt", now),
+    )
+    .take(100);
+  for (const assessment of closed) {
+    if (due.size >= AUTO_SUBMIT_BATCH) break;
+    const open = await ctx.db
+      .query("attempts")
+      .withIndex("by_assessmentId_and_status", (q) => q.eq("assessmentId", assessment._id).eq("status", "in_progress"))
+      .take(AUTO_SUBMIT_BATCH - due.size);
+    for (const attempt of open) due.add(attempt._id);
   }
-  return submitted;
+  for (const attemptId of due) {
+    await ctx.scheduler.runAfter(0, internal.learn.gradeDue, { attemptId });
+  }
+  return due.size;
+}
+
+/** One attempt the cron found due. Does nothing if the student submitted in the meantime. */
+export async function gradeDue(ctx: MutationCtx, attemptId: Id<"attempts">) {
+  const attempt = await ctx.db.get("attempts", attemptId);
+  if (attempt?.status === "in_progress") {
+    await gradeAttempt(ctx, attempt, { auto: true });
+  }
 }

@@ -9,6 +9,8 @@ import { ArrowDown, ArrowLeft, ArrowUp, Check, Plus, Robot } from "@/components/
 import { Pill, statusLabel, statusTone } from "@/components/ui/Pill";
 import { errorMessage } from "@/lib/errors";
 import { fromLocalInputValue, toLocalInputValue } from "@/lib/format";
+import { useIsMobile } from "@/lib/useDevice";
+import { OnComputer } from "./OnComputer";
 import { QuestionForm } from "./QuestionForm";
 import { Submissions } from "./Submissions";
 import { CodeTaskForm } from "./CodeTaskForm";
@@ -40,7 +42,7 @@ const RESULTS = (Object.keys(RESULTS_LABEL) as AssessmentSettings["resultsVisibi
 const INTEGRITY_HINT: Record<AssessmentSettings["integrityLevel"], string> = {
   off: "Practice: no monitoring at all. Good for self-checks.",
   standard: "Standard: notes when a student leaves the tab or window, for you to review afterwards.",
-  strict: "Strict: needs fullscreen and locks the attempt after repeated exits. For exams.",
+  strict: "Strict: needs fullscreen; every exit is counted and the work hides until they come back. For exams.",
 };
 
 const RESULTS_HINT: Record<AssessmentSettings["resultsVisibility"], string> = {
@@ -74,6 +76,7 @@ export function AssessmentBuilder({
   const [trying, setTrying] = useState<QuestionWithKey | null>(null);
   const [codeForm, setCodeForm] = useState<{ question?: QuestionWithKey } | null>(null);
   const hasCode = questions.some((q) => q.type === "code");
+  const mobile = useIsMobile();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -238,9 +241,15 @@ export function AssessmentBuilder({
         )}
       </Dialog>
 
-      {trying && <TaskTryout question={trying} title={assessment.title} onClose={() => setTrying(null)} />}
+      {trying &&
+        (mobile ? (
+          <OnComputer what="Trying a code task" onClose={() => setTrying(null)} />
+        ) : (
+          <TaskTryout question={trying} title={assessment.title} onClose={() => setTrying(null)} />
+        ))}
 
-      {codeForm && (
+      {codeForm && mobile && <OnComputer what="Writing a code task" onClose={() => setCodeForm(null)} />}
+      {codeForm && !mobile && (
         <CodeTaskForm
           question={codeForm.question}
           onSubmit={async (input) => {
@@ -360,9 +369,10 @@ function QuestionCard({
   );
   return (
     <article className="rounded-2xl border border-line bg-paper p-4">
-      <div className="flex items-start gap-3">
+      {/* Phones: the question takes the full width and the controls drop below it. */}
+      <div className="flex flex-wrap items-start gap-3 sm:flex-nowrap">
         <span className="grid size-8 shrink-0 place-items-center rounded-full bg-panel text-sm font-semibold">{index + 1}</span>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-[calc(100%-2.75rem)] sm:basis-0">
           <div className="flex flex-wrap items-center gap-2 text-xs text-graphite">
             <Pill>{TYPE_LABEL[question.type]}</Pill>
             <span className="tabular-nums">{question.points} pts</span>
@@ -410,7 +420,7 @@ function QuestionCard({
           {question.explanation && <p className="mt-2 text-xs text-graphite">Explanation: {question.explanation}</p>}
         </div>
         {canEdit && (
-          <div className="flex shrink-0 flex-col items-end gap-1">
+          <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 sm:w-auto sm:flex-col sm:items-end">
             <div className="flex gap-1">
               <IconButton label="Move up" disabled={index === 0} onClick={() => onMove(-1)}>
                 <ArrowUp className="size-4" />

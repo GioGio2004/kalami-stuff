@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import type { FunctionArgs, UserIdentity } from "convex/server";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { HONESTY_NOTICE } from "./lib/honestyNotice";
@@ -10,6 +10,7 @@ import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
 const ISSUER = "https://test.clerk.accounts.dev";
+const FIRST_PAGE = { numItems: 100, cursor: null };
 
 function person(name: string): Partial<UserIdentity> {
   return {
@@ -20,6 +21,18 @@ function person(name: string): Partial<UserIdentity> {
     emailVerified: true,
     givenName: name,
   } as Partial<UserIdentity>;
+}
+
+/** The auto-submit cron, then the grading it scheduled (one mutation per attempt). */
+async function runAutoSubmit(t: ReturnType<typeof convexTest>): Promise<number> {
+  vi.useFakeTimers();
+  try {
+    const due = await t.mutation(internal.learn.autoSubmit, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    return due;
+  } finally {
+    vi.useRealTimers();
+  }
 }
 
 async function expectAppError(call: Promise<unknown>, code: string) {
@@ -224,7 +237,7 @@ describe("students and code tasks", () => {
       "CONFLICT",
     );
 
-    const rows = await nino.query(api.submissions.forAssessment, { assessmentId });
+    const rows = (await nino.query(api.submissions.forAssessment, { assessmentId, paginationOpts: FIRST_PAGE })).page;
     // 3 tab switches × 2 + 25 s away (2) + 2 blocked pastes = 10: yellow.
     expect(rows).toMatchObject([
       {
@@ -258,7 +271,7 @@ describe("students and code tasks", () => {
     const graded = await ana.query(api.learn.task, { assessmentId });
     expect(graded.attempt).toMatchObject({ score: 9, feedback: "Good start." });
     expect(graded.comments).toMatchObject([{ file: "style.css", line: 1, author: "nino" }]);
-    await expectAppError(ana.query(api.submissions.forAssessment, { assessmentId }), "FORBIDDEN");
+    await expectAppError(ana.query(api.submissions.forAssessment, { assessmentId, paginationOpts: FIRST_PAGE }), "FORBIDDEN");
     await expectAppError(nino.mutation(api.submissions.setGrade, { attemptId, manualScore: 11 }), "INVALID_INPUT");
   });
 
@@ -283,10 +296,10 @@ describe("students and code tasks", () => {
     await ana.mutation(api.learn.join, { code: joinCode });
     const task = await ana.query(api.learn.task, { assessmentId });
     await ana.mutation(api.learn.saveCodeWork, { assessmentId, questionId, files: task.questions[0].code.files });
-    expect(await t.mutation(internal.learn.autoSubmit, {})).toBe(0);
+    expect(await runAutoSubmit(t)).toBe(0);
     await nino.mutation(api.assessments.update, { assessmentId, settings: { closesAt: Date.now() - 1000 } });
-    expect(await t.mutation(internal.learn.autoSubmit, {})).toBe(1);
-    const rows = await nino.query(api.submissions.forAssessment, { assessmentId });
+    expect(await runAutoSubmit(t)).toBe(1);
+    const rows = (await nino.query(api.submissions.forAssessment, { assessmentId, paginationOpts: FIRST_PAGE })).page;
     expect(rows).toMatchObject([{ status: "submitted", autoSubmitted: true, score: 0 }]);
   });
 
@@ -322,7 +335,7 @@ describe("students and code tasks", () => {
     const files = [{ name: "index.html", content: `<h1 style="color: ${color}">ana</h1>` }];
     expect((await ana.mutation(api.learn.saveCodeWork, { assessmentId, questionId, files })).progress.step).toBe(1);
     await ana.mutation(api.learn.submit, { assessmentId });
-    const rows = await nino.query(api.submissions.forAssessment, { assessmentId });
+    const rows = (await nino.query(api.submissions.forAssessment, { assessmentId, paginationOpts: FIRST_PAGE })).page;
     expect(rows[0].score).toBe(2);
 
     // An unknown placeholder, or a solution that only works for one colour, is refused.
@@ -417,7 +430,7 @@ describe("students and quizzes", () => {
     expect(done.review.find((r) => r.questionId === short)).toMatchObject({ acceptedAnswers: ["Cascading Style Sheets"] });
     expect(done.review.find((r) => r.questionId === essay)?.points).toBeUndefined();
 
-    const [row] = await nino.query(api.submissions.forAssessment, { assessmentId: quizId });
+    const [row] = (await nino.query(api.submissions.forAssessment, { assessmentId: quizId, paginationOpts: FIRST_PAGE })).page;
     expect(row).toMatchObject({ number: 1, answered: 4, questionsTotal: 4, needsGrading: true, score: 4.5 });
     const detail = await nino.query(api.submissions.detail, { attemptId });
     expect(detail.answers.map((a) => a.type)).toEqual(["single", "multiple", "short", "essay"]);
@@ -429,7 +442,7 @@ describe("students and quizzes", () => {
     );
     await nino.mutation(api.submissions.setQuestionPoints, { attemptId, questionId: essay, points: 2.5 });
     expect((await ana.query(api.learn.quiz, { assessmentId: quizId })).attempt).toMatchObject({ score: 7, pendingGrading: false });
-    expect((await nino.query(api.submissions.forAssessment, { assessmentId: quizId }))[0].needsGrading).toBe(false);
+    expect(((await nino.query(api.submissions.forAssessment, { assessmentId: quizId, paginationOpts: FIRST_PAGE })).page)[0].needsGrading).toBe(false);
 
     // A second try, allowed by the settings, starts empty; the best score counts.
     const second = await ana.mutation(api.learn.startAttempt, { assessmentId: quizId });
@@ -462,11 +475,11 @@ describe("students and quizzes", () => {
       }),
       "CONFLICT",
     );
-    expect(await t.mutation(internal.learn.autoSubmit, {})).toBe(1);
+    expect(await runAutoSubmit(t)).toBe(1);
     const after = await ana.query(api.learn.quiz, { assessmentId: quizId });
     // "Score only": the score, but not the questions.
     expect(after).toMatchObject({ attempt: { status: "submitted", autoSubmitted: true, score: 1.5 }, questions: [], review: [] });
-    const rows = await nino.query(api.submissions.forAssessment, { assessmentId: quizId });
+    const rows = (await nino.query(api.submissions.forAssessment, { assessmentId: quizId, paginationOpts: FIRST_PAGE })).page;
     expect(rows).toMatchObject([{ autoSubmitted: true, answered: 1 }]);
   });
 

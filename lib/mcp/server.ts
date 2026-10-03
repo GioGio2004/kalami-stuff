@@ -267,7 +267,7 @@ const INSTRUCTIONS = `You are connected to Kalami, a university learning and exa
 
 Workflow:
 1. Call whoami to learn who you act for and which universities they belong to.
-2. list_courses, or create_course if the course doesn't exist yet.
+2. list_courses and put the work in the course the lecturer means. Students only see courses they joined (each lists its students), so never start a new course on your own: if it's unclear which course, ask. Use create_course only when the lecturer asks for a new course.
 3. create_assessment (kind: task, quiz, midterm or final) inside a course. It starts as a draft.
 4. add_questions in batches of up to 50. Mark correct options with "correct": true.
 5. get_assessment to review what you built; update_question / delete_question / reorder_questions to fix it.
@@ -313,7 +313,8 @@ const handler = createMcpHandler(
       "list_courses",
       {
         title: "List courses",
-        description: "Every course the lecturer can work on, with join codes and assessment counts.",
+        description:
+          "Every course the lecturer can work on, with join codes, assessment counts and how many students joined. Put new work in one of these.",
         inputSchema: z.object({}),
       },
       async (_args, ctx) => run(() => convex.query(api.mcp.listCourses, { token: tokenOf(ctx) })),
@@ -340,7 +341,7 @@ const handler = createMcpHandler(
       {
         title: "Create course",
         description:
-          "Creates a draft course owned by the lecturer and returns its id. Pass universityId only when whoami lists more than one university.",
+          "Creates a new, empty draft course owned by the lecturer. Only when the lecturer asks for a new course: students don't see it until they join it with its own code. Pass universityId only when whoami lists more than one university.",
         inputSchema: z.object({
           title: z.string().min(1).max(120),
           description: z.string().max(2000).optional(),

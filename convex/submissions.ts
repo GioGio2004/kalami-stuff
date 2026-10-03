@@ -1,3 +1,4 @@
+import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
@@ -5,7 +6,6 @@ import { requireStaffActor, type Actor } from "./lib/access";
 import { appError } from "./lib/errors";
 import { requireText } from "./lib/input";
 import { integrityColor, integrityScore } from "./lib/integrity";
-import { awaitsGrading } from "./lib/grading";
 import {
   answerKeyValidator,
   answerValueValidator,
@@ -37,34 +37,39 @@ async function requireAttempt(ctx: QueryCtx, actor: Actor, attemptId: Id<"attemp
   return { attempt, assessment };
 }
 
+const submissionRowValidator = v.object({
+  attemptId: v.id("attempts"),
+  student: v.string(),
+  /** 1 for the first attempt; more only when retries are allowed. */
+  number: v.number(),
+  status: attemptStatusValidator,
+  autoSubmitted: v.boolean(),
+  startedAt: v.number(),
+  submittedAt: v.optional(v.number()),
+  score: v.optional(v.number()),
+  maxScore: v.number(),
+  graded: v.boolean(),
+  /** Code questions: steps done across all of them. */
+  stepsDone: v.number(),
+  stepsTotal: v.number(),
+  /** Every other question: how many have an answer. */
+  answered: v.number(),
+  questionsTotal: v.number(),
+  /** An essay with an answer and no points yet. */
+  needsGrading: v.boolean(),
+  integrity: integrityCountsValidator,
+  integrityScore: v.number(),
+  integrityColor: integrityColorValidator,
+});
+
+/**
+ * Who started, a page at a time, in the order they started. Live. Each row comes
+ * from the attempt alone (its counters), never from the answers, so the cost of
+ * a page doesn't grow with the class or with how much they type.
+ */
 export const forAssessment = query({
-  args: { assessmentId: v.id("assessments") },
-  returns: v.array(
-    v.object({
-      attemptId: v.id("attempts"),
-      student: v.string(),
-      /** 1 for the first attempt; more only when retries are allowed. */
-      number: v.number(),
-      status: attemptStatusValidator,
-      autoSubmitted: v.boolean(),
-      startedAt: v.number(),
-      submittedAt: v.optional(v.number()),
-      score: v.optional(v.number()),
-      maxScore: v.number(),
-      graded: v.boolean(),
-      /** Code questions: steps done across all of them. */
-      stepsDone: v.number(),
-      stepsTotal: v.number(),
-      /** Every other question: how many have an answer. */
-      answered: v.number(),
-      questionsTotal: v.number(),
-      /** An essay with an answer and no points yet. */
-      needsGrading: v.boolean(),
-      integrity: integrityCountsValidator,
-      integrityScore: v.number(),
-      integrityColor: integrityColorValidator,
-    }),
-  ),
+  args: { assessmentId: v.id("assessments"), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(submissionRowValidator),
   handler: async (ctx, args) => {
     const actor = await requireStaffActor(ctx);
     await requireAssessmentAccess(ctx, actor, args.assessmentId, "view");
@@ -74,32 +79,14 @@ export const forAssessment = query({
       .take(200);
     const stepsTotal = questions.reduce((sum, q) => sum + (q.code?.steps.length ?? 0), 0);
     const questionsTotal = questions.filter((q) => q.type !== "code").length;
-    const attempts = await ctx.db
+    const result = await ctx.db
       .query("attempts")
       .withIndex("by_assessmentId", (q) => q.eq("assessmentId", args.assessmentId))
-      .take(500);
-    const rows = [];
-    for (const attempt of attempts) {
-      let stepsDone = 0;
-      let answered = 0;
-      let needsGrading = false;
-      for (const question of questions) {
-        const response = await ctx.db
-          .query("responses")
-          .withIndex("by_attemptId_and_questionId", (q) =>
-            q.eq("attemptId", attempt._id).eq("questionId", question._id),
-          )
-          .unique();
-        if (response === null) continue;
-        if (response.value.type === "code") {
-          stepsDone += response.progress?.step ?? 0;
-        } else {
-          answered++;
-          needsGrading ||= attempt.status === "submitted" && awaitsGrading(response.value, response.manualPoints);
-        }
-      }
+      .paginate(args.paginationOpts);
+    const page = [];
+    for (const attempt of result.page) {
       const score = integrityScore(attempt.integrity);
-      rows.push({
+      page.push({
         attemptId: attempt._id,
         student: displayName(await ctx.db.get("users", attempt.userId)),
         number: attempt.number,
@@ -110,18 +97,17 @@ export const forAssessment = query({
         score: attempt.manualScore ?? attempt.score,
         maxScore: attempt.maxScore,
         graded: attempt.gradedAt !== undefined,
-        stepsDone,
+        stepsDone: attempt.stepsDone ?? 0,
         stepsTotal,
-        answered,
+        answered: attempt.answered ?? 0,
         questionsTotal,
-        needsGrading,
+        needsGrading: attempt.needsGrading ?? false,
         integrity: attempt.integrity,
         integrityScore: score,
         integrityColor: integrityColor(score),
       });
     }
-    rows.sort((a, b) => a.student.localeCompare(b.student) || a.number - b.number);
-    return rows;
+    return { ...result, page };
   },
 });
 

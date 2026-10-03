@@ -137,7 +137,7 @@ export function StudioIntro({ open, onClose }: { open: boolean; onClose: () => v
 
   return (
     <Dialog open={open} onClose={close} label="How the studio works" size="lg">
-      <div className="grid gap-8 p-6 sm:p-10 lg:grid-cols-[1.05fr_1fr] lg:gap-10">
+      <div className="grid grid-cols-1 gap-8 p-6 *:min-w-0 sm:p-10 lg:grid-cols-[1.05fr_1fr] lg:gap-10">
         <div className="flex flex-col">
           <div className="flex items-center gap-3">
             <span className="grid size-11 place-items-center rounded-full bg-highlighter text-ink">{step.icon}</span>

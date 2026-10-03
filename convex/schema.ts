@@ -134,7 +134,9 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_courseId", ["courseId"])
-    .index("by_courseId_and_status", ["courseId", "status"]),
+    .index("by_courseId_and_status", ["courseId", "status"])
+    // The auto-submit cron finds what closed recently without scanning everything.
+    .index("by_status_and_closesAt", ["status", "settings.closesAt"]),
 
   questions: defineTable({
     assessmentId: v.id("assessments"),
@@ -185,12 +187,19 @@ export default defineSchema({
     number: v.number(),
     status: attemptStatusValidator,
     startedAt: v.number(),
-    // Timed quizzes and exams: min(start + time limit, closesAt). Answers after it are refused.
+    // Timed quizzes and exams: start + time limit. Answers after it are refused. The
+    // closing time is checked separately, so a lecturer can still move it.
     deadlineAt: v.optional(v.number()),
     submittedAt: v.optional(v.number()),
     score: v.optional(v.number()),
     maxScore: v.number(),
     integrity: integrityCountsValidator,
+    // Progress for the lecturer's list, kept here so it never has to read answers:
+    // questions answered (not code) and code steps done. Written only when they change.
+    answered: v.optional(v.number()),
+    stepsDone: v.optional(v.number()),
+    // An essay has an answer and no points yet.
+    needsGrading: v.optional(v.boolean()),
     // Submitted by the server when the task closed, not by the student.
     autoSubmitted: v.optional(v.boolean()),
     // Grading: the lecturer's overall note and, if they change it, the score that counts.
@@ -201,7 +210,8 @@ export default defineSchema({
   })
     .index("by_userId_and_assessmentId", ["userId", "assessmentId"])
     .index("by_assessmentId", ["assessmentId"])
-    .index("by_status", ["status"]),
+    .index("by_assessmentId_and_status", ["assessmentId", "status"])
+    .index("by_status_and_deadlineAt", ["status", "deadlineAt"]),
 
   // What a student saved for one question of an attempt (autosaved while they work).
   responses: defineTable({

@@ -159,6 +159,11 @@ function CourseCard({ course }: { course: CourseSummary }) {
         {parts.length > 0 ? parts.join(" · ") : "No assessments yet"}
         {counts.drafts > 0 && <span className="text-graphite"> · {counts.drafts} draft{counts.drafts === 1 ? "" : "s"}</span>}
       </p>
+      <p className={`mt-1 text-sm ${course.students === 0 ? "font-medium text-red-pen" : "text-graphite"}`}>
+        {course.students === 0
+          ? "No students yet: share the join code"
+          : `${course.students} student${course.students === 1 ? "" : "s"}`}
+      </p>
       <div className="mt-auto flex items-end justify-between gap-3 pt-6">
         <div>
           <p className="text-xs text-graphite">Join code</p>

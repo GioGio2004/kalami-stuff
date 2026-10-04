@@ -203,6 +203,7 @@ const assessment: AssessmentDetail["assessment"] = {
   _id: "sample_midterm" as AssessmentDetail["assessment"]["_id"],
   _creationTime: NOW - 3 * DAY,
   courseId: webBasics._id,
+  weekId: undefined,
   kind: "midterm",
   title: "Midterm · Web basics",
   instructions: "Closed book. You may use the browser devtools, nothing else.",
@@ -828,6 +829,8 @@ export function StaffGallery({ view }: { view?: string }) {
       introOpenInitially={introOpen}
       onCreateCourse={pause}
       onIntroSeen={() => undefined}
+      onDeleteCourse={pause}
+      onExportCourse={pause}
     />
   );
 

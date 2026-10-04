@@ -61,6 +61,7 @@ describe("MCP server", () => {
       "create_course",
       "create_lesson",
       "create_week",
+      "delete_assessment",
       "delete_lesson",
       "delete_lesson_block",
       "delete_question",
@@ -76,18 +77,24 @@ describe("MCP server", () => {
       "move_lesson",
       "place_assessment",
       "remove_week_link",
+      "reorder_lessons",
       "reorder_questions",
+      "reorder_week_links",
       "reorder_weeks",
       "replace_lesson_blocks",
       "update_assessment",
+      "update_course",
       "update_lesson",
       "update_lesson_block",
       "update_question",
       "update_week",
+      "update_week_link",
       "whoami",
     ]);
     // Publishing stays a person's click in the dashboard.
     expect(names.some((name) => /publish/.test(name))).toBe(false);
+    // Agents never delete whole courses.
+    expect(names).not.toContain("delete_course");
   });
 
   test("the header route refuses a request without a token", async () => {

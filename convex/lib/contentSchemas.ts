@@ -193,9 +193,16 @@ export const questionSchema = z.discriminatedUnion("type", [
   codeQuestion,
 ]);
 
+/** A full https:// link: Kalami refuses anything else for links, images and videos. */
+const httpsUrl = z
+  .string()
+  .max(2000)
+  .url()
+  .regex(/^https:\/\//i, "Use a full link that starts with https://");
+
 export const linkSchema = z.object({
   title: z.string().min(1).max(120).describe('What students click, e.g. "Chapter 2 reading"'),
-  url: z.string().url().max(2000).describe("https only"),
+  url: httpsUrl.describe("https only"),
 });
 
 export const markdown = (max: number) =>
@@ -249,7 +256,7 @@ export const lessonBlockSchema = z
       .object({
         id: blockId,
         type: z.literal("image"),
-        url: z.string().url().describe("https URL of the image"),
+        url: httpsUrl.describe("https URL of the image"),
         alt: z.string().min(1).max(300).describe("What the image shows, for screen readers. Required."),
         caption: z.string().max(300).optional(),
       })
@@ -258,7 +265,7 @@ export const lessonBlockSchema = z
       .object({
         id: blockId,
         type: z.literal("video"),
-        url: z.string().url().describe("YouTube or Vimeo links play inside the lesson; any other https link is shown as a link"),
+        url: httpsUrl.describe("YouTube or Vimeo links play inside the lesson; any other https link is shown as a link"),
         caption: z.string().max(300).optional(),
       })
       .describe("A video"),

@@ -171,7 +171,12 @@ draft lessons and shares its Drive folder. Backend: `convex/model/weeks.ts`,
 `convex/model/lessons.ts`, API in `weeks.ts`, `lessons.ts`; the student reader is
 `lessons.read`. Agents: 17 new MCP tools (`get_course_outline`, `create_week`,
 `create_lesson`, `add_lesson_blocks`, `place_assessment`, …), drafts only, no Drive
-folders. The old `materials` table is migrated by `migrations.materialsToWeeks` (an
+folders. MCP 0.6.0 added `update_course` (draft courses), `delete_assessment`
+(untouched drafts), `update_week_link`, `reorder_week_links`, `reorder_lessons`;
+agents may reorder around published weeks and lessons but never change their
+order, and can't delete a week holding lessons the lecturer published. Course
+deletion (owners/admins, web only) is `courses.remove` + batched `courses.purge`
+(`model/coursePurge.ts`). The old `materials` table is migrated by `migrations.materialsToWeeks` (an
 hourly cron until every deployment is empty, then both go).
 
 Blocks built now: `text`, `callout` (tip/definition/warning/note), `code` (live

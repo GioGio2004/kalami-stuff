@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { action, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { actorFromToken, requireTokenActor, type Actor } from "./lib/access";
+import { action, mutation, query } from "./_generated/server";
+import { actorFromToken, requireTokenActor } from "./lib/access";
 import { isSuperAdmin } from "./lib/auth";
 import { appError } from "./lib/errors";
 import { enforceLimit } from "./lib/limits";
@@ -18,7 +18,8 @@ import {
   lessonBlockInputValidator,
   viaValidator,
 } from "./lib/validators";
-import { assessmentValidator, createAssessment, updateAssessment } from "./model/assessments";
+import { assessmentValidator, createAssessment, deleteAssessment, updateAssessment } from "./model/assessments";
+import { remember, remembered } from "./model/agentRequests";
 import { displayName } from "./model/audit";
 import {
   addBlocks,
@@ -27,6 +28,7 @@ import {
   deleteLesson,
   getLesson,
   moveLesson,
+  reorderLessons,
   setBlocks,
   staffLessonValidator,
   updateBlock,
@@ -49,6 +51,7 @@ import {
   createCourse,
   creatableUniversities,
   getCourseDetail,
+  updateCourse,
   listCoursesFor,
   universityOptionValidator,
 } from "./model/courses";
@@ -67,7 +70,9 @@ import {
   placeAssessment,
   removeLink,
   removeWeek,
+  reorderLinks,
   reorderWeeks,
+  updateLink,
   updateWeek,
 } from "./model/weeks";
 
@@ -79,8 +84,9 @@ import {
  * actorFromToken), and `client`, which OAuth client the agent came through,
  * for the audit log; every check after that is the same as in the web app.
  *
- * Deliberately missing: publishing, deleting and anything about students.
- * Agents draft; people review and publish in the dashboard. Join codes are
+ * Deliberately missing: publishing (assessments, weeks, lessons), Google
+ * Drive folders, deleting courses, and anything about students. Agents draft
+ * and may delete only drafts; people review and publish in the dashboard. Join codes are
  * left out too: an agent has no use for them, and they would end up in chat
  * transcripts.
  */
@@ -89,22 +95,6 @@ const tokenArg = { token: v.string(), client: v.optional(v.string()) };
 
 /** Creating tools accept a request id, so a retried call returns what the first one made. */
 const requestArg = { requestId: v.optional(v.string()) };
-const REQUEST_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-async function remembered(ctx: QueryCtx, actor: Actor, requestId: string | undefined) {
-  if (requestId === undefined) return null;
-  const row = await ctx.db
-    .query("agentRequests")
-    .withIndex("by_actorId_and_requestId", (q) => q.eq("actorId", actor.user._id).eq("requestId", requestId))
-    .unique();
-  return row !== null && row.at >= Date.now() - REQUEST_WINDOW_MS ? row.result : null;
-}
-
-async function remember(ctx: MutationCtx, actor: Actor, requestId: string | undefined, result: string | string[]) {
-  if (requestId === undefined || requestId.length > 100) return;
-  await ctx.db.insert("agentRequests", { actorId: actor.user._id, requestId, result, at: Date.now() });
-}
-
 /** A course as an agent sees it: everything but the join code. */
 const agentCourseValidator = v.object({
   _id: v.id("courses"),
@@ -222,6 +212,32 @@ export const createCourseAsAgent = mutation({
   },
 });
 
+/** A draft course's title, description, semester or language. Students never saw a draft course. */
+export const updateCourseAsAgent = mutation({
+  args: {
+    ...tokenArg,
+    courseId: v.id("courses"),
+    title: v.optional(v.string()),
+    description: v.optional(v.string()),
+    semester: v.optional(v.string()),
+    locale: v.optional(localeValidator),
+  },
+  returns: v.null(),
+  handler: async (ctx, { token, client, courseId, ...patch }) => {
+    const actor = await requireTokenActor(ctx, token, client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    const course = await ctx.db.get("courses", courseId);
+    if (course !== null && course.status !== "draft") {
+      throw appError(
+        "CONFLICT",
+        `"${course.title}" is ${course.status}, so only the lecturer can change its details, in the Kalami dashboard.`,
+      );
+    }
+    await updateCourse(ctx, actor, courseId, patch);
+    return null;
+  },
+});
+
 export const getAssessment = query({
   args: { ...tokenArg, assessmentId: v.id("assessments") },
   returns: assessmentDetailValidator,
@@ -271,6 +287,18 @@ export const updateAssessmentAsAgent = mutation({
     const actor = await requireTokenActor(ctx, token, client);
     await enforceLimit(ctx, "agent", actor.user._id);
     await updateAssessment(ctx, actor, assessmentId, patch);
+    return null;
+  },
+});
+
+/** Drafts nobody has worked on only (deleteAssessment refuses anything else). */
+export const deleteAssessmentAsAgent = mutation({
+  args: { ...tokenArg, assessmentId: v.id("assessments") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await deleteAssessment(ctx, actor, args.assessmentId);
     return null;
   },
 });
@@ -443,6 +471,28 @@ export const removeWeekLinkAsAgent = mutation({
   },
 });
 
+export const updateWeekLinkAsAgent = mutation({
+  args: { ...tokenArg, weekId: v.id("weeks"), linkId: v.string(), link: linkInputValidator },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await updateLink(ctx, actor, args.weekId, args.linkId, args.link);
+    return null;
+  },
+});
+
+export const reorderWeekLinksAsAgent = mutation({
+  args: { ...tokenArg, weekId: v.id("weeks"), linkIds: v.array(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await reorderLinks(ctx, actor, args.weekId, args.linkIds);
+    return null;
+  },
+});
+
 export const placeAssessmentAsAgent = mutation({
   args: { ...tokenArg, assessmentId: v.id("assessments"), weekId: v.union(v.id("weeks"), v.null()) },
   returns: v.null(),
@@ -566,6 +616,17 @@ export const moveLessonAsAgent = mutation({
   },
 });
 
+export const reorderLessonsAsAgent = mutation({
+  args: { ...tokenArg, weekId: v.id("weeks"), lessonIds: v.array(v.id("lessons")) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await reorderLessons(ctx, actor, args.weekId, args.lessonIds);
+    return null;
+  },
+});
+
 export const deleteLessonAsAgent = mutation({
   args: { ...tokenArg, lessonId: v.id("lessons") },
   returns: v.null(),
@@ -608,10 +669,16 @@ export const checkKalamiForAgent = action({
 export const importKalamiForAgent = action({
   args: {
     ...tokenArg,
+    ...requestArg,
     text: v.string(),
     universityId: v.optional(v.union(v.id("universities"), v.null())),
   },
   returns: importResultValidator,
   handler: async (ctx, args): Promise<ImportResult> =>
-    await runImport(ctx, { kind: "agent", token: args.token, client: args.client }, args.text, args.universityId),
+    await runImport(
+      ctx,
+      { kind: "agent", token: args.token, client: args.client, requestId: args.requestId },
+      args.text,
+      args.universityId,
+    ),
 });

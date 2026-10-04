@@ -17,7 +17,13 @@ import { checkKalami } from "./kalami";
 /** Who the import acts for: the signed-in staff member, or an agent with its MCP credential. */
 export const importAsValidator = v.union(
   v.object({ kind: v.literal("session") }),
-  v.object({ kind: v.literal("agent"), token: v.string(), client: v.optional(v.string()) }),
+  v.object({
+    kind: v.literal("agent"),
+    token: v.string(),
+    client: v.optional(v.string()),
+    // The agent's own id for this call: a retry after a timeout returns the course the first call made.
+    requestId: v.optional(v.string()),
+  }),
 );
 export type ImportAs = Infer<typeof importAsValidator>;
 
@@ -77,7 +83,7 @@ export async function runImport(
   }
   const { file, summary, verified } = check;
   const { course } = file;
-  const courseId: Id<"courses"> = await ctx.runMutation(internal.kalami.importBegin, {
+  const begun: { courseId: Id<"courses">; existing: boolean } = await ctx.runMutation(internal.kalami.importBegin, {
     as,
     title: course.title,
     description: course.description,
@@ -86,6 +92,10 @@ export async function runImport(
     universityId: universityId ?? undefined,
     noUniversity: universityId === null,
   });
+  const { courseId } = begun;
+  if (begun.existing) {
+    return { ok: true as const, courseId, summary, verified };
+  }
   try {
     for (const week of course.weeks) {
       const weekId = await ctx.runMutation(internal.kalami.importWeek, {
@@ -107,5 +117,6 @@ export async function runImport(
     await ctx.runMutation(internal.kalami.importDiscard, { as, courseId });
     throw error;
   }
+  await ctx.runMutation(internal.kalami.importFinish, { as, courseId });
   return { ok: true as const, courseId, summary, verified };
 }

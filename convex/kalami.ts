@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { action, internalMutation, query } from "./_generated/server";
 import { requireStaffActor } from "./lib/access";
 import { appError } from "./lib/errors";
@@ -12,6 +13,7 @@ import {
 } from "./lib/validators";
 import { createAssessment } from "./model/assessments";
 import { createCourse } from "./model/courses";
+import { remember, remembered } from "./model/agentRequests";
 import { discardImportedCourse, exportCourseFile } from "./model/kalami";
 import {
   actorFor,
@@ -78,17 +80,39 @@ export const importBegin = internalMutation({
     universityId: v.optional(v.id("universities")),
     noUniversity: v.boolean(),
   },
-  returns: v.id("courses"),
+  returns: v.object({ courseId: v.id("courses"), existing: v.boolean() }),
   handler: async (ctx, args) => {
     const actor = await actorFor(ctx, args.as);
+    if (args.as.kind === "agent") {
+      const earlier = await remembered(ctx, actor, args.as.requestId);
+      if (typeof earlier === "string") {
+        const course = await ctx.db.get("courses", earlier as Id<"courses">);
+        if (course !== null) return { courseId: course._id, existing: true };
+      }
+      await enforceLimit(ctx, "agent", actor.user._id);
+    }
     await enforceLimit(ctx, "createCourse", actor.user._id);
-    return await createCourse(ctx, actor, {
+    const courseId = await createCourse(ctx, actor, {
       title: args.title,
       description: args.description,
       semester: args.semester,
       locale: args.language,
       universityId: args.noUniversity ? null : args.universityId,
     });
+    return { courseId, existing: false };
+  },
+});
+
+/** The import landed whole: an agent retrying the same request gets this course back. */
+export const importFinish = internalMutation({
+  args: { as: importAsValidator, courseId: v.id("courses") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    if (args.as.kind === "agent") {
+      const actor = await actorFor(ctx, args.as);
+      await remember(ctx, actor, args.as.requestId, args.courseId);
+    }
+    return null;
   },
 });
 

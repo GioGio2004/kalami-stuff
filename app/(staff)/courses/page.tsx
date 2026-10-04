@@ -1,10 +1,11 @@
 "use client";
 
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useCurrentUser } from "@/components/CurrentUserProvider";
 import { KalamiDropOverlay } from "@/components/kalami/KalamiDropOverlay";
+import { downloadKalami } from "@/components/kalami/KalamiFile";
 import { KalamiImport } from "@/components/kalami/KalamiImport";
 import { StudioDashboard } from "@/components/studio/StudioDashboard";
 import { api } from "@/convex/_generated/api";
@@ -16,7 +17,9 @@ export default function CoursesPage() {
   const courses = useQuery(api.courses.listMine, ready ? {} : "skip");
   const activity = useQuery(api.audit.recentForMe, ready ? {} : "skip");
   const universities = useQuery(api.courses.universitiesForNewCourse, ready ? {} : "skip");
+  const convex = useConvex();
   const createCourse = useMutation(api.courses.create);
+  const deleteCourse = useMutation(api.courses.remove);
   const markIntroSeen = useMutation(api.users.markStudioIntroSeen);
   const inspect = useAction(api.kalami.inspect);
   const importCourse = useAction(api.kalami.importCourse);
@@ -43,6 +46,13 @@ export default function CoursesPage() {
           markIntroSeen().catch(() => {});
         }}
         onImportKalami={() => setImporting({ open: true, file: null })}
+        onDeleteCourse={async (courseId) => {
+          await deleteCourse({ courseId });
+        }}
+        onExportCourse={async (courseId) => {
+          const { fileName, content } = await convex.query(api.kalami.exportCourse, { courseId });
+          downloadKalami(fileName, content);
+        }}
       />
       <KalamiDropOverlay onFile={(file) => setImporting({ open: true, file })} />
       <KalamiImport

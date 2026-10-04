@@ -244,6 +244,17 @@ describe(".kalami files", () => {
     expect(exported.fileName).toBe("agent-course.kalami");
   });
 
+  test("an agent retrying an import with the same requestId gets the same course", async () => {
+    const { nino } = await seed();
+    const token = await credential("nino");
+    const text = JSON.stringify({ format: "kalami", version: 1, kind: "course", course: { title: "Retry course", language: "en" } });
+    const before = (await nino.query(api.courses.listMine, {})).length;
+    const first = await nino.action(api.mcp.importKalamiForAgent, { token, requestId: "import-1", text });
+    const again = await nino.action(api.mcp.importKalamiForAgent, { token, requestId: "import-1", text });
+    expect(first.ok && again.ok && again.courseId === first.courseId).toBe(true);
+    expect((await nino.query(api.courses.listMine, {})).length).toBe(before + 1);
+  });
+
   test("file names keep Georgian letters", () => {
     expect(kalamiFileName("ვებ ტექნოლოგიები 2026")).toBe("ვებ-ტექნოლოგიები-2026.kalami");
     expect(kalamiFileName("  !!! ")).toBe("course.kalami");

@@ -118,17 +118,20 @@ How a course is built: a course is a list of weeks (any title works: "Week 3", "
 Workflow:
 1. Call whoami to learn who you act for and which universities they belong to.
 2. list_courses and put the work in the course the lecturer means. Students only see courses they joined (each shows how many have), so never start a new course on your own: if it's unclear which course, ask. Use create_course only when the lecturer asks for a new course.
-2b. get_course_outline to see the weeks that already exist before adding to them.
-3. create_assessment (kind: task, quiz, midterm or final) inside a course, with weekId for a week's task or quiz. It starts as a draft.
-4. add_questions in batches of up to 50. Mark correct options with "correct": true.
-5. get_assessment to review what you built; update_question / delete_question / reorder_questions to fix it.
-6. When you are done, give the lecturer the reviewUrl from your results so they can check and publish.
+3. get_course_outline to see what the course already has (weeks with their lessons, links, tasks and quizzes; the Exams section; work not placed in a week yet) before adding to it.
+4. create_assessment (kind: task, quiz, midterm or final) inside a course, with weekId for a week's task or quiz. It starts as a draft. place_assessment moves a task or quiz to another week later.
+5. add_questions in batches of up to 50. Mark correct options with "correct": true.
+6. get_assessment to review what you built; update_question / delete_question / reorder_questions to fix it.
+7. When you are done, give the lecturer the reviewUrl from your results so they can check and publish.
 
 Turning a syllabus, notes or slides into a course:
 1. create_week for each week or unit, with a one-sentence description and links to readings or videos.
 2. create_lesson for each topic of the week, then add_lesson_blocks as needed. Keep lessons focused: one topic, roughly 5 to 25 blocks, so a student finishes one in 10 to 20 minutes.
 3. create_assessment with weekId for the week's quiz or task, then add_questions.
-4. Tell the lecturer what you drafted, week by week, with the reviewUrls. They publish each week themselves.
+4. Midterms and finals: create_assessment with kind midterm or final and no weekId; they appear in the Exams section.
+5. Tell the lecturer what you drafted, week by week, with the reviewUrls. They publish each week themselves.
+
+Tidying up an outline: update_week (title, description), reorder_weeks, reorder_lessons, move_lesson (to another week), update_week_link, reorder_week_links, remove_week_link, place_assessment, delete_week / delete_lesson / delete_assessment (drafts only), update_course (a draft course's title, description, semester or language).
 
 .kalami course files (a whole course in one JSON file):
 - To give the lecturer their course as a file (to keep, share with a colleague, reuse next semester): export_course_file, then hand them the content as a file named fileName. It contains every answer key: only share it with staff.
@@ -145,10 +148,11 @@ Writing lessons (in the course's language):
 - Never invent facts about the lecturer's own course (dates, grading rules); ask.
 
 Rules:
-- You can only change DRAFT assessments, draft weeks and draft lessons. Only the lecturer can publish, in the Kalami dashboard. If something is already published, ask the lecturer to move it back to draft before you edit it. You may add a new draft lesson to a published week; students see it only once the lecturer publishes it.
+- You can only change DRAFT assessments, draft weeks, draft lessons and draft courses. Only the lecturer can publish, in the Kalami dashboard. If something is already published, ask the lecturer to move it back to draft before you edit it. You may add a new draft lesson to a published week; students see it only once the lecturer publishes it. When reordering, published weeks and lessons must keep their order (move only drafts around them).
+- You can't delete courses, and you can only delete drafts nobody has worked on.
 - You can't create Google Drive folders (the lecturer adds a week's folder in the dashboard); add links instead.
 - You cannot see students, attempts or grades. Never ask for student data.
-- Pass a requestId (any unique string you make up) to create_course, create_assessment, add_questions, create_week, create_lesson and add_lesson_blocks. If such a call times out, retry it with the same requestId instead of calling it again without one.
+- Pass a requestId (any unique string you make up) to create_course, create_assessment, add_questions, create_week, create_lesson, add_lesson_blocks and import_kalami_file. If such a call times out, retry it with the same requestId instead of calling it again without one.
 - Write questions in the course's language (ka = Georgian, en = English) unless told otherwise.
 - Tasks default to standard integrity with the score shown on submit; quizzes to standard integrity; midterms and finals to strict integrity with a time limit.
 
@@ -187,7 +191,7 @@ const handler = createMcpHandler(
       {
         title: "List courses",
         description:
-          "Every course the lecturer can work on, with assessment counts and how many students joined. Put new work in one of these.",
+          "Every course the lecturer can work on, with assessment counts and how many students joined. Put new work in one of these; get_course_outline shows a course's weeks and lessons.",
         inputSchema: z.object({}),
       },
       async (_args, ctx) => run(() => convex.query(api.mcp.listCourses, auth(ctx))),
@@ -197,7 +201,8 @@ const handler = createMcpHandler(
       "get_course",
       {
         title: "Get course",
-        description: "A course with all of its tasks, quizzes, midterms and finals (settings and status, not questions).",
+        description:
+          "A course with all of its tasks, quizzes, midterms and finals (settings, status and the weekId a task or quiz sits in; not questions). For weeks and lessons use get_course_outline.",
         inputSchema: z.object({ courseId }),
       },
       async (args, ctx) =>
@@ -240,6 +245,34 @@ const handler = createMcpHandler(
     );
 
     server.registerTool(
+      "update_course",
+      {
+        title: "Update course",
+        description:
+          "Changes a draft course's title, description, semester or language. Once the lecturer publishes the course, only they can change these.",
+        inputSchema: z.object({
+          courseId,
+          title: z.string().min(1).max(120).optional(),
+          description: z.string().max(2000).optional(),
+          semester: z.string().max(60).optional(),
+          locale: z.enum(["ka", "en"]).optional().describe("Language of the course"),
+        }),
+      },
+      async (args, ctx) =>
+        run(async () => {
+          await convex.mutation(api.mcp.updateCourseAsAgent, {
+            ...auth(ctx),
+            courseId: args.courseId as Id<"courses">,
+            title: args.title,
+            description: args.description,
+            semester: args.semester,
+            locale: args.locale,
+          });
+          return { ok: true };
+        }),
+    );
+
+    server.registerTool(
       "create_assessment",
       {
         title: "Create assessment",
@@ -252,7 +285,7 @@ const handler = createMcpHandler(
           title: z.string().min(1).max(160),
           instructions: z.string().max(8000).optional().describe("Shown on the start screen"),
           settings: settingsSchema.optional(),
-          weekId: z.string().optional().describe("Tasks and quizzes only: the week it belongs to"),
+          weekId: weekId.optional().describe("Tasks and quizzes only: the week it belongs to. Leave out for midterms and finals"),
         }),
       },
       async (args, ctx) =>
@@ -295,7 +328,8 @@ const handler = createMcpHandler(
       "update_assessment",
       {
         title: "Update assessment",
-        description: "Changes the title, instructions, kind or settings of a draft assessment.",
+        description:
+          "Changes the title, instructions, kind or settings of a draft assessment. Changing the kind to midterm or final moves it out of its week into the Exams section.",
         inputSchema: z.object({
           assessmentId,
           title: z.string().min(1).max(160).optional(),
@@ -313,6 +347,23 @@ const handler = createMcpHandler(
             instructions: args.instructions,
             kind: args.kind,
             settings: args.settings,
+          });
+          return { ok: true };
+        }),
+    );
+
+    server.registerTool(
+      "delete_assessment",
+      {
+        title: "Delete assessment",
+        description: "Deletes a draft task, quiz or exam with its questions. Only drafts no student has started.",
+        inputSchema: z.object({ assessmentId }),
+      },
+      async (args, ctx) =>
+        run(async () => {
+          await convex.mutation(api.mcp.deleteAssessmentAsAgent, {
+            ...auth(ctx),
+            assessmentId: args.assessmentId as Id<"assessments">,
           });
           return { ok: true };
         }),
@@ -475,7 +526,8 @@ const handler = createMcpHandler(
       "reorder_weeks",
       {
         title: "Reorder weeks",
-        description: "Sets the order of the course's weeks. Pass every week id exactly once.",
+        description:
+          "Sets the order of the course's weeks. Pass every week id exactly once. Published weeks must keep their order; move drafts around them.",
         inputSchema: z.object({ courseId, weekIds: z.array(z.string()).min(1).max(60) }),
       },
       async (args, ctx) =>
@@ -494,7 +546,7 @@ const handler = createMcpHandler(
       {
         title: "Delete week",
         description:
-          "Deletes a draft week and its lessons. Its tasks and quizzes are kept and become unplaced; its Drive folder stays in the lecturer's Drive.",
+          "Deletes a draft week and its draft lessons. Its tasks and quizzes are kept and become unplaced; its Drive folder stays in the lecturer's Drive. Refused if the lecturer published any of its lessons.",
         inputSchema: z.object({ weekId }),
       },
       async (args, ctx) =>
@@ -540,12 +592,49 @@ const handler = createMcpHandler(
     );
 
     server.registerTool(
+      "update_week_link",
+      {
+        title: "Update week link",
+        description: "Changes one link of a draft week (title and https URL), keeping its place.",
+        inputSchema: z.object({ weekId, linkId: z.string().describe("Link id from get_course_outline"), link: linkSchema }),
+      },
+      async (args, ctx) =>
+        run(async () => {
+          await convex.mutation(api.mcp.updateWeekLinkAsAgent, {
+            ...auth(ctx),
+            weekId: args.weekId as Id<"weeks">,
+            linkId: args.linkId,
+            link: args.link,
+          });
+          return { ok: true };
+        }),
+    );
+
+    server.registerTool(
+      "reorder_week_links",
+      {
+        title: "Reorder week links",
+        description: "Sets the order of a draft week's links. Pass every link id exactly once.",
+        inputSchema: z.object({ weekId, linkIds: z.array(z.string()).min(1).max(20) }),
+      },
+      async (args, ctx) =>
+        run(async () => {
+          await convex.mutation(api.mcp.reorderWeekLinksAsAgent, {
+            ...auth(ctx),
+            weekId: args.weekId as Id<"weeks">,
+            linkIds: args.linkIds,
+          });
+          return { ok: true };
+        }),
+    );
+
+    server.registerTool(
       "place_assessment",
       {
         title: "Place assessment",
         description:
           "Puts a draft task or quiz into a week of its course, or (weekId null) back among the unplaced. Midterms and finals always stay in the Exams section.",
-        inputSchema: z.object({ assessmentId, weekId: z.string().nullable() }),
+        inputSchema: z.object({ assessmentId, weekId: weekId.nullable().describe("The week, or null to unplace it") }),
       },
       async (args, ctx) =>
         run(async () => {
@@ -706,7 +795,7 @@ const handler = createMcpHandler(
         description: "Moves a draft lesson up or down within its week, or to the end of another week (weekId).",
         inputSchema: z.object({
           lessonId,
-          weekId: z.string().optional(),
+          weekId: weekId.optional().describe("Move it to the end of this week"),
           direction: z.enum(["up", "down"]).optional(),
         }),
       },
@@ -717,6 +806,25 @@ const handler = createMcpHandler(
             lessonId: args.lessonId as Id<"lessons">,
             weekId: args.weekId as Id<"weeks"> | undefined,
             direction: args.direction,
+          });
+          return { ok: true };
+        }),
+    );
+
+    server.registerTool(
+      "reorder_lessons",
+      {
+        title: "Reorder lessons",
+        description:
+          "Sets the order of a week's lessons. Pass every lesson id of the week exactly once. Published lessons must keep their order; move drafts around them.",
+        inputSchema: z.object({ weekId, lessonIds: z.array(z.string()).min(1).max(30) }),
+      },
+      async (args, ctx) =>
+        run(async () => {
+          await convex.mutation(api.mcp.reorderLessonsAsAgent, {
+            ...auth(ctx),
+            weekId: args.weekId as Id<"weeks">,
+            lessonIds: args.lessonIds as Id<"lessons">[],
           });
           return { ok: true };
         }),
@@ -790,12 +898,13 @@ const handler = createMcpHandler(
         title: "Import .kalami file",
         description:
           "Creates the file's course as a NEW draft course for the lecturer (never merges into an existing one), with all its weeks, lessons and assessments as drafts. Run check_kalami_file first. Pass universityId only when whoami lists more than one university (null for none).",
-        inputSchema: z.object({ content: fileContent, universityId: z.string().nullable().optional() }),
+        inputSchema: z.object({ requestId, content: fileContent, universityId: z.string().nullable().optional() }),
       },
       async (args, ctx) =>
         run(async () => {
           const result = await convex.action(api.mcp.importKalamiForAgent, {
             ...auth(ctx),
+            requestId: args.requestId,
             text: asText(args.content),
             universityId: args.universityId as Id<"universities"> | null | undefined,
           });
@@ -804,7 +913,7 @@ const handler = createMcpHandler(
     );
   },
   {
-    serverInfo: { name: "kalami", version: "0.5.0" },
+    serverInfo: { name: "kalami", version: "0.6.0" },
     instructions: INSTRUCTIONS,
   },
 );

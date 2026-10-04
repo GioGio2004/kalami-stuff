@@ -12,7 +12,7 @@ import {
 } from "../lib/validators";
 import { logAudit } from "./audit";
 import type { Student } from "./learn";
-import { lessonsOf, requireHttpsUrl, weeksOf } from "./weeks";
+import { keepsPublishedOrder, lessonsOf, requireHttpsUrl, weeksOf } from "./weeks";
 
 /**
  * Lessons written in Kalami: an ordered list of blocks (text, tip/definition
@@ -381,6 +381,36 @@ export async function moveLesson(
   if (other === undefined) return;
   await ctx.db.patch("lessons", lesson._id, { order: other.order });
   await ctx.db.patch("lessons", other._id, { order: lesson.order });
+}
+
+/**
+ * Puts a week's lessons in this order (every lesson of the week once). Agents
+ * may move drafts anywhere, as long as published lessons keep their order.
+ */
+export async function reorderLessons(ctx: MutationCtx, actor: Actor, weekId: Id<"weeks">, lessonIds: Id<"lessons">[]) {
+  const week = await ctx.db.get("weeks", weekId);
+  if (week === null) {
+    throw appError("NOT_FOUND", "Week not found.");
+  }
+  await requireCourseContentEditor(ctx, actor, week.courseId);
+  const lessons = await lessonsOf(ctx, weekId);
+  const known = new Set(lessons.map((lesson) => lesson._id));
+  if (
+    lessonIds.length !== lessons.length ||
+    new Set(lessonIds).size !== lessonIds.length ||
+    lessonIds.some((id) => !known.has(id))
+  ) {
+    throw appError("INVALID_INPUT", "List every lesson of the week exactly once.");
+  }
+  if (actor.via === "mcp") {
+    keepsPublishedOrder(lessons, lessonIds, "lessons");
+  }
+  for (const [index, id] of lessonIds.entries()) {
+    const lesson = lessons.find((l) => l._id === id)!;
+    if (lesson.order !== index + 1) {
+      await ctx.db.patch("lessons", id, { order: index + 1 });
+    }
+  }
 }
 
 export async function setLessonStatus(

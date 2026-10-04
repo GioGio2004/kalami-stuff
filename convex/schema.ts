@@ -545,7 +545,9 @@ export default defineSchema({
   })
     .index("by_userId", ["userId"])
     .index("by_userId_and_readAt", ["userId", "readAt"])
-    .index("by_emailId", ["emailId"]),
+    .index("by_emailId", ["emailId"])
+    // Clearing out a deleted course.
+    .index("by_courseId", ["courseId"]),
 
   // One row per (assessment, kind) once its notifications went out, so a cron
   // run or a second publish never sends them twice.

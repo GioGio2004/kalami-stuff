@@ -360,3 +360,19 @@ export async function setJoinEnabled(
     summary: `${enabled ? "Enabled" : "Disabled"} joining "${course.title}"`,
   });
 }
+
+/**
+ * Deletes a course for good. It disappears from every list at once (the
+ * course row goes first, and everything reading a course copes with it being
+ * gone); what was inside it is cleared out in batches by `courses.purge`.
+ */
+export async function deleteCourse(ctx: MutationCtx, actor: Actor, courseId: Id<"courses">): Promise<void> {
+  const { course } = await requireCourseEditor(ctx, actor, courseId);
+  await ctx.db.delete("courses", courseId);
+  await logAudit(ctx, actor, {
+    action: "course.delete",
+    targetTable: "courses",
+    targetId: courseId,
+    summary: `Deleted course "${course.title}"`,
+  });
+}

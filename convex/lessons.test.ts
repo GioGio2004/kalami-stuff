@@ -177,3 +177,83 @@ describe("agents and the outline", () => {
     void (weekId as Id<"weeks">);
   });
 });
+
+describe("agents tidying an outline", () => {
+  test("drafts move anywhere, but published weeks and lessons keep their order", async () => {
+    const { nino, courseId } = await seed();
+    const token = await credential("nino");
+    const text = [{ type: "text" as const, md: "x" }];
+    const w1 = await nino.mutation(api.weeks.create, { courseId, title: "Week 1" });
+    const a1 = await nino.mutation(api.lessons.create, { weekId: w1, title: "A1", blocks: text });
+    const a2 = await nino.mutation(api.lessons.create, { weekId: w1, title: "A2", blocks: text });
+    const w2 = await nino.mutation(api.weeks.create, { courseId, title: "Week 2" });
+    await nino.mutation(api.lessons.create, { weekId: w2, title: "B1", blocks: text });
+    await nino.mutation(api.weeks.publish, { weekId: w1 });
+    await nino.mutation(api.weeks.publish, { weekId: w2 });
+    const w3 = await nino.mutation(api.mcp.createWeekAsAgent, { token, courseId, title: "Extra week" });
+
+    // Weeks: a draft may go first; swapping two published weeks is the lecturer's call.
+    await nino.mutation(api.mcp.reorderWeeksAsAgent, { token, courseId, weekIds: [w3, w1, w2] });
+    await expectAppError(nino.mutation(api.mcp.reorderWeeksAsAgent, { token, courseId, weekIds: [w3, w2, w1] }), "CONFLICT");
+    await nino.mutation(api.weeks.reorder, { courseId, weekIds: [w3, w2, w1] });
+
+    // Lessons: the same, inside a published week.
+    const draft = await nino.mutation(api.mcp.createLessonAsAgent, { token, weekId: w1, title: "Draft", blocks: text });
+    await nino.mutation(api.mcp.reorderLessonsAsAgent, { token, weekId: w1, lessonIds: [draft, a1, a2] });
+    await expectAppError(nino.mutation(api.mcp.reorderLessonsAsAgent, { token, weekId: w1, lessonIds: [a2, a1, draft] }), "CONFLICT");
+    await expectAppError(nino.mutation(api.mcp.reorderLessonsAsAgent, { token, weekId: w1, lessonIds: [a1, a2] }), "INVALID_INPUT");
+    const outline = await nino.query(api.mcp.getCourseOutline, { token, courseId });
+    expect(outline.weeks.map((w) => w.title)).toEqual(["Extra week", "Week 2", "Week 1"]);
+    expect(outline.weeks[2].lessons.map((l) => l.title)).toEqual(["Draft", "A1", "A2"]);
+
+    // A hidden week still holding lessons the lecturer published isn't the agent's to delete.
+    await nino.mutation(api.weeks.unpublish, { weekId: w2 });
+    await expectAppError(nino.mutation(api.mcp.deleteWeekAsAgent, { token, weekId: w2 }), "CONFLICT");
+    await nino.mutation(api.mcp.deleteWeekAsAgent, { token, weekId: w3 });
+  });
+
+  test("links, course details, deleting drafts and moving work into Exams", async () => {
+    const { nino, courseId, quiz } = await seed();
+    const token = await credential("nino");
+    const weekId = await nino.mutation(api.mcp.createWeekAsAgent, {
+      token,
+      courseId,
+      links: [
+        { title: "One", url: "https://one.example.com" },
+        { title: "Two", url: "https://two.example.com" },
+      ],
+    });
+    const [one, two] = (await nino.query(api.mcp.getCourseOutline, { token, courseId })).weeks[0].links.map((l) => l.id);
+    await nino.mutation(api.mcp.updateWeekLinkAsAgent, { token, weekId, linkId: one, link: { title: "First", url: "https://first.example.com" } });
+    await expectAppError(
+      nino.mutation(api.mcp.updateWeekLinkAsAgent, { token, weekId, linkId: one, link: { title: "x", url: "http://plain.example.com" } }),
+      "INVALID_INPUT",
+    );
+    await nino.mutation(api.mcp.reorderWeekLinksAsAgent, { token, weekId, linkIds: [two, one] });
+    expect((await nino.query(api.mcp.getCourseOutline, { token, courseId })).weeks[0].links).toEqual([
+      expect.objectContaining({ id: two, title: "Two" }),
+      expect.objectContaining({ id: one, title: "First", url: "https://first.example.com/" }),
+    ]);
+
+    // Course details: only while the course is a draft (the seeded one is published).
+    await expectAppError(nino.mutation(api.mcp.updateCourseAsAgent, { token, courseId, title: "Renamed" }), "CONFLICT");
+    const draftCourse = await nino.mutation(api.mcp.createCourseAsAgent, { token, title: "Draft course" });
+    await nino.mutation(api.mcp.updateCourseAsAgent, { token, courseId: draftCourse, title: "CSS basics", semester: "Spring 2027" });
+    expect(await nino.query(api.mcp.getCourse, { token, courseId: draftCourse })).toMatchObject({ title: "CSS basics", semester: "Spring 2027" });
+
+    // A quiz turned into a midterm leaves its week for the Exams section.
+    const quizId = await nino.mutation(api.mcp.createAssessmentAsAgent, { token, courseId, kind: "quiz", title: "Check", weekId });
+    expect((await nino.query(api.mcp.getCourse, { token, courseId })).assessments).toContainEqual(
+      expect.objectContaining({ _id: quizId, weekId }),
+    );
+    await nino.mutation(api.mcp.updateAssessmentAsAgent, { token, assessmentId: quizId, kind: "midterm" });
+    const outline = await nino.query(api.mcp.getCourseOutline, { token, courseId });
+    expect(outline.weeks[0].assessments).toEqual([]);
+    expect(outline.exams.map((e) => e._id)).toContain(quizId);
+
+    // Deleting: drafts only.
+    await nino.mutation(api.mcp.deleteAssessmentAsAgent, { token, assessmentId: quizId });
+    const { assessmentId: published } = await quiz("Published quiz");
+    await expectAppError(nino.mutation(api.mcp.deleteAssessmentAsAgent, { token, assessmentId: published }), "CONFLICT");
+  });
+});

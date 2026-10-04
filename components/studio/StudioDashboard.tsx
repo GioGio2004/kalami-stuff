@@ -5,10 +5,11 @@ import { useState } from "react";
 import type { Me } from "@/components/CurrentUserProvider";
 import { ArrowLink, Button, ButtonLink } from "@/components/ui/buttons";
 import { Dialog } from "@/components/ui/Dialog";
-import { Layers, Plus, Robot } from "@/components/ui/icons";
+import { Layers, Plus, Robot, Trash } from "@/components/ui/icons";
 import { Pill, statusLabel, statusTone } from "@/components/ui/Pill";
 import { ActivityList } from "./ActivityList";
 import { CourseForm } from "./CourseForm";
+import { DeleteCourse } from "./DeleteCourse";
 import { KalamiFileIcon } from "@/components/kalami/KalamiFile";
 import { StudioIntro } from "./StudioIntro";
 import type { AuditEntry, CourseSummary, NewCourseArgs, UniversityOption } from "./types";
@@ -26,6 +27,8 @@ export function StudioDashboard({
   onCreateCourse,
   onIntroSeen,
   onImportKalami,
+  onDeleteCourse,
+  onExportCourse,
 }: {
   me: Me;
   courses: CourseSummary[] | undefined;
@@ -36,9 +39,14 @@ export function StudioDashboard({
   onIntroSeen: () => void;
   /** Opens the .kalami import dialog. */
   onImportKalami?: () => void;
+  /** Deletes a course for good (the card shows a delete button when given). */
+  onDeleteCourse?: (courseId: CourseSummary["_id"]) => Promise<void>;
+  /** Downloads a course as .kalami, offered before deleting it. */
+  onExportCourse?: (courseId: CourseSummary["_id"]) => Promise<void>;
 }) {
   const [introOpen, setIntroOpen] = useState(introOpenInitially);
   const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<CourseSummary | null>(null);
 
   const closeIntro = () => {
     setIntroOpen(false);
@@ -85,7 +93,10 @@ export function StudioDashboard({
             <ul className="grid gap-4 sm:grid-cols-2">
               {courses.map((course) => (
                 <li key={course._id}>
-                  <CourseCard course={course} />
+                  <CourseCard
+                    course={course}
+                    onDelete={onDeleteCourse && course.canEdit ? () => setDeleting(course) : undefined}
+                  />
                 </li>
               ))}
             </ul>
@@ -127,12 +138,24 @@ export function StudioDashboard({
         </div>
       </Dialog>
 
+      {onDeleteCourse && (
+        <DeleteCourse
+          course={deleting}
+          onClose={() => setDeleting(null)}
+          onDelete={async (courseId) => {
+            await onDeleteCourse(courseId);
+            setDeleting(null);
+          }}
+          onExport={onExportCourse}
+        />
+      )}
+
       <StudioIntro open={introOpen} onClose={closeIntro} />
     </div>
   );
 }
 
-function CourseCard({ course }: { course: CourseSummary }) {
+function CourseCard({ course, onDelete }: { course: CourseSummary; onDelete?: () => void }) {
   const { counts } = course;
   const parts = [
     counts.tasks > 0 && `${counts.tasks} task${counts.tasks === 1 ? "" : "s"}`,
@@ -181,7 +204,20 @@ function CourseCard({ course }: { course: CourseSummary }) {
             {course.joinCode}
           </p>
         </div>
-        <ArrowLink href={`/courses/${course._id}`}>{course.canEdit ? "Open" : "View"}</ArrowLink>
+        <div className="flex items-center gap-2">
+          {onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              aria-label={`Delete ${course.title}`}
+              title="Delete course"
+              className="grid size-11 place-items-center rounded-full text-graphite transition hover:bg-red-pen/10 hover:text-red-pen focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+            >
+              <Trash className="size-[18px]" />
+            </button>
+          )}
+          <ArrowLink href={`/courses/${course._id}`}>{course.canEdit ? "Open" : "View"}</ArrowLink>
+        </div>
       </div>
     </article>
   );

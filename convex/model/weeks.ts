@@ -282,11 +282,34 @@ export async function reorderWeeks(ctx: MutationCtx, actor: Actor, courseId: Id<
   if (weekIds.length !== weeks.length || new Set(weekIds).size !== weekIds.length || weekIds.some((id) => !known.has(id))) {
     throw appError("INVALID_INPUT", "List every week of the course exactly once.");
   }
+  if (actor.via === "mcp") {
+    keepsPublishedOrder(weeks, weekIds, "weeks");
+  }
   for (const [index, id] of weekIds.entries()) {
     const week = weeks.find((w) => w._id === id)!;
     if (week.order !== index + 1) {
       await ctx.db.patch("weeks", id, { order: index + 1 });
     }
+  }
+}
+
+/**
+ * Agents may move drafts anywhere, but what students already see keeps its
+ * order: the published items must come out in the same order as before.
+ */
+export function keepsPublishedOrder<T extends { _id: string; status: string }>(
+  current: T[],
+  order: string[],
+  what: "weeks" | "lessons",
+): void {
+  const published = new Set(current.filter((item) => item.status === "published").map((item) => item._id));
+  const before = current.filter((item) => published.has(item._id)).map((item) => item._id);
+  const after = order.filter((id) => published.has(id));
+  if (before.some((id, index) => after[index] !== id)) {
+    throw appError(
+      "CONFLICT",
+      `Students already see the published ${what} in this order. Move only drafts, or ask the lecturer to reorder published ${what}.`,
+    );
   }
 }
 
@@ -378,7 +401,14 @@ export async function removeWeek(ctx: MutationCtx, actor: Actor, weekId: Id<"wee
   if (week.status === "published" || week.permissionId !== undefined) {
     throw appError("CONFLICT", "Unpublish this week first, so students stop seeing it.");
   }
-  for (const lesson of await lessonsOf(ctx, weekId)) {
+  const lessons = await lessonsOf(ctx, weekId);
+  if (actor.via === "mcp" && lessons.some((lesson) => lesson.status === "published")) {
+    throw appError(
+      "CONFLICT",
+      `"${week.title}" has lessons the lecturer published. Only the lecturer can delete it, in the Kalami dashboard.`,
+    );
+  }
+  for (const lesson of lessons) {
     await ctx.db.delete("lessons", lesson._id);
   }
   const placed = await ctx.db
@@ -454,6 +484,16 @@ export async function moveLink(
   }
   [links[index], links[target]] = [links[target], links[index]];
   await ctx.db.patch("weeks", weekId, { links, updatedAt: Date.now() });
+}
+
+/** Puts the week's links in this order (every link id once). */
+export async function reorderLinks(ctx: MutationCtx, actor: Actor, weekId: Id<"weeks">, linkIds: string[]) {
+  const { week } = await requireWeek(ctx, actor, weekId);
+  const byId = new Map(week.links.map((link) => [link.id, link]));
+  if (linkIds.length !== week.links.length || new Set(linkIds).size !== linkIds.length || linkIds.some((id) => !byId.has(id))) {
+    throw appError("INVALID_INPUT", "List every link of the week exactly once.");
+  }
+  await ctx.db.patch("weeks", weekId, { links: linkIds.map((id) => byId.get(id)!), updatedAt: Date.now() });
 }
 
 // --- Drive ------------------------------------------------------------------------------

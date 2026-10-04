@@ -28,6 +28,8 @@ export const assessmentValidator = v.object({
   _id: v.id("assessments"),
   _creationTime: v.number(),
   courseId: v.id("courses"),
+  // The week a task or quiz sits in; absent for unplaced work and for exams.
+  weekId: v.optional(v.id("weeks")),
   kind: assessmentKindValidator,
   title: v.string(),
   instructions: v.optional(v.string()),
@@ -45,6 +47,7 @@ export function toAssessment(doc: Doc<"assessments">) {
     _id: doc._id,
     _creationTime: doc._creationTime,
     courseId: doc.courseId,
+    weekId: doc.weekId,
     kind: doc.kind,
     title: doc.title,
     instructions: doc.instructions,
@@ -309,6 +312,10 @@ export async function updateAssessment(
       throw appError("CONFLICT", "The kind can't change once it has been published. Move it back to draft first.");
     }
     changes.kind = patch.kind;
+    // Midterms and finals live in the Exams section, never in a week.
+    if (patch.kind === "midterm" || patch.kind === "final") {
+      changes.weekId = undefined;
+    }
   }
   if (patch.settings !== undefined) {
     const settings = validateSettings({

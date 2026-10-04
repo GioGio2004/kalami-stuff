@@ -20,8 +20,10 @@ import {
   type CodeTask,
   type IntegrityCounts,
 } from "../lib/validators";
-import { displayName } from "./audit";
+import { lecturerName } from "./audit";
 import { MAX_FILE_CHARS, MAX_FILES } from "./codeTasks";
+import { enrollByCode } from "./enrollments";
+import { publishedMaterials, studentMaterialValidator } from "./materials";
 
 /**
  * The student side: joining courses, seeing what's open, working on code tasks,
@@ -38,8 +40,11 @@ export const DEADLINE_GRACE_MS = 15_000;
 
 // --- Variants ------------------------------------------------------------------------
 
+/** What a variant needs to know about the student; a deleted account still grades, with no name. */
+export type VariantStudent = Pick<Doc<"users">, "_id" | "firstName" | "lastName">;
+
 /** One student's version of a code task: their values filled in, the variable list removed. */
-export function taskFor(code: CodeTask, user: Doc<"users">, assessmentId: Id<"assessments">) {
+export function taskFor(code: CodeTask, user: VariantStudent, assessmentId: Id<"assessments">) {
   const values = pickValues(code.variables ?? [], `${user._id}:${assessmentId}`, user);
   const { files, steps, assets } = fillTask(code, values);
   return { code: { files, steps, assets }, values };
@@ -103,23 +108,13 @@ export async function joinCourse(ctx: MutationCtx, student: Student, rawCode: st
   if (course === undefined) {
     return await failed("No open course has this code. Check it with your lecturer.");
   }
-  if (course.universityId !== student.universityId) {
+  // A university's course takes its own students by code; anyone else needs a
+  // group invite from the lecturer. Courses outside universities take anyone.
+  if (course.universityId !== undefined && course.universityId !== student.universityId) {
     return await failed("This course belongs to another university.");
   }
-  const existing = await ctx.db
-    .query("enrollments")
-    .withIndex("by_courseId_and_userId", (q) => q.eq("courseId", course._id).eq("userId", student.user._id))
-    .unique();
-  if (existing?.status === "removed") {
+  if ((await enrollByCode(ctx, course._id, student.user._id)) === "removed") {
     return { ok: false as const, message: "Your lecturer removed you from this course. Ask them to add you back." };
-  }
-  if (existing === null) {
-    await ctx.db.insert("enrollments", {
-      courseId: course._id,
-      userId: student.user._id,
-      status: "active",
-      enrolledAt: now,
-    });
   }
   if (limit !== null && limit.failures > 0) {
     await ctx.db.patch("joinAttempts", limit._id, { failures: 0 });
@@ -169,7 +164,13 @@ export async function attemptsOf(ctx: QueryCtx, userId: Id<"users">, assessmentI
     .take(20);
 }
 
-/** What the results setting lets the student see right now. */
+/**
+ * What the results setting lets the student see right now. "Full, after close"
+ * means exactly that: until the closing time has passed (or the course is
+ * archived) nothing is shown, so a student who submits early can't hand the
+ * answer key to the others. Without a closing time, the lecturer releases the
+ * results by setting one.
+ */
 export function visibleResults(assessment: Doc<"assessments">, state: WindowState): "none" | "score" | "full" {
   switch (assessment.settings.resultsVisibility) {
     case "hidden":
@@ -177,7 +178,7 @@ export function visibleResults(assessment: Doc<"assessments">, state: WindowStat
     case "score":
       return "score";
     case "full_after_close":
-      return state === "closed" || assessment.settings.closesAt === undefined ? "full" : "none";
+      return state === "closed" ? "full" : "none";
   }
 }
 
@@ -229,7 +230,7 @@ export async function listMyCourses(ctx: QueryCtx, student: Student) {
       title: course.title,
       description: course.description,
       semester: course.semester,
-      lecturer: displayName(await ctx.db.get("users", course.ownerId)),
+      lecturer: lecturerName(await ctx.db.get("users", course.ownerId)),
       archived: course.status === "archived",
       openCount: published.filter((a) => windowState(a, course, now) === "open").length,
     });
@@ -286,6 +287,8 @@ export const studentCourseValidator = v.object({
   semester: v.optional(v.string()),
   lecturer: v.string(),
   archived: v.boolean(),
+  /** Published weeks of materials, in course order. */
+  materials: v.array(studentMaterialValidator),
   assessments: v.array(
     v.object({
       _id: v.id("assessments"),
@@ -341,8 +344,9 @@ export async function getStudentCourse(ctx: QueryCtx, student: Student, courseId
     title: course.title,
     description: course.description,
     semester: course.semester,
-    lecturer: displayName(await ctx.db.get("users", course.ownerId)),
+    lecturer: lecturerName(await ctx.db.get("users", course.ownerId)),
     archived: course.status === "archived",
+    materials: await publishedMaterials(ctx, course._id),
     assessments,
   };
 }
@@ -462,7 +466,7 @@ export async function listComments(ctx: QueryCtx, attemptId: Id<"attempts">) {
   const names = new Map<Id<"users">, string>();
   const out = [];
   for (const row of rows) {
-    if (!names.has(row.authorId)) names.set(row.authorId, displayName(await ctx.db.get("users", row.authorId)));
+    if (!names.has(row.authorId)) names.set(row.authorId, lecturerName(await ctx.db.get("users", row.authorId)));
     out.push({
       _id: row._id,
       questionId: row.questionId,
@@ -576,14 +580,20 @@ export function stepProgress(code: { steps: { checks: CheckRuleDoc[] }[] }, file
   };
 }
 
+/** Saves still in flight at the closing time get the same few seconds as at a time limit. */
+function withinClosingGrace(assessment: Doc<"assessments">, course: Doc<"courses">, now: number): boolean {
+  const { closesAt } = assessment.settings;
+  return course.status !== "archived" && closesAt !== undefined && now <= closesAt + DEADLINE_GRACE_MS;
+}
+
 /**
  * The student's in-progress attempt. A code task starts one on the first save;
  * quizzes and exams only through their start screen (model/quiz.ts), and
  * refuse work after the attempt's deadline. Refuses closed or submitted work.
  */
 export async function ensureAttempt(ctx: MutationCtx, student: Student, assessmentId: Id<"assessments">) {
-  const { assessment, state } = await requireOpenableAssessment(ctx, student, assessmentId);
-  if (state === "closed") {
+  const { assessment, course, state } = await requireOpenableAssessment(ctx, student, assessmentId);
+  if (state === "closed" && !withinClosingGrace(assessment, course, Date.now())) {
     throw appError("CONFLICT", "This is closed, so changes can't be saved.");
   }
   const attempt = await latestAttempt(ctx, student.user._id, assessment._id);
@@ -686,12 +696,15 @@ export async function reportIntegrity(
  * Used on submit, when a timed attempt runs out and when an assessment closes.
  */
 export async function gradeAttempt(ctx: MutationCtx, attempt: Doc<"attempts">, options: { auto: boolean }) {
-  const user = await ctx.db.get("users", attempt.userId);
-  if (user === null) return;
+  // A deleted account grades like anyone else, with no name in its variant.
+  const user: VariantStudent =
+    (await ctx.db.get("users", attempt.userId)) ?? { _id: attempt.userId, firstName: undefined, lastName: undefined };
   let score = 0;
+  let maxScore = 0;
   let stepsDone = 0;
   let needsGrading = false;
   for (const question of await questionsOf(ctx, attempt.assessmentId)) {
+    maxScore += question.points;
     if (question.type !== "code" || question.code === undefined) {
       const response = await responseFor(ctx, attempt._id, question._id);
       const autoScore = scoreAnswer(await answerKeyOf(ctx, question._id), response?.value, question.points);
@@ -733,9 +746,37 @@ export async function gradeAttempt(ctx: MutationCtx, attempt: Doc<"attempts">, o
     status: "submitted",
     submittedAt: Date.now(),
     score: Math.round(score * 100) / 100,
+    // The questions as they are now, so a question added or re-pointed since the start still adds up.
+    maxScore: Math.round(maxScore * 100) / 100,
     stepsDone,
     needsGrading: needsGrading || undefined,
     autoSubmitted: options.auto ? true : undefined,
+    gradingError: undefined,
+  });
+}
+
+/**
+ * Grades, and if grading itself fails (a page the checks refuse, a bug), still
+ * closes the attempt: submitted with score 0 and the error for the lecturer,
+ * who grades it by hand. Never leaves work hanging in progress.
+ */
+export async function gradeOrFail(ctx: MutationCtx, attempt: Doc<"attempts">, options: { auto: boolean }) {
+  try {
+    await gradeAttempt(ctx, attempt, options);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Grading attempt ${attempt._id} failed: ${message}`);
+    await failGrading(ctx, attempt, message, options.auto);
+  }
+}
+
+async function failGrading(ctx: MutationCtx, attempt: Doc<"attempts">, message: string, auto: boolean) {
+  await ctx.db.patch("attempts", attempt._id, {
+    status: "submitted",
+    submittedAt: Date.now(),
+    score: 0,
+    autoSubmitted: auto ? true : undefined,
+    gradingError: message.slice(0, 500),
   });
 }
 
@@ -750,7 +791,7 @@ export async function submitTask(ctx: MutationCtx, student: Student, assessmentI
   }
   // The page submits when its timer runs out; that counts as automatic.
   const late = state === "closed" || (attempt.deadlineAt !== undefined && Date.now() >= attempt.deadlineAt);
-  await gradeAttempt(ctx, attempt, { auto: late });
+  await gradeOrFail(ctx, attempt, { auto: late });
   return null;
 }
 
@@ -783,6 +824,8 @@ export async function hasUngradedEssays(ctx: QueryCtx, attemptId: Id<"attempts">
 const CLOSED_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 /** Attempts handed out per cron run; the next minute takes the rest. */
 const AUTO_SUBMIT_BATCH = 500;
+/** A grading run the platform killed (over its time limit) leaves no error to catch; after this many it's closed as failed. */
+const MAX_GRADING_TRIES = 3;
 
 /**
  * Cron: finds work still in progress whose time limit ran out, or whose
@@ -792,18 +835,21 @@ const AUTO_SUBMIT_BATCH = 500;
  */
 export async function autoSubmitDue(ctx: MutationCtx): Promise<number> {
   const now = Date.now();
-  const due = new Set<Id<"attempts">>();
+  const due = new Map<Id<"attempts">, Doc<"attempts">>();
   const timedOut = await ctx.db
     .query("attempts")
     .withIndex("by_status_and_deadlineAt", (q) =>
       q.eq("status", "in_progress").gte("deadlineAt", 0).lte("deadlineAt", now - DEADLINE_GRACE_MS),
     )
     .take(AUTO_SUBMIT_BATCH);
-  for (const attempt of timedOut) due.add(attempt._id);
+  for (const attempt of timedOut) due.set(attempt._id, attempt);
   const closed = await ctx.db
     .query("assessments")
     .withIndex("by_status_and_closesAt", (q) =>
-      q.eq("status", "published").gte("settings.closesAt", now - CLOSED_LOOKBACK_MS).lte("settings.closesAt", now),
+      q
+        .eq("status", "published")
+        .gte("settings.closesAt", now - CLOSED_LOOKBACK_MS)
+        .lte("settings.closesAt", now - DEADLINE_GRACE_MS),
     )
     .take(100);
   for (const assessment of closed) {
@@ -812,10 +858,17 @@ export async function autoSubmitDue(ctx: MutationCtx): Promise<number> {
       .query("attempts")
       .withIndex("by_assessmentId_and_status", (q) => q.eq("assessmentId", assessment._id).eq("status", "in_progress"))
       .take(AUTO_SUBMIT_BATCH - due.size);
-    for (const attempt of open) due.add(attempt._id);
+    for (const attempt of open) due.set(attempt._id, attempt);
   }
-  for (const attemptId of due) {
-    await ctx.scheduler.runAfter(0, internal.learn.gradeDue, { attemptId });
+  for (const attempt of due.values()) {
+    const tries = (attempt.gradingTries ?? 0) + 1;
+    if (tries > MAX_GRADING_TRIES) {
+      await failGrading(ctx, attempt, "Automatic grading ran out of time; grade it by hand.", true);
+      continue;
+    }
+    // Counted here, in a mutation that commits even when the grading run itself is killed.
+    await ctx.db.patch("attempts", attempt._id, { gradingTries: tries });
+    await ctx.scheduler.runAfter(0, internal.learn.gradeDue, { attemptId: attempt._id });
   }
   return due.size;
 }
@@ -824,6 +877,31 @@ export async function autoSubmitDue(ctx: MutationCtx): Promise<number> {
 export async function gradeDue(ctx: MutationCtx, attemptId: Id<"attempts">) {
   const attempt = await ctx.db.get("attempts", attemptId);
   if (attempt?.status === "in_progress") {
-    await gradeAttempt(ctx, attempt, { auto: true });
+    await gradeOrFail(ctx, attempt, { auto: true });
+  }
+}
+
+/** Open attempts handed to grading per step when work leaves "published" under students' feet. */
+const FINISH_BATCH = 200;
+
+/**
+ * When an assessment is moved back to draft or archived while students are
+ * mid-attempt, their work is graded as it stands rather than left hanging
+ * (they can no longer reach it). Batched and self-scheduling.
+ */
+export async function finishOpenAttempts(
+  ctx: MutationCtx,
+  assessmentId: Id<"assessments">,
+  cursor: string | null,
+): Promise<void> {
+  const page = await ctx.db
+    .query("attempts")
+    .withIndex("by_assessmentId_and_status", (q) => q.eq("assessmentId", assessmentId).eq("status", "in_progress"))
+    .paginate({ numItems: FINISH_BATCH, cursor });
+  for (const attempt of page.page) {
+    await ctx.scheduler.runAfter(0, internal.learn.gradeDue, { attemptId: attempt._id });
+  }
+  if (!page.isDone) {
+    await ctx.scheduler.runAfter(0, internal.learn.finishOpenAttempts, { assessmentId, cursor: page.continueCursor });
   }
 }

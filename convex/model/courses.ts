@@ -49,8 +49,9 @@ export const courseSummaryValidator = v.object({
   status: courseStatusValidator,
   joinCode: v.string(),
   joinEnabled: v.boolean(),
-  universityId: v.id("universities"),
-  universityName: localizedTextValidator,
+  // Both absent for a course outside any university.
+  universityId: v.optional(v.id("universities")),
+  universityName: v.optional(localizedTextValidator),
   role: courseRoleValidator,
   canEdit: v.boolean(),
   counts: courseCountsValidator,
@@ -96,10 +97,13 @@ async function toSummary(
   universities: Map<Id<"universities">, Doc<"universities"> | null>,
 ) {
   const { course } = access;
-  let university = universities.get(course.universityId);
-  if (university === undefined) {
-    university = await ctx.db.get("universities", course.universityId);
-    universities.set(course.universityId, university);
+  let university: Doc<"universities"> | null | undefined = null;
+  if (course.universityId !== undefined) {
+    university = universities.get(course.universityId);
+    if (university === undefined) {
+      university = await ctx.db.get("universities", course.universityId);
+      universities.set(course.universityId, university);
+    }
   }
   return {
     _id: course._id,
@@ -112,7 +116,7 @@ async function toSummary(
     joinCode: course.joinCode,
     joinEnabled: course.joinEnabled,
     universityId: course.universityId,
-    universityName: university?.name ?? { ka: "", en: "" },
+    universityName: university?.name,
     role: access.role,
     canEdit: access.canEdit,
     counts: await assessmentCounts(ctx, course._id),
@@ -149,11 +153,19 @@ export async function creatableUniversities(ctx: QueryCtx, actor: Actor) {
   );
 }
 
+/**
+ * The course's university. `null` asks for none (a school class, private
+ * lessons); undefined picks the actor's only university, or none for a
+ * teacher who belongs to no university.
+ */
 async function pickUniversity(
   ctx: QueryCtx,
   actor: Actor,
-  universityId: Id<"universities"> | undefined,
-): Promise<Id<"universities">> {
+  universityId: Id<"universities"> | null | undefined,
+): Promise<Id<"universities"> | undefined> {
+  if (universityId === null) {
+    return undefined;
+  }
   const allowed = await creatableUniversities(ctx, actor);
   if (universityId !== undefined) {
     if (!allowed.some((u) => u._id === universityId)) {
@@ -164,10 +176,13 @@ async function pickUniversity(
   if (allowed.length === 1) {
     return allowed[0]._id;
   }
+  if (creatorUniversityIds(actor).length === 0 && !isSuperAdmin(actor.memberships)) {
+    return undefined;
+  }
   if (allowed.length === 0) {
     throw appError("FORBIDDEN", "Your account isn't attached to an active university.");
   }
-  throw appError("INVALID_INPUT", "Choose which university this course belongs to.");
+  throw appError("INVALID_INPUT", "Choose which university this course belongs to, or none.");
 }
 
 async function uniqueJoinCode(ctx: QueryCtx): Promise<string> {
@@ -192,7 +207,7 @@ export async function createCourse(
     description?: string;
     semester?: string;
     locale?: Locale;
-    universityId?: Id<"universities">;
+    universityId?: Id<"universities"> | null;
   },
 ): Promise<Id<"courses">> {
   const title = requireText(args.title, "Title", 120);

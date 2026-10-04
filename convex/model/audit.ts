@@ -19,6 +19,7 @@ export async function logAudit(
   await ctx.db.insert("auditLog", {
     actorId: actor.user._id,
     via: actor.via,
+    client: actor.client,
     ...entry,
     at: Date.now(),
   });
@@ -38,12 +39,25 @@ export const auditEntryValidator = v.object({
   mine: v.boolean(),
 });
 
+/** How staff see each other: the name, or the email while a name is missing. */
 export function displayName(user: Doc<"users"> | null): string {
   if (user === null) {
     return "Someone";
   }
+  if (user.deletedAt !== undefined) {
+    return "Deleted account";
+  }
   const name = [user.firstName, user.lastName].filter(Boolean).join(" ");
   return name || user.email;
+}
+
+/** How students see a lecturer: never their email. */
+export function lecturerName(user: Doc<"users"> | null): string {
+  if (user === null || user.deletedAt !== undefined) {
+    return "Lecturer";
+  }
+  const name = [user.firstName, user.lastName].filter(Boolean).join(" ");
+  return name || "Lecturer";
 }
 
 export async function toAuditEntries(

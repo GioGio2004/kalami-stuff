@@ -115,7 +115,13 @@ export function parseDeclarations(body: string, base = 0): Declaration[] {
   return out;
 }
 
+/** @media inside @media inside @media…: browsers allow it; nobody needs more than this. */
+const MAX_MEDIA_DEPTH = 8;
+
 function parseRules(css: string, start: number, end: number, media: string[], out: StyleRule[]) {
+  if (media.length > MAX_MEDIA_DEPTH) {
+    return;
+  }
   let i = start;
   while (i < end) {
     while (i < end && /\s/.test(css[i])) {

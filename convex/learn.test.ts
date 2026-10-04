@@ -1,14 +1,12 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { createTest, type TestBackend } from "./test.setup";
 import type { FunctionArgs, UserIdentity } from "convex/server";
 import { describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { HONESTY_NOTICE } from "./lib/honestyNotice";
 import type { CodeQuestionInput } from "./lib/validators";
-import schema from "./schema";
 
-const modules = import.meta.glob("./**/*.ts");
 const ISSUER = "https://test.clerk.accounts.dev";
 const FIRST_PAGE = { numItems: 100, cursor: null };
 
@@ -24,7 +22,7 @@ function person(name: string): Partial<UserIdentity> {
 }
 
 /** The auto-submit cron, then the grading it scheduled (one mutation per attempt). */
-async function runAutoSubmit(t: ReturnType<typeof convexTest>): Promise<number> {
+async function runAutoSubmit(t: TestBackend): Promise<number> {
   vi.useFakeTimers();
   try {
     const due = await t.mutation(internal.learn.autoSubmit, {});
@@ -89,7 +87,7 @@ const PROFILE_CARD: CodeQuestionInput = {
 };
 
 async function setup() {
-  const t = convexTest(schema, modules);
+  const t = createTest();
   const admin = t.withIdentity(person("admin"));
   await admin.mutation(api.users.store, {});
   await t.mutation(internal.admin.grantSuperAdmin, { email: "admin@example.com" });
@@ -297,7 +295,10 @@ describe("students and code tasks", () => {
     const task = await ana.query(api.learn.task, { assessmentId });
     await ana.mutation(api.learn.saveCodeWork, { assessmentId, questionId, files: task.questions[0].code.files });
     expect(await runAutoSubmit(t)).toBe(0);
+    // Closed a second ago: still inside the grace period that lets the last save land.
     await nino.mutation(api.assessments.update, { assessmentId, settings: { closesAt: Date.now() - 1000 } });
+    expect(await runAutoSubmit(t)).toBe(0);
+    await nino.mutation(api.assessments.update, { assessmentId, settings: { closesAt: Date.now() - 20_000 } });
     expect(await runAutoSubmit(t)).toBe(1);
     const rows = (await nino.query(api.submissions.forAssessment, { assessmentId, paginationOpts: FIRST_PAGE })).page;
     expect(rows).toMatchObject([{ status: "submitted", autoSubmitted: true, score: 0 }]);
@@ -322,7 +323,7 @@ describe("students and code tasks", () => {
       ],
       solution: [{ name: "index.html", content: '<h1 style="color: {{color}}">{{student.firstName}}</h1>' }],
     };
-    const { nino, ana, assessmentId, joinCode, questionId } = await published(colorful);
+    const { nino, ana, courseId, assessmentId, joinCode, questionId } = await published(colorful);
     await ana.mutation(api.learn.join, { code: joinCode });
     const task = await ana.query(api.learn.task, { assessmentId });
     const { prompt, code } = task.questions[0];
@@ -338,9 +339,11 @@ describe("students and code tasks", () => {
     const rows = (await nino.query(api.submissions.forAssessment, { assessmentId, paginationOpts: FIRST_PAGE })).page;
     expect(rows[0].score).toBe(2);
 
-    // An unknown placeholder, or a solution that only works for one colour, is refused.
+    // An unknown placeholder is refused (on a fresh draft: the task above is frozen now that ana worked on it).
     const typo = { ...colorful, prompt: "Make it {{colour}}" };
-    await expectAppError(nino.mutation(api.questions.add, { assessmentId, questions: [typo] }), "INVALID_INPUT");
+    const draft = await nino.mutation(api.assessments.create, { courseId, kind: "task", title: "Draft" });
+    await expectAppError(nino.mutation(api.questions.add, { assessmentId: draft, questions: [typo] }), "INVALID_INPUT");
+    await expectAppError(nino.mutation(api.questions.add, { assessmentId, questions: [colorful] }), "CONFLICT");
   });
 });
 
@@ -422,16 +425,23 @@ describe("students and quizzes", () => {
     await expectAppError(save(single, { type: "short", text: "<a>" }), "INVALID_INPUT");
     await expectAppError(save(single, { type: "single", optionId: "nope" }), "INVALID_INPUT");
 
+    // The saved answers live apart from the quiz, so autosaves don't re-send it.
+    expect((await ana.query(api.learn.quizAnswers, { assessmentId: quizId })).answers.map((a) => a.questionId).sort()).toEqual(
+      [...questionIds].sort(),
+    );
+
     await ana.mutation(api.learn.submit, { assessmentId: quizId });
     const done = await ana.query(api.learn.quiz, { assessmentId: quizId });
-    // 2 + 1 + 1.5; the essay waits.
-    expect(done.attempt).toMatchObject({ status: "submitted", score: 4.5, pendingGrading: true, autoSubmitted: false });
-    expect(done.review.find((r) => r.questionId === single)).toMatchObject({ points: 2, correctOptionIds: [option(single, "<a>")] });
-    expect(done.review.find((r) => r.questionId === short)).toMatchObject({ acceptedAnswers: ["Cascading Style Sheets"] });
-    expect(done.review.find((r) => r.questionId === essay)?.points).toBeUndefined();
+    // "Full, after close" with no closing time: nothing is released yet, not even the score,
+    // so a student who submits first can't hand the key to the others.
+    expect(done.attempt).toMatchObject({ status: "submitted", pendingGrading: true, autoSubmitted: false });
+    expect(done.attempt!.score).toBeUndefined();
+    expect(done.review).toEqual([]);
+    expect(JSON.stringify(done)).not.toContain("correct");
 
+    // The lecturer sees the automatic score at once: 2 + 1 + 1.5; the essay waits.
     const [row] = (await nino.query(api.submissions.forAssessment, { assessmentId: quizId, paginationOpts: FIRST_PAGE })).page;
-    expect(row).toMatchObject({ number: 1, answered: 4, questionsTotal: 4, needsGrading: true, score: 4.5 });
+    expect(row).toMatchObject({ number: 1, answered: 4, questionsTotal: 4, needsGrading: true, score: 4.5, maxScore: 7.5 });
     const detail = await nino.query(api.submissions.detail, { attemptId });
     expect(detail.answers.map((a) => a.type)).toEqual(["single", "multiple", "short", "essay"]);
     expect(detail.answers[0]).toMatchObject({ autoScore: 2, key: { type: "single" } });
@@ -441,17 +451,27 @@ describe("students and quizzes", () => {
       "INVALID_INPUT",
     );
     await nino.mutation(api.submissions.setQuestionPoints, { attemptId, questionId: essay, points: 2.5 });
-    expect((await ana.query(api.learn.quiz, { assessmentId: quizId })).attempt).toMatchObject({ score: 7, pendingGrading: false });
-    expect(((await nino.query(api.submissions.forAssessment, { assessmentId: quizId, paginationOpts: FIRST_PAGE })).page)[0].needsGrading).toBe(false);
+    expect((await ana.query(api.learn.quiz, { assessmentId: quizId })).attempt).toMatchObject({ pendingGrading: false });
+    expect(((await nino.query(api.submissions.forAssessment, { assessmentId: quizId, paginationOpts: FIRST_PAGE })).page)[0]).toMatchObject({
+      needsGrading: false,
+      score: 7,
+    });
 
-    // A second try, allowed by the settings, starts empty; the best score counts.
+    // A second try, allowed by the settings, starts empty.
     const second = await ana.mutation(api.learn.startAttempt, { assessmentId: quizId });
     expect(second).not.toBe(attemptId);
     const retry = await ana.query(api.learn.quiz, { assessmentId: quizId });
-    expect(retry).toMatchObject({ attemptsUsed: 2, attempt: { number: 2, status: "in_progress" }, answers: [] });
+    expect(retry).toMatchObject({ attemptsUsed: 2, attempt: { number: 2, status: "in_progress" } });
+    expect(await ana.query(api.learn.quizAnswers, { assessmentId: quizId })).toEqual({ answers: [] });
     await ana.mutation(api.learn.submit, { assessmentId: quizId });
-    expect((await ana.query(api.learn.course, { courseId })).assessments[0].result).toMatchObject({ status: "submitted", score: 7 });
     await expectAppError(ana.mutation(api.learn.startAttempt, { assessmentId: quizId }), "CONFLICT");
+
+    // Closing it releases everything: the best score counts, and the review shows the keys.
+    await nino.mutation(api.assessments.update, { assessmentId: quizId, settings: { closesAt: Date.now() - 60_000 } });
+    expect((await ana.query(api.learn.course, { courseId })).assessments[0].result).toMatchObject({ status: "submitted", score: 7 });
+    const released = await ana.query(api.learn.quiz, { assessmentId: quizId });
+    expect(released.review.find((r) => r.questionId === single)).toMatchObject({ correctOptionIds: [option(single, "<a>")] });
+    expect(released.review.find((r) => r.questionId === short)).toMatchObject({ acceptedAnswers: ["Cascading Style Sheets"] });
   });
 
   test("a timed attempt stops taking answers when time is up and is submitted for the student", async () => {

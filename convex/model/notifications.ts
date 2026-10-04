@@ -3,6 +3,7 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { appError } from "../lib/errors";
+import { verifyUnsubscribeToken } from "../lib/tokens";
 import { assessmentKindValidator, notificationKindValidator, type NotificationKind } from "../lib/validators";
 import { latestAttempt, type Student } from "./learn";
 
@@ -10,7 +11,8 @@ import { latestAttempt, type Student } from "./learn";
  * Student notifications. An event (new work published, a deadline coming up)
  * becomes one row per enrolled student, written in batches by a scheduled
  * mutation so a big course never has to fit in one function call. The bell in
- * the student app reads the rows; push and email send the same rows.
+ * the student app reads the rows; email (email.ts) carries the same rows to
+ * students who want them.
  */
 
 const HOUR = 60 * 60 * 1000;
@@ -46,6 +48,10 @@ export const notificationValidator = v.object({
 export const inboxValidator = v.object({
   unread: v.number(),
   items: v.array(notificationValidator),
+  /** Emails for new work and deadlines: on unless the person switched them off. */
+  emailEnabled: v.boolean(),
+  /** Resend reported the address bouncing or complaining; emails stay off until it's sorted out. */
+  emailBlocked: v.boolean(),
 });
 
 function toNotification(row: Doc<"notifications">) {
@@ -78,7 +84,12 @@ export async function getInbox(ctx: QueryCtx, student: Student) {
     .order("desc")
     .take(INBOX_SIZE);
   const unread = await unreadOf(ctx, student.user._id, UNREAD_CAP);
-  return { unread: unread.length, items: rows.map(toNotification) };
+  return {
+    unread: unread.length,
+    items: rows.map(toNotification),
+    emailEnabled: student.user.emailOptOut !== true,
+    emailBlocked: student.user.emailStatus !== undefined,
+  };
 }
 
 export async function markRead(ctx: MutationCtx, student: Student, notificationId: Id<"notifications">) {
@@ -96,6 +107,32 @@ export async function markAllRead(ctx: MutationCtx, student: Student) {
   for (const row of await unreadOf(ctx, student.user._id, 500)) {
     await ctx.db.patch("notifications", row._id, { readAt: now });
   }
+}
+
+// --- Email preference -----------------------------------------------------------------
+
+export async function setEmailPreference(ctx: MutationCtx, student: Student, enabled: boolean) {
+  await ctx.db.patch("users", student.user._id, { emailOptOut: enabled ? undefined : true });
+}
+
+/**
+ * The link in every email: anyone holding it can switch that person's emails
+ * off (never on), which is the point of an unsubscribe link. Returns false for
+ * a forged or malformed one.
+ */
+export async function unsubscribeByToken(ctx: MutationCtx, rawUserId: string, token: string): Promise<boolean> {
+  const userId = ctx.db.normalizeId("users", rawUserId);
+  if (userId === null || !(await verifyUnsubscribeToken(userId, token))) {
+    return false;
+  }
+  const user = await ctx.db.get("users", userId);
+  if (user === null) {
+    return false;
+  }
+  if (user.emailOptOut !== true) {
+    await ctx.db.patch("users", userId, { emailOptOut: true });
+  }
+  return true;
 }
 
 // --- Sending ---------------------------------------------------------------------
@@ -138,7 +175,8 @@ export function hrefFor(assessment: Doc<"assessments">): string {
 /**
  * One batch of students. Reminders go only to students who haven't submitted;
  * a "new work" notice goes to everyone enrolled. Stops quietly if the work or
- * its course stopped being visible to students in the meantime.
+ * its course stopped being visible to students in the meantime. The rows it
+ * wrote are handed to email delivery as one batch.
  */
 export async function fanOut(
   ctx: MutationCtx,
@@ -153,29 +191,33 @@ export async function fanOut(
     .query("enrollments")
     .withIndex("by_courseId", (q) => q.eq("courseId", course._id))
     .paginate({ numItems: FAN_OUT_BATCH, cursor: args.cursor });
-  let sent = 0;
+  const written: Id<"notifications">[] = [];
   for (const enrollment of page.page) {
     if (enrollment.status !== "active") continue;
     if (args.kind !== "published") {
       const attempt = await latestAttempt(ctx, enrollment.userId, assessment._id);
       if (attempt?.status === "submitted") continue;
     }
-    await ctx.db.insert("notifications", {
-      userId: enrollment.userId,
-      kind: args.kind,
-      courseId: course._id,
-      assessmentId: assessment._id,
-      assessmentKind: assessment.kind,
-      title: assessment.title,
-      courseTitle: course.title,
-      dueAt: assessment.settings.closesAt,
-      href: hrefFor(assessment),
-    });
-    sent++;
+    written.push(
+      await ctx.db.insert("notifications", {
+        userId: enrollment.userId,
+        kind: args.kind,
+        courseId: course._id,
+        assessmentId: assessment._id,
+        assessmentKind: assessment.kind,
+        title: assessment.title,
+        courseTitle: course.title,
+        dueAt: assessment.settings.closesAt,
+        href: hrefFor(assessment),
+      }),
+    );
   }
   const run = await runFor(ctx, assessment._id, args.kind);
   if (run !== null) {
-    await ctx.db.patch("notificationRuns", run._id, { sent: run.sent + sent });
+    await ctx.db.patch("notificationRuns", run._id, { sent: run.sent + written.length });
+  }
+  if (written.length > 0) {
+    await ctx.scheduler.runAfter(0, internal.email.deliver, { notificationIds: written });
   }
   if (!page.isDone) {
     await ctx.scheduler.runAfter(0, internal.notifications.fanOut, { ...args, cursor: page.continueCursor });

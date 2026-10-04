@@ -3,7 +3,8 @@ import type { AnswerKey, ResponseValue } from "./validators";
 /** Short answers match after trimming and collapsing spaces; case only matters if the lecturer said so. */
 export function normalizeShortAnswer(text: string, caseSensitive: boolean): string {
   const collapsed = text.trim().replace(/\s+/g, " ");
-  return caseSensitive ? collapsed : collapsed.toLocaleLowerCase();
+  // toLowerCase, not toLocaleLowerCase: the same answer must grade the same on any server.
+  return caseSensitive ? collapsed : collapsed.toLowerCase();
 }
 
 /**

@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend-and-staff:
+    name: Lint, typecheck, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - name: Typecheck the backend
+        run: npx tsc --noEmit -p convex/tsconfig.json
+      - name: Typecheck the staff app
+        run: npx tsc --noEmit
+      - run: npm test
+
+  student-in-sync:
+    name: Student app copies match the backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: kalami-stuff
+      - uses: actions/checkout@v4
+        with:
+          # A private student repo needs a token with read access in the KALAMI_REPO_TOKEN secret.
+          repository: GioGio2004/kalami
+          path: kalami
+          token: ${{ secrets.KALAMI_REPO_TOKEN || github.token }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+        working-directory: kalami-stuff
+      - name: Copy the shared sandbox and checks engine
+        run: node scripts/sync-student.mjs
+        working-directory: kalami-stuff
+      - name: Regenerate the student app's typed API
+        # Needs a deployment to read the function spec from: set CONVEX_DEPLOY_KEY (a dev deploy key).
+        if: env.CONVEX_DEPLOY_KEY != ''
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: npm run api:student
+        working-directory: kalami-stuff
+      - name: Fail if the student repo is behind
+        run: |
+          if ! git -C kalami diff --quiet -- lib/checks components/sandbox convex-api/api.ts; then
+            echo "::error::The student app is out of sync with the backend. In kalami-stuff run 'npm run sync:student' and commit the result in kalami."
+            git -C kalami diff --stat -- lib/checks components/sandbox convex-api/api.ts
+            exit 1
+          fi

@@ -50,7 +50,8 @@ export function hasCounts(delta: Partial<IntegrityCounts> | undefined): boolean 
 
 export function integrityScore(c: IntegrityCounts): number {
   return (
-    3 * (c.fullscreenExits ?? 0) +
+    // Esc leaves fullscreen in every browser, so an exit weighs no more than a tab switch.
+    2 * (c.fullscreenExits ?? 0) +
     2 * (c.tabSwitches ?? 0) +
     Math.floor((c.awayMs ?? 0) / 10_000) +
     4 * c.largeInserts +

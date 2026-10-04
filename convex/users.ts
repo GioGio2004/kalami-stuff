@@ -20,6 +20,7 @@ import { appError } from "./lib/errors";
 import { HONESTY_NOTICE } from "./lib/honestyNotice";
 import { normalizeEmail, optionalText, requireText } from "./lib/input";
 import { localeValidator, localizedTextValidator, roleValidator } from "./lib/validators";
+import type { Doc } from "./_generated/dataModel";
 
 /** Both apps call this right after sign-in to create or refresh the user's row. */
 export const store = mutation({
@@ -47,6 +48,8 @@ export const upsertFromClerk = internalMutation({
   args: {
     clerkUserId: v.string(),
     email: v.string(),
+    // Whether Clerk verified that address. Older callers don't say, which counts as no.
+    emailVerified: v.optional(v.boolean()),
     firstName: v.optional(v.string()),
     lastName: v.optional(v.string()),
     avatarUrl: v.optional(v.string()),
@@ -56,10 +59,11 @@ export const upsertFromClerk = internalMutation({
     const email = normalizeEmail(args.email);
     const tokenIdentifier = clerkTokenIdentifier(args.clerkUserId);
     const current = await userForClerkId(ctx, args.clerkUserId);
-    // After a move to a new Clerk app, the row from the old one carries over (see ensureUser).
-    // Clerk only sends verified primary addresses here: sign-up requires verification.
+    // After a move to a new Clerk app, the row from the old one carries over (see ensureUser),
+    // but only to someone who proved they own the address: an unverified email never takes
+    // over an account and its roles.
     const adopted =
-      current === null
+      current === null && args.emailVerified === true
         ? await userFromPreviousClerkApp(ctx, email, clerkIssuer())
         : null;
     if (adopted !== null) {
@@ -98,8 +102,11 @@ export const upsertFromClerk = internalMutation({
 const DELETE_BATCH = 200;
 
 /**
- * Clerk `user.deleted`: removes the person, their roles and their seats on
- * course staff. Safe to receive twice.
+ * Clerk `user.deleted`: the person can no longer sign in, their roles, staff
+ * seats and enrollments go, their notifications are deleted, and the `users`
+ * row is anonymised rather than deleted, so their attempts, grades and the
+ * course history keep a valid reference ("Deleted account"). Safe to receive
+ * twice: the second delivery finds nobody.
  */
 export const deleteFromClerk = internalMutation({
   args: { clerkUserId: v.string() },
@@ -109,8 +116,6 @@ export const deleteFromClerk = internalMutation({
     if (user === null) {
       return null;
     }
-    // When courses, attempts and grades exist, decide per table whether to delete
-    // or anonymise them here, within the university's agreed retention period.
     for (const membership of await getMemberships(ctx, user._id)) {
       await ctx.db.delete("memberships", membership._id);
     }
@@ -127,7 +132,36 @@ export const deleteFromClerk = internalMutation({
         break;
       }
     }
-    await ctx.db.delete("users", user._id);
+    for (const enrollment of await ctx.db
+      .query("enrollments")
+      .withIndex("by_userId", (q) => q.eq("userId", user._id))
+      .take(DELETE_BATCH)) {
+      if (enrollment.status === "active") {
+        await ctx.db.patch("enrollments", enrollment._id, { status: "removed" });
+      }
+    }
+    for (;;) {
+      const rows = await ctx.db
+        .query("notifications")
+        .withIndex("by_userId", (q) => q.eq("userId", user._id))
+        .take(DELETE_BATCH);
+      for (const row of rows) {
+        await ctx.db.delete("notifications", row._id);
+      }
+      if (rows.length < DELETE_BATCH) {
+        break;
+      }
+    }
+    await ctx.db.patch("users", user._id, {
+      tokenIdentifier: `deleted|${user._id}`,
+      clerkUserId: undefined,
+      email: `deleted-${user._id}@kalami.invalid`,
+      firstName: undefined,
+      lastName: undefined,
+      avatarUrl: undefined,
+      emailOptOut: true,
+      deletedAt: Date.now(),
+    });
     return null;
   },
 });
@@ -148,8 +182,9 @@ const meValidator = v.object({
   student: v.union(
     v.null(),
     v.object({
-      universityId: v.id("universities"),
-      universityName: localizedTextValidator,
+      // Both absent for a student outside any university.
+      universityId: v.optional(v.id("universities")),
+      universityName: v.optional(localizedTextValidator),
       faculty: v.optional(v.string()),
       group: v.optional(v.string()),
       year: v.optional(v.number()),
@@ -180,10 +215,10 @@ export const me = query({
       ? await ctx.db.get("universities", studentMembership.universityId)
       : null;
     const student =
-      studentMembership && university
+      studentMembership !== undefined
         ? {
-            universityId: university._id,
-            universityName: university.name,
+            universityId: university?._id,
+            universityName: university?.name,
             faculty: studentMembership.faculty,
             group: studentMembership.group,
             year: studentMembership.year,
@@ -228,15 +263,19 @@ export const markStudioIntroSeen = mutation({
   },
 });
 
-/** Onboarding form + honesty notice in one step. Re-running it updates the profile. */
+/**
+ * Onboarding form + honesty notice in one step. Re-running it updates the profile.
+ * The university is optional (school classes, private lessons); with one, the
+ * faculty, group and year are required too.
+ */
 export const completeStudentOnboarding = mutation({
   args: {
     firstName: v.string(),
     lastName: v.string(),
-    universityId: v.id("universities"),
-    faculty: v.string(),
-    group: v.string(),
-    year: v.number(),
+    universityId: v.optional(v.id("universities")),
+    faculty: v.optional(v.string()),
+    group: v.optional(v.string()),
+    year: v.optional(v.number()),
     studentNumber: v.optional(v.string()),
     locale: localeValidator,
     // The notice version the student actually read and accepted.
@@ -255,22 +294,35 @@ export const completeStudentOnboarding = mutation({
 
     const firstName = requireText(args.firstName, "First name", 60);
     const lastName = requireText(args.lastName, "Last name", 60);
-    const faculty = requireText(args.faculty, "Faculty", 120);
-    const group = requireText(args.group, "Group", 40);
-    const studentNumber = optionalText(args.studentNumber, "Student ID", 40);
-    if (!Number.isInteger(args.year) || args.year < 1 || args.year > 8) {
-      throw appError("INVALID_INPUT", "Year must be a whole number from 1 to 8.");
-    }
-
-    // Moving a student between universities would orphan their course data; it
-    // needs an admin, not a re-submitted form.
+    // Moving a student between universities (or out of one) would orphan their
+    // course data; it needs an admin, not a re-submitted form.
     const existing = memberships.find((m) => m.role === "student");
     if (existing?.universityId !== undefined && existing.universityId !== args.universityId) {
       throw appError("FORBIDDEN", "Your university can't be changed here. Ask your lecturer.");
     }
-    const university = await ctx.db.get("universities", args.universityId);
-    if (university === null || university.status !== "active") {
-      throw appError("NOT_FOUND", "That university isn't available.");
+    let profile: Partial<Doc<"memberships">> = {
+      universityId: undefined,
+      faculty: undefined,
+      group: undefined,
+      year: undefined,
+      studentNumber: undefined,
+    };
+    if (args.universityId !== undefined) {
+      const university = await ctx.db.get("universities", args.universityId);
+      if (university === null || university.status !== "active") {
+        throw appError("NOT_FOUND", "That university isn't available.");
+      }
+      const year = args.year ?? 0;
+      if (!Number.isInteger(year) || year < 1 || year > 8) {
+        throw appError("INVALID_INPUT", "Year must be a whole number from 1 to 8.");
+      }
+      profile = {
+        universityId: university._id,
+        faculty: requireText(args.faculty ?? "", "Faculty", 120),
+        group: requireText(args.group ?? "", "Group", 40),
+        year,
+        studentNumber: optionalText(args.studentNumber, "Student ID", 40),
+      };
     }
 
     await ctx.db.patch("users", user._id, {
@@ -281,13 +333,6 @@ export const completeStudentOnboarding = mutation({
       honestyVersion: HONESTY_NOTICE.version,
     });
 
-    const profile = {
-      universityId: university._id,
-      faculty,
-      group,
-      year: args.year,
-      studentNumber,
-    };
     if (existing) {
       await ctx.db.patch("memberships", existing._id, profile);
     } else {

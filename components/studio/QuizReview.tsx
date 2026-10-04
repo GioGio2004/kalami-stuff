@@ -12,7 +12,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { errorMessage } from "@/lib/errors";
 import { useIsMobile } from "@/lib/useDevice";
 import { OnComputer } from "./OnComputer";
-import { COLOR_TONE, FullScreen, GradeBar, integritySummary, SubmissionReview } from "./TaskTryout";
+import { COLOR_TONE, FullScreen, GradeBar, INTEGRITY_CAVEAT, integritySummary, SubmissionReview } from "./TaskTryout";
 
 type Detail = FunctionReturnType<typeof api.submissions.detail>;
 type Answer = Detail["answers"][number];
@@ -55,9 +55,16 @@ export function QuizReview({ attemptId, title, onClose }: { attemptId: Id<"attem
                 </span>
               </h2>
               <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-graphite">
-                <Pill tone={COLOR_TONE[detail.integrityColor]}>Integrity: {detail.integrityColor}</Pill>
+                <span title={INTEGRITY_CAVEAT}>
+                  <Pill tone={COLOR_TONE[detail.integrityColor]}>Integrity: {detail.integrityColor}</Pill>
+                </span>
                 {integritySummary(detail.integrity)}
               </p>
+              {detail.gradingError && (
+                <p className="mt-2 rounded-xl bg-red-pen/10 px-3 py-2 text-sm text-red-pen">
+                  Automatic grading failed ({detail.gradingError}), so the score is 0 for now. Give the points by hand below.
+                </p>
+              )}
             </div>
             {detail.questions.length > 0 && (
               <Button size="sm" variant="outline" onClick={() => setShowCode(true)}>

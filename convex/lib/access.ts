@@ -14,6 +14,8 @@ export type Actor = {
   user: Doc<"users">;
   memberships: Doc<"memberships">[];
   via: Via;
+  /** MCP only: the OAuth client the agent connected through, for the audit log. */
+  client?: string;
 };
 
 /** Lecturers, university admins and the super admin may create and edit. */
@@ -38,10 +40,10 @@ export async function requireStaffActor(ctx: QueryCtx): Promise<Actor> {
  * MCP_SERVICE_SECRET. A forged or expired credential, a deleted account or a
  * lost staff role all get null.
  */
-export async function actorFromToken(ctx: QueryCtx, token: string): Promise<Actor | null> {
+export async function actorFromToken(ctx: QueryCtx, token: string, client?: string): Promise<Actor | null> {
   const clerkUserId = await verifyServiceCredential(token);
   const user = clerkUserId === null ? null : await userByClerkUserId(ctx, clerkUserId);
-  if (user === null) {
+  if (user === null || user.deletedAt !== undefined) {
     return null;
   }
   const memberships = await getMemberships(ctx, user._id);
@@ -49,11 +51,11 @@ export async function actorFromToken(ctx: QueryCtx, token: string): Promise<Acto
   if (!canCreateCourses(memberships)) {
     return null;
   }
-  return { user, memberships, via: "mcp" };
+  return { user, memberships, via: "mcp", client };
 }
 
-export async function requireTokenActor(ctx: QueryCtx, token: string): Promise<Actor> {
-  const actor = await actorFromToken(ctx, token);
+export async function requireTokenActor(ctx: QueryCtx, token: string, client?: string): Promise<Actor> {
+  const actor = await actorFromToken(ctx, token, client);
   if (actor === null) {
     throw appError("UNAUTHENTICATED", "Not signed in to Kalami as staff. Reconnect Kalami in your assistant.");
   }
@@ -91,6 +93,7 @@ export async function courseAccess(
     return { course, canEdit: true, role: "super_admin" };
   }
   if (
+    course.universityId !== undefined &&
     actor.memberships.some((m) => m.role === "uni_admin" && m.universityId === course.universityId)
   ) {
     return { course, canEdit: true, role: "admin" };

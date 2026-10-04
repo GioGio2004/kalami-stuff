@@ -12,7 +12,8 @@ import { clerkClient } from "@clerk/nextjs/server";
  * whether that person is staff (lib/access.ts).
  */
 
-const SERVICE_CREDENTIAL_TTL_MS = 10 * 60 * 1000;
+/** A credential is minted per request and used within milliseconds; a minute covers slow calls. */
+const SERVICE_CREDENTIAL_TTL_MS = 60 * 1000;
 
 /** Clerk's Frontend API (the issuer), read from the publishable key: https://clerk.kalami.space in production. */
 export function clerkIssuer(): string {
@@ -66,10 +67,20 @@ export const METADATA_CORS_HEADERS = {
   "Cache-Control": "public, max-age=300",
 };
 
-/** The Clerk user behind an OAuth access token, or null if the token isn't a valid one. */
+/**
+ * The Clerk user behind an OAuth access token, or null if the token isn't a valid one.
+ * MCP_OAUTH_AUDIENCE (e.g. https://staff.kalami.space/api/mcp) also binds the
+ * token to this resource server, so a token minted for another app on the same
+ * Clerk instance is refused. Opt-in: confirm Clerk applies it to the tokens your
+ * clients get before setting it, or every connector breaks at once.
+ */
 export async function verifyOAuthToken(req: Request): Promise<{ userId: string; scopes: string[]; clientId?: string } | null> {
   const client = await clerkClient();
-  const state = await client.authenticateRequest(req, { acceptsToken: "oauth_token" });
+  const audience = process.env.MCP_OAUTH_AUDIENCE;
+  const state = await client.authenticateRequest(req, {
+    acceptsToken: "oauth_token",
+    ...(audience ? { audience } : {}),
+  });
   const auth = state.toAuth();
   if (!auth || !auth.isAuthenticated || auth.tokenType !== "oauth_token" || !auth.userId) {
     return null;
@@ -82,17 +93,19 @@ function base64url(bytes: Uint8Array): string {
 }
 
 /**
- * `svc.<payload>.<signature>`: "this request is for Clerk user X until T", signed
- * with MCP_SERVICE_SECRET, which only this server and Convex know. Convex checks
- * the signature and the expiry, then looks the person up and their role.
+ * `svc.<payload>.<signature>`: "this request is for Clerk user X, issued at I,
+ * until E", signed with MCP_SERVICE_SECRET, which only this server and Convex
+ * know. Convex checks the signature, the expiry and that the lifetime is short,
+ * then looks the person up and their role.
  */
 export async function serviceCredential(clerkUserId: string): Promise<string> {
   const secret = process.env.MCP_SERVICE_SECRET;
   if (!secret) {
     throw new Error("MCP_SERVICE_SECRET is not set");
   }
+  const now = Date.now();
   const payload = base64url(
-    new TextEncoder().encode(JSON.stringify({ u: clerkUserId, e: Date.now() + SERVICE_CREDENTIAL_TTL_MS })),
+    new TextEncoder().encode(JSON.stringify({ u: clerkUserId, i: now, e: now + SERVICE_CREDENTIAL_TTL_MS })),
   );
   const key = await crypto.subtle.importKey(
     "raw",

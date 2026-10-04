@@ -320,3 +320,18 @@ export const notificationKindValidator = v.union(
   v.literal("due_1h"),
 );
 export type NotificationKind = Infer<typeof notificationKindValidator>;
+
+// --- Groups -----------------------------------------------------------------------
+
+/** How a student got into a group: the group's shared link or a personal email invite. */
+export const groupJoinViaValidator = v.union(v.literal("link"), v.literal("email"));
+export type GroupJoinVia = Infer<typeof groupJoinViaValidator>;
+
+// --- Course materials -------------------------------------------------------------
+
+/** A week's materials live in a folder Kalami made in the lecturer's Google Drive, or behind a link. */
+export const materialsSourceValidator = v.union(v.literal("drive"), v.literal("link"));
+export type MaterialsSource = Infer<typeof materialsSourceValidator>;
+
+export const materialsStatusValidator = v.union(v.literal("draft"), v.literal("published"));
+export type MaterialsStatus = Infer<typeof materialsStatusValidator>;

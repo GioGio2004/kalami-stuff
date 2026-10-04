@@ -1,0 +1,38 @@
+name: Nightly backup
+
+# Exports the production database every night and keeps each export for 30 days
+# as a workflow artifact. Needs the CONVEX_PROD_DEPLOY_KEY secret (a production
+# deploy key from the Convex dashboard). Restore with
+#   npx convex import --prod --replace-all backup.zip
+# after downloading the artifact.
+
+on:
+  schedule:
+    - cron: "0 1 * * *" # 01:00 UTC, 05:00 in Tbilisi
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Export the production database
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PROD_DEPLOY_KEY }}
+        run: |
+          if [ -z "$CONVEX_DEPLOY_KEY" ]; then
+            echo "::error::CONVEX_PROD_DEPLOY_KEY is not set, so there is no backup. Add it in the repository secrets."
+            exit 1
+          fi
+          npx convex export --prod --path "kalami-$(date -u +%Y-%m-%d).zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kalami-backup-${{ github.run_id }}
+          path: kalami-*.zip
+          retention-days: 30
+          if-no-files-found: error

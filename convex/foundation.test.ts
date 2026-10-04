@@ -1,14 +1,12 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { createTest } from "./test.setup";
 import type { UserIdentity } from "convex/server";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { requireStudent } from "./lib/auth";
 import { HONESTY_NOTICE } from "./lib/honestyNotice";
-import schema from "./schema";
 
-const modules = import.meta.glob("./**/*.ts");
 const ISSUER = "https://test.clerk.accounts.dev";
 
 /** A Clerk session. Claims a user has no value for arrive as null, hence `unknown`. */
@@ -36,7 +34,7 @@ async function expectAppError(call: Promise<unknown>, code: string) {
 
 /** A fresh backend with a super admin and one university. */
 async function setup() {
-  const t = convexTest(schema, modules);
+  const t = createTest();
   const admin = t.withIdentity(person("admin"));
   await admin.mutation(api.users.store, {});
   await t.mutation(internal.admin.grantSuperAdmin, { email: "admin@example.com" });
@@ -63,7 +61,7 @@ function onboardingArgs(universityId: Id<"universities">) {
 
 describe("users", () => {
   test("store keeps one row per identity and follows email changes", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTest();
     const ana = t.withIdentity(person("ana"));
     const first = await ana.mutation(api.users.store, {});
     expect(await ana.mutation(api.users.store, {})).toBe(first);
@@ -75,7 +73,7 @@ describe("users", () => {
   });
 
   test("null claims are treated as missing", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTest();
     const nameless = t.withIdentity(
       person("nameless", { givenName: null, familyName: null, pictureUrl: null }),
     );
@@ -86,7 +84,7 @@ describe("users", () => {
   });
 
   test("a token without an email claim is rejected loudly", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTest();
     await expectAppError(
       t.withIdentity(person("ghost", { email: null })).mutation(api.users.store, {}),
       "MISSING_EMAIL_CLAIM",
@@ -101,7 +99,7 @@ describe("users", () => {
   });
 
   test("the honesty notice is readable without signing in", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTest();
     expect((await t.query(api.honesty.current, {})).version).toBe(HONESTY_NOTICE.version);
   });
 });

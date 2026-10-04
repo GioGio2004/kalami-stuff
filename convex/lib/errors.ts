@@ -8,13 +8,15 @@ export type AppErrorCode =
   | "NOT_FOUND"
   | "INVALID_INPUT"
   | "CONFLICT"
-  | "EXPIRED";
+  | "EXPIRED"
+  | "RATE_LIMITED";
 
 /**
  * Errors the apps can show to people. ConvexError data survives to the client
  * in production (plain Error messages are redacted), so clients read
- * `error.data.message` for display and `error.data.code` for logic.
+ * `error.data.message` for display and `error.data.code` for logic. `extra`
+ * carries machine-readable details such as `retryAfterMs`.
  */
-export function appError(code: AppErrorCode, message: string) {
-  return new ConvexError({ code, message });
+export function appError(code: AppErrorCode, message: string, extra: Record<string, unknown> = {}) {
+  return new ConvexError({ code, message, ...extra });
 }

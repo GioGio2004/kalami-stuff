@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation } from "./_generated/server";
 import { requireStaffActor } from "./lib/access";
+import { enforceLimit } from "./lib/limits";
 import { questionInputValidator } from "./lib/validators";
 import {
   addQuestions,
@@ -16,6 +17,7 @@ export const add = mutation({
   returns: v.array(v.id("questions")),
   handler: async (ctx, args) => {
     const actor = await requireStaffActor(ctx);
+    await enforceLimit(ctx, "addQuestions", actor.user._id);
     return await addQuestions(ctx, actor, args.assessmentId, args.questions);
   },
 });

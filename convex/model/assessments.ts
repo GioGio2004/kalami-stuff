@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
@@ -178,6 +179,40 @@ export function isEditableBy(actor: Actor, assessment: Doc<"assessments">): bool
   return actor.via !== "mcp" || assessment.status === "draft";
 }
 
+/** How many students started this; counted up to a cap no single assessment reaches. */
+const STARTED_CAP = 1000;
+
+export async function startedCount(ctx: QueryCtx, assessmentId: Id<"assessments">): Promise<number> {
+  const rows = await ctx.db
+    .query("attempts")
+    .withIndex("by_assessmentId", (q) => q.eq("assessmentId", assessmentId))
+    .take(STARTED_CAP);
+  return rows.length;
+}
+
+async function hasAttempts(ctx: QueryCtx, assessmentId: Id<"assessments">): Promise<boolean> {
+  const first = await ctx.db
+    .query("attempts")
+    .withIndex("by_assessmentId", (q) => q.eq("assessmentId", assessmentId))
+    .first();
+  return first !== null;
+}
+
+/**
+ * Once a student has started, the questions are frozen: option ids, order and
+ * count are what their saved answers and their shuffled view refer to.
+ * `change` names what was attempted, for the message.
+ */
+export async function requireNoAttempts(ctx: QueryCtx, assessment: Doc<"assessments">, change: string): Promise<void> {
+  if (await hasAttempts(ctx, assessment._id)) {
+    const started = await startedCount(ctx, assessment._id);
+    throw appError(
+      "CONFLICT",
+      `${started} student${started === 1 ? " has" : "s have"} already started “${assessment.title}”, so you can't ${change} any more. Fix typos with Edit (which keeps the answers), or create a new assessment.`,
+    );
+  }
+}
+
 /** Keeps the denormalised counters on the assessment in step with its questions. */
 export async function recountAssessment(ctx: MutationCtx, assessmentId: Id<"assessments">) {
   const questions = await ctx.db
@@ -256,14 +291,25 @@ export async function updateAssessment(
   if (patch.instructions !== undefined) {
     changes.instructions = optionalText(patch.instructions, "Instructions", 8000);
   }
-  if (patch.kind !== undefined) {
+  if (patch.kind !== undefined && patch.kind !== assessment.kind) {
+    // The kind decides which player opens it and where notifications point; it's fixed once live.
+    if (assessment.status !== "draft" || (await hasAttempts(ctx, assessmentId))) {
+      throw appError("CONFLICT", "The kind can't change once it has been published. Move it back to draft first.");
+    }
     changes.kind = patch.kind;
   }
   if (patch.settings !== undefined) {
-    changes.settings = validateSettings({
+    const settings = validateSettings({
       ...assessment.settings,
       ...stripUndefined(patch.settings),
     });
+    const reshuffles =
+      settings.shuffleQuestions !== assessment.settings.shuffleQuestions ||
+      settings.shuffleOptions !== assessment.settings.shuffleOptions;
+    if (reshuffles) {
+      await requireNoAttempts(ctx, assessment, "change the shuffling");
+    }
+    changes.settings = settings;
   }
   await ctx.db.patch("assessments", assessmentId, { ...changes, updatedAt: Date.now() });
   await logAudit(ctx, actor, {
@@ -297,6 +343,10 @@ export async function setAssessmentStatus(
   if (status === "published" && access.course.status === "published") {
     await notifyOnce(ctx, assessmentId, "published");
   }
+  // Taken away from students mid-attempt: their work is submitted as it stands, not stranded.
+  if (assessment.status === "published" && (await hasAttempts(ctx, assessmentId))) {
+    await ctx.scheduler.runAfter(0, internal.learn.finishOpenAttempts, { assessmentId, cursor: null });
+  }
   const verb =
     status === "published" ? "Published" : status === "archived" ? "Archived" : "Moved back to draft";
   await logAudit(ctx, actor, {
@@ -308,7 +358,7 @@ export async function setAssessmentStatus(
   });
 }
 
-/** Only drafts can be deleted; published and archived assessments keep their history. */
+/** Only drafts nobody has worked on can be deleted; everything else keeps its history. */
 export async function deleteAssessment(
   ctx: MutationCtx,
   actor: Actor,
@@ -317,6 +367,9 @@ export async function deleteAssessment(
   const { assessment } = await requireAssessmentAccess(ctx, actor, assessmentId, "edit");
   if (assessment.status !== "draft") {
     throw appError("CONFLICT", "Only drafts can be deleted. Archive it instead.");
+  }
+  if (await hasAttempts(ctx, assessmentId)) {
+    throw appError("CONFLICT", "Students have worked on this, so it can't be deleted. Archive it instead.");
   }
   const keys = await ctx.db
     .query("answerKeys")

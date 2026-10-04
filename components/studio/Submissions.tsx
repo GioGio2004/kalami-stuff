@@ -82,7 +82,9 @@ export function Submissions({ detail }: { detail: AssessmentDetail }) {
                       </span>
                     </span>
                     {row.status === "submitted" ? (
-                      row.needsGrading ? (
+                      row.gradingError ? (
+                        <Pill tone="red">Grading failed</Pill>
+                      ) : row.needsGrading ? (
                         <Pill tone="red">Needs grading</Pill>
                       ) : (
                         <Pill tone={row.graded ? "ink" : "lime"}>
@@ -110,7 +112,8 @@ export function Submissions({ detail }: { detail: AssessmentDetail }) {
             </Button>
           )}
           <p className="mt-3 text-xs leading-relaxed text-graphite">
-            The dot is the integrity colour: advice from the counters, never a verdict. Open a row to read the answers,
+            The dot is the integrity colour, from counters the student&apos;s own browser reported: advice, never a verdict,
+            and a notification popping up or a laptop going to sleep can move it. Open a row to read the answers,
             {codeOnly ? " leave red-pen notes" : " give points for written answers"} and grade.
           </p>
         </>

@@ -8,6 +8,11 @@ import type { CodeFile, SandboxAsset } from "./types";
  * The student's page, live. A sandboxed iframe with no `allow-scripts`: HTML
  * and CSS render, nothing can run. `allow-same-origin` (without scripts) only
  * lets this component keep the scroll position and stop links from leaving.
+ *
+ * Because of that flag the page's requests are first-party. They are limited
+ * to the task's images and Google Fonts by the policy buildPreview.ts puts
+ * first in <head>; keep it that way, and never give either app a GET route
+ * that does something because the browser sent a cookie.
  */
 export function Preview({
   files,

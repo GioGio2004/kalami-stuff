@@ -117,8 +117,11 @@ export function integritySummary(c: {
     c.copyBlocked && `${c.copyBlocked} copy attempt${c.copyBlocked === 1 ? "" : "s"}`,
     c.multiTab && `opened in ${c.multiTab + 1} tabs`,
   ].filter(Boolean);
-  return parts.length === 0 ? "Nothing unusual" : parts.join(" · ");
+  return parts.length === 0 ? "Nothing unusual reported" : parts.join(" · ");
 }
+
+/** Said next to every integrity colour: it is what the student's browser reported, never a verdict. */
+export const INTEGRITY_CAVEAT = "Reported by the student's browser: advice for you, not proof.";
 
 /** The overall note and a score that replaces the automatic one. */
 export function GradeBar({

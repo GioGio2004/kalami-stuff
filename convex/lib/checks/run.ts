@@ -34,6 +34,8 @@ function overElements(
 function textMatches(actual: string, expected: string, mode: "equals" | "contains", caseSensitive: boolean) {
   const a = caseSensitive ? actual : actual.toLowerCase();
   const e = (caseSensitive ? expected : expected.toLowerCase()).replace(/\s+/g, " ").trim();
+  // An empty expectation (a student with no name filled into {{student.firstName}}) must not pass for free.
+  if (e === "") return false;
   return mode === "equals" ? a === e : a.includes(e);
 }
 
@@ -120,6 +122,10 @@ function evaluate(page: Page, rule: CheckRule): Outcome {
 /** Runs every rule against the files. A broken rule fails on its own; it never throws. */
 export function runChecks(files: CodeFile[], rules: CheckRule[]): CheckResult[] {
   const page = new Page(files);
+  if (page.tooLarge !== null) {
+    // Nothing is checked on a page that would take too long to check.
+    return rules.map((rule) => ({ id: rule.id, passed: false, detail: page.tooLarge! }));
+  }
   return rules.map((rule) => {
     try {
       return { id: rule.id, ...evaluate(page, rule) };

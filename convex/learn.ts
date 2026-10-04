@@ -1,9 +1,11 @@
 import { v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { requireStudent } from "./lib/auth";
+import { enforceLimit } from "./lib/limits";
 import { answerValueValidator, codeFileValidator, integrityCountsValidator } from "./lib/validators";
 import {
   autoSubmitDue,
+  finishOpenAttempts as finishOpenAttemptsOf,
   getStudentCourse,
   getStudentTask,
   gradeDue as gradeDueAttempt,
@@ -19,9 +21,10 @@ import {
   submitTask,
   upNextValidator,
 } from "./model/learn";
-import { getStudentQuiz, saveAnswer, startQuiz, studentQuizValidator } from "./model/quiz";
+import { getQuizAnswers, getStudentQuiz, quizAnswersValidator, saveAnswer, startQuiz, studentQuizValidator } from "./model/quiz";
 
 // Student app (Clerk session): joining courses, code tasks, quizzes and exams.
+// Every mutation is rate limited per student (lib/limits.ts).
 
 /** A delta of integrity counters; every field optional. */
 const integrityDeltaValidator = integrityCountsValidator.partial();
@@ -31,6 +34,7 @@ export const join = mutation({
   returns: joinResultValidator,
   handler: async (ctx, args) => {
     const student = await requireStudent(ctx);
+    await enforceLimit(ctx, "join", student.user._id);
     return await joinCourse(ctx, student, args.code);
   },
 });
@@ -84,11 +88,12 @@ export const saveCodeWork = mutation({
   }),
   handler: async (ctx, args) => {
     const student = await requireStudent(ctx);
+    await enforceLimit(ctx, "saveCode", student.user._id);
     return await saveCode(ctx, student, args);
   },
 });
 
-/** A quiz, midterm or final: the start screen, the running attempt, or the results. */
+/** A quiz, midterm or final: the start screen, the running attempt, or the results. Never the answers (see quizAnswers). */
 export const quiz = query({
   args: { assessmentId: v.id("assessments") },
   returns: studentQuizValidator,
@@ -98,12 +103,23 @@ export const quiz = query({
   },
 });
 
+/** The saved answers of the latest attempt, apart from the quiz so autosaves only refresh this. */
+export const quizAnswers = query({
+  args: { assessmentId: v.id("assessments") },
+  returns: quizAnswersValidator,
+  handler: async (ctx, args) => {
+    const student = await requireStudent(ctx);
+    return await getQuizAnswers(ctx, student, args.assessmentId);
+  },
+});
+
 /** The start screen's button. Returns the attempt in progress if there already is one. */
 export const startAttempt = mutation({
   args: { assessmentId: v.id("assessments") },
   returns: v.id("attempts"),
   handler: async (ctx, args) => {
     const student = await requireStudent(ctx);
+    await enforceLimit(ctx, "startAttempt", student.user._id);
     return await startQuiz(ctx, student, args.assessmentId);
   },
 });
@@ -118,6 +134,7 @@ export const saveQuizAnswer = mutation({
   returns: v.object({ savedAt: v.number() }),
   handler: async (ctx, args) => {
     const student = await requireStudent(ctx);
+    await enforceLimit(ctx, "saveAnswer", student.user._id);
     return await saveAnswer(ctx, student, args);
   },
 });
@@ -127,6 +144,7 @@ export const reportIntegrityCounts = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const student = await requireStudent(ctx);
+    await enforceLimit(ctx, "integrity", student.user._id);
     return await reportIntegrity(ctx, student, args.assessmentId, args.counts);
   },
 });
@@ -136,6 +154,7 @@ export const submit = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const student = await requireStudent(ctx);
+    await enforceLimit(ctx, "submit", student.user._id);
     return await submitTask(ctx, student, args.assessmentId);
   },
 });
@@ -153,6 +172,16 @@ export const gradeDue = internalMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await gradeDueAttempt(ctx, args.attemptId);
+    return null;
+  },
+});
+
+/** Scheduled when published work is taken back: open attempts are graded as they stand. */
+export const finishOpenAttempts = internalMutation({
+  args: { assessmentId: v.id("assessments"), cursor: v.union(v.string(), v.null()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await finishOpenAttemptsOf(ctx, args.assessmentId, args.cursor);
     return null;
   },
 });

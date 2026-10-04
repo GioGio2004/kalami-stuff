@@ -45,6 +45,8 @@ import {
 
 const MAX_SHORT_CHARS = 500;
 const MAX_ESSAY_CHARS = 20_000;
+/** As many responses as an assessment can have questions. */
+const MAX_QUESTIONS = 200;
 
 const quizQuestionValidator = v.object({
   _id: v.id("questions"),
@@ -103,7 +105,6 @@ export const studentQuizValidator = v.object({
   ),
   /** In this student's order; only during an attempt, or with full results. */
   questions: v.array(quizQuestionValidator),
-  answers: v.array(v.object({ questionId: v.id("questions"), value: responseValueValidator, savedAt: v.number() })),
   /** With full results: what was right and the points each answer got. */
   review: v.array(
     v.object({
@@ -116,6 +117,13 @@ export const studentQuizValidator = v.object({
   ),
   /** The lecturer's red-pen notes on code questions, once submitted. */
   comments: v.array(commentValidator),
+  /** The server's clock when this was computed, so the countdown doesn't trust the device's. */
+  serverNow: v.number(),
+});
+
+/** The student's saved answers, apart from the quiz itself: they change on every autosave, the quiz doesn't. */
+export const quizAnswersValidator = v.object({
+  answers: v.array(v.object({ questionId: v.id("questions"), value: responseValueValidator, savedAt: v.number() })),
 });
 
 function effectiveDeadline(limitEnd: number | undefined, closesAt: number | undefined): number | undefined {
@@ -159,16 +167,14 @@ export async function getStudentQuiz(
   const shown = attempt !== null && (attempt.status === "in_progress" || results === "full");
 
   const questions = [];
-  const answers = [];
   const review = [];
   if (shown) {
     for (const question of attemptOrder(all, student, assessment, attempt)) {
       questions.push(studentQuestion(question, student, assessment));
-      const response = await responseFor(ctx, attempt._id, question._id);
-      if (response !== null) {
-        answers.push({ questionId: question._id, value: response.value, savedAt: response.savedAt });
-      }
+      // Answers are read only for the review: while the attempt runs, this query must
+      // not depend on them, or every autosave would re-run and re-send the whole quiz.
       if (results === "full") {
+        const response = await responseFor(ctx, attempt._id, question._id);
         const key = await answerKeyOf(ctx, question._id);
         review.push({
           questionId: question._id,
@@ -217,9 +223,29 @@ export async function getStudentQuiz(
             pendingGrading: submitted && (await hasUngradedEssays(ctx, attempt._id, all)),
           },
     questions,
-    answers,
     review,
     comments: submitted && attempt !== null ? await listComments(ctx, attempt._id) : [],
+    serverNow: Date.now(),
+  };
+}
+
+/** Saved answers of the latest attempt. Nothing before Start, nothing of other attempts. */
+export async function getQuizAnswers(
+  ctx: QueryCtx,
+  student: Student,
+  assessmentId: Id<"assessments">,
+): Promise<Infer<typeof quizAnswersValidator>> {
+  await requireOpenableAssessment(ctx, student, assessmentId);
+  const attempt = (await attemptsOf(ctx, student.user._id, assessmentId))[0];
+  if (attempt === undefined) {
+    return { answers: [] };
+  }
+  const rows = await ctx.db
+    .query("responses")
+    .withIndex("by_attemptId_and_questionId", (q) => q.eq("attemptId", attempt._id))
+    .take(MAX_QUESTIONS + 1);
+  return {
+    answers: rows.map((row) => ({ questionId: row.questionId, value: row.value, savedAt: row.savedAt })),
   };
 }
 

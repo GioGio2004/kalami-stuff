@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import {
@@ -6,10 +7,12 @@ import {
   getMemberships,
   isSuperAdmin,
   requireIdentity,
+  requireSuperAdmin,
   requireUniversityAdmin,
 } from "./lib/auth";
 import { appError } from "./lib/errors";
 import { requireEmail } from "./lib/input";
+import { enforceLimit } from "./lib/limits";
 import { inviteRoleValidator, localizedTextValidator } from "./lib/validators";
 
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
@@ -27,27 +30,65 @@ async function inviteByToken(ctx: QueryCtx, token: string) {
     .unique();
 }
 
-/** University admins invite lecturers; only the super admin can invite university admins. */
+/**
+ * Who may manage invites for this university, or for independent teachers
+ * (no university): those only the super admin sends.
+ */
+async function requireInviteAdmin(ctx: QueryCtx, universityId: Id<"universities"> | undefined) {
+  if (universityId === undefined) {
+    const { user } = await requireSuperAdmin(ctx);
+    return { user, isSuperAdmin: true };
+  }
+  return await requireUniversityAdmin(ctx, universityId);
+}
+
+/**
+ * University admins invite lecturers; only the super admin can invite university
+ * admins, and independent teachers (no university: a school, private lessons).
+ */
 export const create = mutation({
   args: {
-    universityId: v.id("universities"),
+    universityId: v.optional(v.id("universities")),
     email: v.string(),
     role: inviteRoleValidator,
   },
   returns: v.object({ inviteId: v.id("invites"), token: v.string() }),
   handler: async (ctx, args) => {
-    const { user, isSuperAdmin } = await requireUniversityAdmin(ctx, args.universityId);
+    const { user, isSuperAdmin } = await requireInviteAdmin(ctx, args.universityId);
     if (args.role === "uni_admin" && !isSuperAdmin) {
       throw appError("FORBIDDEN", "Only the platform admin can appoint university admins.");
     }
-    const university = await ctx.db.get("universities", args.universityId);
-    if (university === null || university.status !== "active") {
-      throw appError("NOT_FOUND", "That university isn't available.");
+    if (args.role === "uni_admin" && args.universityId === undefined) {
+      throw appError("INVALID_INPUT", "A university admin needs a university.");
+    }
+    await enforceLimit(ctx, "invite", user._id);
+    if (args.universityId !== undefined) {
+      const university = await ctx.db.get("universities", args.universityId);
+      if (university === null || university.status !== "active") {
+        throw appError("NOT_FOUND", "That university isn't available.");
+      }
+    }
+    const email = requireEmail(args.email);
+    // One open invite per address: resend the existing link instead of minting another.
+    const open = (
+      await ctx.db
+        .query("invites")
+        .withIndex("by_email", (q) => q.eq("email", email))
+        .take(20)
+    ).find(
+      (invite) =>
+        invite.universityId === args.universityId &&
+        invite.acceptedAt === undefined &&
+        invite.revokedAt === undefined &&
+        invite.expiresAt > Date.now(),
+    );
+    if (open !== undefined) {
+      return { inviteId: open._id, token: open.token };
     }
     const token = generateToken();
     const inviteId = await ctx.db.insert("invites", {
-      email: requireEmail(args.email),
-      universityId: university._id,
+      email,
+      universityId: args.universityId,
       role: args.role,
       token,
       invitedBy: user._id,
@@ -57,8 +98,9 @@ export const create = mutation({
   },
 });
 
+/** One university's invites, or (no universityId, super admin only) the independent teachers'. */
 export const listForUniversity = query({
-  args: { universityId: v.id("universities") },
+  args: { universityId: v.optional(v.id("universities")) },
   returns: v.array(
     v.object({
       _id: v.id("invites"),
@@ -73,7 +115,7 @@ export const listForUniversity = query({
     }),
   ),
   handler: async (ctx, args) => {
-    const { isSuperAdmin } = await requireUniversityAdmin(ctx, args.universityId);
+    const { isSuperAdmin } = await requireInviteAdmin(ctx, args.universityId);
     const invites = await ctx.db
       .query("invites")
       .withIndex("by_universityId", (q) => q.eq("universityId", args.universityId))
@@ -108,7 +150,8 @@ export const getByToken = query({
     v.object({
       email: v.string(),
       role: inviteRoleValidator,
-      universityName: localizedTextValidator,
+      // Absent for an independent teacher's invite.
+      universityName: v.optional(localizedTextValidator),
       expiresAt: v.number(),
       status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("revoked")),
     }),
@@ -121,14 +164,14 @@ export const getByToken = query({
     if (invite === null) {
       return null;
     }
-    const university = await ctx.db.get("universities", invite.universityId);
+    const university = invite.universityId === undefined ? undefined : await ctx.db.get("universities", invite.universityId);
     if (university === null) {
       return null;
     }
     return {
       email: invite.email,
       role: invite.role,
-      universityName: university.name,
+      universityName: university?.name,
       expiresAt: invite.expiresAt,
       status:
         invite.revokedAt !== undefined
@@ -142,7 +185,7 @@ export const getByToken = query({
 
 export const accept = mutation({
   args: { token: v.string() },
-  returns: v.object({ universityId: v.id("universities"), role: inviteRoleValidator }),
+  returns: v.object({ universityId: v.optional(v.id("universities")), role: inviteRoleValidator }),
   handler: async (ctx, args) => {
     const user = await ensureUser(ctx);
     const invite = await inviteByToken(ctx, args.token);
@@ -179,9 +222,11 @@ export const accept = mutation({
         "This is a student account. Staff need a separate account: ask for the invite to go to another email.",
       );
     }
-    const university = await ctx.db.get("universities", invite.universityId);
-    if (university === null || university.status !== "active") {
-      throw appError("NOT_FOUND", "That university isn't available.");
+    if (invite.universityId !== undefined) {
+      const university = await ctx.db.get("universities", invite.universityId);
+      if (university === null || university.status !== "active") {
+        throw appError("NOT_FOUND", "That university isn't available.");
+      }
     }
 
     const alreadyMember = memberships.some(
@@ -207,7 +252,7 @@ export const revoke = mutation({
     if (invite === null) {
       throw appError("NOT_FOUND", "Invite not found.");
     }
-    const { isSuperAdmin } = await requireUniversityAdmin(ctx, invite.universityId);
+    const { isSuperAdmin } = await requireInviteAdmin(ctx, invite.universityId);
     if (invite.role === "uni_admin" && !isSuperAdmin) {
       throw appError("FORBIDDEN", "Only the platform admin can withdraw admin invites.");
     }

@@ -21,8 +21,8 @@
 | Access: lecturers, university admins, super admin only | ✅ | `convex/lib/access.ts` |
 | Tests for roles, validation and the token flow | ✅ | `convex/studio.test.ts` |
 
-**Deliberately not built yet:** lectures/lessons (see Phase C), the student side of
-assessments (Phase B), matching/ordering/code questions, surveys, course assistants UI.
+**Deliberately not built yet:** lectures/lessons (see Phase C), matching/ordering
+questions, surveys, course assistants UI. (Code questions and the student side are done.)
 
 ---
 
@@ -120,8 +120,12 @@ claude.ai / Claude Desktop: Settings → Connectors → Add custom connector, Au
 "Sign in now", OAuth client "Use Claude's published identity". VS Code uses
 `.vscode/mcp.json` with `"type": "http"`.
 
-**Later:** a rate limit per OAuth user (`@convex-dev/rate-limiter`) before the pilot opens
-to other lecturers.
+**Limits and safety (2026-10-04):** every agent write is rate limited per lecturer
+(`convex/lib/limits.ts`, the official `@convex-dev/rate-limiter` component); `create_course`,
+`create_assessment` and `add_questions` take a `requestId` so a retried call returns the
+same ids instead of duplicates (`agentRequests` table); the OAuth client the agent came
+through is recorded in the audit log; agents never receive join codes; the service
+credential lives 60 s. Settings in `OPERATIONS.md`.
 
 ---
 
@@ -147,9 +151,14 @@ their whole semester's quizzes and exams, by hand or with an agent.
    (trimmed, spaces collapsed, case-insensitive unless set); essays wait for points per
    answer in the lecturer's review (`submissions.setQuestionPoints`), which re-adds the score.
 5. ✅ Results per `resultsVisibility`: hidden, score only, or questions + answers + key
-   after close. **Still open:** lock editing of an assessment once it has attempts (today
-   only *archived* is read-only).
-6. Integrity collector per level ✅ (tasks and quizzes); the live monitor is still to build.
+   after close ("full, after close" releases nothing, not even the score, until the closing
+   time has passed; without one the lecturer releases by setting one).
+   ✅ Once a student has started, questions are frozen: text edits keep option ids, anything
+   else (add, delete, reorder, reshuffle, change kind) is refused; moving published work back
+   to draft or archiving it submits open attempts as they stand.
+6. Integrity collector per level ✅ (tasks and quizzes), with short focus losses and long
+   sleeps filtered out; the live monitor is still to build.
+7. ✅ Notifications (bell + email through Resend) for new work and deadlines; see `OPERATIONS.md`.
 
 ### Phase C — Lectures with animations
 

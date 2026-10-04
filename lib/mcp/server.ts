@@ -257,6 +257,24 @@ function tokenOf(ctx: ToolContext): string {
   return token;
 }
 
+/** The OAuth client the agent connected through (claude.ai, ChatGPT, …), recorded in the audit log. */
+function clientOf(ctx: ToolContext): string | undefined {
+  const client = ctx.http?.authInfo?.extra?.client;
+  return typeof client === "string" ? client.slice(0, 200) : undefined;
+}
+
+/** Both of the above, the way every backend call wants them. */
+function auth(ctx: ToolContext) {
+  return { token: tokenOf(ctx), client: clientOf(ctx) };
+}
+
+const requestId = z
+  .string()
+  .min(1)
+  .max(100)
+  .optional()
+  .describe("Your own unique id for this call. If the call times out, retry with the same requestId: you get the same result back instead of a duplicate");
+
 /** The staff dashboard page where the lecturer reviews and publishes what the agent made. */
 function dashboardUrl(ctx: ToolContext, path: string): string {
   const origin = ctx.http?.authInfo?.extra?.origin;
@@ -267,7 +285,7 @@ const INSTRUCTIONS = `You are connected to Kalami, a university learning and exa
 
 Workflow:
 1. Call whoami to learn who you act for and which universities they belong to.
-2. list_courses and put the work in the course the lecturer means. Students only see courses they joined (each lists its students), so never start a new course on your own: if it's unclear which course, ask. Use create_course only when the lecturer asks for a new course.
+2. list_courses and put the work in the course the lecturer means. Students only see courses they joined (each shows how many have), so never start a new course on your own: if it's unclear which course, ask. Use create_course only when the lecturer asks for a new course.
 3. create_assessment (kind: task, quiz, midterm or final) inside a course. It starts as a draft.
 4. add_questions in batches of up to 50. Mark correct options with "correct": true.
 5. get_assessment to review what you built; update_question / delete_question / reorder_questions to fix it.
@@ -276,6 +294,7 @@ Workflow:
 Rules:
 - You can only change DRAFT assessments. Only the lecturer can publish, in the Kalami dashboard. If an assessment is already published, ask the lecturer to move it back to draft before you edit it.
 - You cannot see students, attempts or grades. Never ask for student data.
+- Pass a requestId (any unique string you make up) to create_course, create_assessment and add_questions. If such a call times out, retry it with the same requestId instead of calling it again without one.
 - Write questions in the course's language (ka = Georgian, en = English) unless told otherwise.
 - Tasks default to standard integrity with the score shown on submit; quizzes to standard integrity; midterms and finals to strict integrity with a time limit.
 
@@ -304,7 +323,7 @@ const handler = createMcpHandler(
       },
       async (_args, ctx) =>
         run(async () => {
-          const me = await convex.query(api.mcp.whoami, { token: tokenOf(ctx) });
+          const me = await convex.query(api.mcp.whoami, auth(ctx));
           return me ?? "Not signed in to Kalami as staff. Reconnect Kalami and sign in again.";
         }),
     );
@@ -314,10 +333,10 @@ const handler = createMcpHandler(
       {
         title: "List courses",
         description:
-          "Every course the lecturer can work on, with join codes, assessment counts and how many students joined. Put new work in one of these.",
+          "Every course the lecturer can work on, with assessment counts and how many students joined. Put new work in one of these.",
         inputSchema: z.object({}),
       },
-      async (_args, ctx) => run(() => convex.query(api.mcp.listCourses, { token: tokenOf(ctx) })),
+      async (_args, ctx) => run(() => convex.query(api.mcp.listCourses, auth(ctx))),
     );
 
     server.registerTool(
@@ -330,7 +349,7 @@ const handler = createMcpHandler(
       async (args, ctx) =>
         run(() =>
           convex.query(api.mcp.getCourse, {
-            token: tokenOf(ctx),
+            ...auth(ctx),
             courseId: args.courseId as Id<"courses">,
           }),
         ),
@@ -343,6 +362,7 @@ const handler = createMcpHandler(
         description:
           "Creates a new, empty draft course owned by the lecturer. Only when the lecturer asks for a new course: students don't see it until they join it with its own code. Pass universityId only when whoami lists more than one university.",
         inputSchema: z.object({
+          requestId,
           title: z.string().min(1).max(120),
           description: z.string().max(2000).optional(),
           semester: z.string().max(60).optional().describe('e.g. "Spring 2026"'),
@@ -353,7 +373,8 @@ const handler = createMcpHandler(
       async (args, ctx) =>
         run(async () => {
           const id = await convex.mutation(api.mcp.createCourseAsAgent, {
-            token: tokenOf(ctx),
+            ...auth(ctx),
+            requestId: args.requestId,
             title: args.title,
             description: args.description,
             semester: args.semester,
@@ -371,6 +392,7 @@ const handler = createMcpHandler(
         description:
           "Creates a draft task (code sandbox homework), quiz, midterm or final in a course and returns its id and a reviewUrl for the lecturer. Then add_questions.",
         inputSchema: z.object({
+          requestId,
           courseId,
           kind: z.enum(["task", "quiz", "midterm", "final"]),
           title: z.string().min(1).max(160),
@@ -381,7 +403,8 @@ const handler = createMcpHandler(
       async (args, ctx) =>
         run(async () => {
           const id = await convex.mutation(api.mcp.createAssessmentAsAgent, {
-            token: tokenOf(ctx),
+            ...auth(ctx),
+            requestId: args.requestId,
             courseId: args.courseId as Id<"courses">,
             kind: args.kind,
             title: args.title,
@@ -406,7 +429,7 @@ const handler = createMcpHandler(
       async (args, ctx) =>
         run(() =>
           convex.query(api.mcp.getAssessment, {
-            token: tokenOf(ctx),
+            ...auth(ctx),
             assessmentId: args.assessmentId as Id<"assessments">,
           }),
         ),
@@ -428,7 +451,7 @@ const handler = createMcpHandler(
       async (args, ctx) =>
         run(async () => {
           await convex.mutation(api.mcp.updateAssessmentAsAgent, {
-            token: tokenOf(ctx),
+            ...auth(ctx),
             assessmentId: args.assessmentId as Id<"assessments">,
             title: args.title,
             instructions: args.instructions,
@@ -446,6 +469,7 @@ const handler = createMcpHandler(
         description:
           "Appends up to 50 questions to a draft assessment. Types: single (one correct option), multiple (one or more correct), short (accepted answers), essay (rubric), code (an HTML/CSS task in steps; run check_code_task first). Returns the new question ids.",
         inputSchema: z.object({
+          requestId,
           assessmentId,
           questions: z.array(questionSchema).min(1).max(50),
         }),
@@ -453,7 +477,8 @@ const handler = createMcpHandler(
       async (args, ctx) =>
         run(async () => {
           const ids = await convex.mutation(api.mcp.addQuestionsAsAgent, {
-            token: tokenOf(ctx),
+            ...auth(ctx),
+            requestId: args.requestId,
             assessmentId: args.assessmentId as Id<"assessments">,
             questions: args.questions,
           });
@@ -470,7 +495,7 @@ const handler = createMcpHandler(
         inputSchema: z.object({ question: codeQuestion }),
       },
       async (args, ctx) =>
-        run(() => convex.query(api.mcp.checkCodeTask, { token: tokenOf(ctx), question: args.question })),
+        run(() => convex.query(api.mcp.checkCodeTask, { ...auth(ctx), question: args.question })),
     );
 
     server.registerTool(
@@ -486,7 +511,7 @@ const handler = createMcpHandler(
       async (args, ctx) =>
         run(async () => {
           await convex.mutation(api.mcp.updateQuestionAsAgent, {
-            token: tokenOf(ctx),
+            ...auth(ctx),
             questionId: args.questionId as Id<"questions">,
             question: args.question,
           });
@@ -504,7 +529,7 @@ const handler = createMcpHandler(
       async (args, ctx) =>
         run(async () => {
           await convex.mutation(api.mcp.deleteQuestionAsAgent, {
-            token: tokenOf(ctx),
+            ...auth(ctx),
             questionId: args.questionId as Id<"questions">,
           });
           return { ok: true };
@@ -516,12 +541,12 @@ const handler = createMcpHandler(
       {
         title: "Reorder questions",
         description: "Sets the order of all questions. Pass every question id of the assessment exactly once.",
-        inputSchema: z.object({ assessmentId, questionIds: z.array(z.string()).min(1) }),
+        inputSchema: z.object({ assessmentId, questionIds: z.array(z.string()).min(1).max(200) }),
       },
       async (args, ctx) =>
         run(async () => {
           await convex.mutation(api.mcp.reorderQuestionsAsAgent, {
-            token: tokenOf(ctx),
+            ...auth(ctx),
             assessmentId: args.assessmentId as Id<"assessments">,
             questionIds: args.questionIds as Id<"questions">[],
           });
@@ -553,7 +578,7 @@ export async function verifyToken(req: Request, token: string | undefined): Prom
     return undefined;
   }
   const credential = await serviceCredential(oauth.userId);
-  const me = await convex.query(api.mcp.whoami, { token: credential });
+  const me = await convex.query(api.mcp.whoami, { token: credential, client: oauth.clientId });
   if (me === null) {
     return undefined;
   }
@@ -561,7 +586,7 @@ export async function verifyToken(req: Request, token: string | undefined): Prom
     token: credential,
     clientId: me.userId,
     scopes: oauth.scopes,
-    extra: { email: me.email, origin: publicOrigin(req) },
+    extra: { email: me.email, origin: publicOrigin(req), client: oauth.clientId },
   };
 }
 

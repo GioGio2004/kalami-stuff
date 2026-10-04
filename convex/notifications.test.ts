@@ -1,13 +1,11 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { createTest, type TestBackend } from "./test.setup";
 import type { UserIdentity } from "convex/server";
 import { describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { HONESTY_NOTICE } from "./lib/honestyNotice";
-import schema from "./schema";
 
-const modules = import.meta.glob("./**/*.ts");
 const ISSUER = "https://test.clerk.accounts.dev";
 const HOUR = 60 * 60 * 1000;
 
@@ -22,7 +20,7 @@ function person(name: string): Partial<UserIdentity> {
   } as Partial<UserIdentity>;
 }
 
-type T = ReturnType<typeof convexTest>;
+type T = TestBackend;
 
 /** Runs the batches a mutation scheduled (fan-out writes rows after the publish commits). */
 async function settle(t: T) {
@@ -50,7 +48,7 @@ const QUESTION = {
 
 /** A lecturer with a published course, two students in it, and a student elsewhere. */
 async function setup() {
-  const t = convexTest(schema, modules);
+  const t = createTest();
   const admin = t.withIdentity(person("admin"));
   await admin.mutation(api.users.store, {});
   await t.mutation(internal.admin.grantSuperAdmin, { email: "admin@example.com" });
@@ -100,7 +98,7 @@ describe("new work", () => {
   test("publishing tells every student in the course, once", async () => {
     const { t, nino, ana, giorgi, maka, courseId, quiz } = await setup();
     const assessmentId = await quiz("Quiz 1", { closesAt: Date.now() + 72 * HOUR });
-    expect(await ana.query(api.notifications.inbox, {})).toEqual({ unread: 0, items: [] });
+    expect(await ana.query(api.notifications.inbox, {})).toMatchObject({ unread: 0, items: [] });
 
     await nino.mutation(api.assessments.setStatus, { assessmentId, status: "published" });
     await settle(t);

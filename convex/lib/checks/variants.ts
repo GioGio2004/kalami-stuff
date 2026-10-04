@@ -55,26 +55,45 @@ export function seededShuffle<T>(items: readonly T[], seed: string): T[] {
     .map((entry) => entry.item);
 }
 
-/** Combination `index` for testing a task: every variable takes its value at `index` (wrapping). */
+/** Every combination is tried when there are at most this many; beyond it, one pass per value. */
+export const MAX_COMBINATIONS = 50;
+
+function product(variables: Variable[]): number {
+  return variables.reduce((n, v) => n * Math.max(1, v.values.length), 1);
+}
+
+/**
+ * Combination `index` for testing a task. Small tasks try the full cross
+ * product (every value with every other value); bigger ones take each
+ * variable's value at `index` (wrapping), which still covers every value once.
+ */
 export function sampleValues(variables: Variable[], index: number, student = SAMPLE_STUDENT): VariantValues {
   const values: VariantValues = {};
+  const exhaustive = product(variables) <= MAX_COMBINATIONS;
+  let rest = index;
   for (const variable of variables) {
-    if (variable.values.length > 0) {
-      values[variable.name] = variable.values[index % variable.values.length];
+    const n = variable.values.length;
+    if (n === 0) continue;
+    if (exhaustive) {
+      values[variable.name] = variable.values[rest % n];
+      rest = Math.floor(rest / n);
+    } else {
+      values[variable.name] = variable.values[index % n];
     }
   }
   return withStudent(values, student);
 }
 
-/** How many combinations cover every value of every variable at least once. */
+/** How many combinations `sampleValues` walks through for these variables. */
 export function sampleCount(variables: Variable[]): number {
-  return Math.max(1, ...variables.map((v) => v.values.length));
+  const all = product(variables);
+  return all <= MAX_COMBINATIONS ? all : Math.max(1, ...variables.map((v) => v.values.length));
 }
 
 const PLACEHOLDER = /\{\{\s*([\w.]+)\s*\}\}/g;
 
 export function fill(text: string, values: VariantValues): string {
-  return text.replace(PLACEHOLDER, (match, key: string) => (key in values ? values[key] : match));
+  return text.replace(PLACEHOLDER, (match, key: string) => (Object.hasOwn(values, key) ? values[key] : match));
 }
 
 /** Placeholders a text uses that aren't variables of the task. */

@@ -37,9 +37,27 @@ const FILE_NAME = /^[a-z0-9][a-z0-9_-]*\.(html|css)$/;
 const ASSET_NAME = /^[a-z0-9][a-z0-9_-]*\.(png|jpe?g|gif|svg|webp|avif)$/;
 const VARIABLE_NAME = /^[a-z][a-zA-Z0-9_]*$/;
 
-/** Where task images must live (ImageKit). Narrow it to the Kalami account with CODE_ASSET_URL_PREFIX. */
+/**
+ * Where task images must live (ImageKit). Set CODE_ASSET_URL_PREFIX to the
+ * Kalami account's endpoint (https://ik.imagekit.io/<id>/); without it any
+ * ImageKit account passes. Always ends in a slash, so "…/kalami" can't be
+ * stretched to "…/kalami-evil".
+ */
 export function assetUrlPrefix(): string {
-  return process.env.CODE_ASSET_URL_PREFIX ?? "https://ik.imagekit.io/";
+  const prefix = process.env.CODE_ASSET_URL_PREFIX ?? "https://ik.imagekit.io/";
+  return prefix.endsWith("/") ? prefix : `${prefix}/`;
+}
+
+/** The longest text a check may compare against or look for. */
+const MAX_EXPECTED_CHARS = 500;
+const MAX_ONE_OF = 20;
+
+function optionalExpected(value: string | undefined, at: string, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (value.length > MAX_EXPECTED_CHARS) {
+    throw appError("INVALID_INPUT", `${at}: ${field} must be at most ${MAX_EXPECTED_CHARS} characters.`);
+  }
+  return value;
 }
 
 function checkFiles(files: CodeFile[], label: string): CodeFile[] {
@@ -130,8 +148,8 @@ function normalizeRule(rule: CheckRuleInput, id: string, where: string, sample: 
         label,
         type: "text",
         selector,
-        equals: rule.equals,
-        contains: rule.contains,
+        equals: optionalExpected(rule.equals, at, "equals"),
+        contains: optionalExpected(rule.contains, at, "contains"),
         caseSensitive: rule.caseSensitive,
         every: rule.every,
       };
@@ -145,8 +163,8 @@ function normalizeRule(rule: CheckRuleInput, id: string, where: string, sample: 
         type: "attr",
         selector,
         attribute: rule.attribute.toLowerCase(),
-        equals: rule.equals,
-        contains: rule.contains,
+        equals: optionalExpected(rule.equals, at, "equals"),
+        contains: optionalExpected(rule.contains, at, "contains"),
         every: rule.every,
       };
     case "css": {
@@ -157,6 +175,9 @@ function normalizeRule(rule: CheckRuleInput, id: string, where: string, sample: 
       if (rule.equals === undefined && (rule.oneOf === undefined || rule.oneOf.length === 0)) {
         throw appError("INVALID_INPUT", `${at}: a css check needs equals or oneOf.`);
       }
+      if (rule.oneOf !== undefined && rule.oneOf.length > MAX_ONE_OF) {
+        throw appError("INVALID_INPUT", `${at}: oneOf may list at most ${MAX_ONE_OF} values.`);
+      }
       if (rule.viewport !== undefined && (!Number.isInteger(rule.viewport) || rule.viewport < 200 || rule.viewport > 3000)) {
         throw appError("INVALID_INPUT", `${at}: viewport must be a width in px from 200 to 3000.`);
       }
@@ -166,8 +187,8 @@ function normalizeRule(rule: CheckRuleInput, id: string, where: string, sample: 
         type: "css",
         selector,
         property,
-        equals: rule.equals,
-        oneOf: rule.oneOf,
+        equals: optionalExpected(rule.equals, at, "equals"),
+        oneOf: rule.oneOf?.map((value) => optionalExpected(value, at, "oneOf")!),
         every: rule.every,
         viewport: rule.viewport,
       };
@@ -374,8 +395,9 @@ export function testCodeTask(input: CodeQuestionInput): CodeTaskReport {
 
 /** For saving: the normalised task, or an error listing what the solution fails. */
 export function normalizeCodeTask(input: CodeQuestionInput): NormalizedCodeTask {
-  const task = normalizeCodeTaskShape(input);
+  // testCodeTask normalises again; the shape check is cheap, the check runs are not, and they happen once.
   const report = testCodeTask(input);
+  const task = normalizeCodeTaskShape(input);
   if (!report.ok) {
     const shown = report.errors.slice(0, 6);
     const more = report.errors.length - shown.length;

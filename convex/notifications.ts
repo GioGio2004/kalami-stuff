@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { requireStudent } from "./lib/auth";
+import { enforceLimit } from "./lib/limits";
 import { notificationKindValidator } from "./lib/validators";
 import {
   fanOut as fanOutBatch,
@@ -9,9 +10,11 @@ import {
   markAllRead as markAllReadFor,
   markRead as markReadFor,
   sendDueReminders,
+  setEmailPreference as setEmailPreferenceFor,
+  unsubscribeByToken,
 } from "./model/notifications";
 
-// Student app (Clerk session): the bell. Sending happens in model/notifications.ts.
+// Student app (Clerk session): the bell. Sending happens in model/notifications.ts and email.ts.
 
 export const inbox = query({
   args: {},
@@ -40,6 +43,25 @@ export const markAllRead = mutation({
     await markAllReadFor(ctx, student);
     return null;
   },
+});
+
+/** The switch under the bell: emails about new work and deadlines on or off. */
+export const setEmailPreference = mutation({
+  args: { enabled: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const student = await requireStudent(ctx);
+    await enforceLimit(ctx, "emailPreference", student.user._id);
+    await setEmailPreferenceFor(ctx, student, args.enabled);
+    return null;
+  },
+});
+
+/** The link in every email, handled by the backend's own page (http.ts). */
+export const unsubscribe = internalMutation({
+  args: { userId: v.string(), token: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => await unsubscribeByToken(ctx, args.userId, args.token),
 });
 
 /** One batch of students for one event; schedules the next batch itself. */

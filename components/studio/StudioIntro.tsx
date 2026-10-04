@@ -40,7 +40,7 @@ const STEPS: Step[] = [
     points: [
       "Single choice, multiple choice, short answer and essay questions",
       "Exams default to strict integrity: fullscreen, one tab, server timer",
-      "Students will join a course with its six-character code (coming soon)",
+      "Students join a course with its six-character code and get told when you publish",
     ],
     icon: <Layers className="size-5" />,
     visual: () => (

@@ -1,11 +1,9 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { createTest } from "./test.setup";
 import type { UserIdentity } from "convex/server";
 import { expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
-import schema from "./schema";
 
-const modules = import.meta.glob("./**/*.ts");
 const OLD = "https://old-app.clerk.accounts.dev";
 const NEW = "https://new-app.clerk.accounts.dev";
 
@@ -21,7 +19,7 @@ function identity(issuer: string, subject: string, emailVerified = true): Partia
 }
 
 test("moving to a new Clerk app: the same verified email keeps the account and its roles", async () => {
-  const t = convexTest(schema, modules);
+  const t = createTest();
   const before = await t.withIdentity(identity(OLD, "user_old")).mutation(api.users.store, {});
   await t.mutation(internal.admin.grantSuperAdmin, { email: "gio@example.com" });
 
@@ -38,11 +36,20 @@ test("moving to a new Clerk app: the same verified email keeps the account and i
   expect(me?.isSuperAdmin).toBe(true);
 });
 
-test("the Clerk webhook hands the old row over too", async () => {
+test("the Clerk webhook hands the old row over too, but only for a verified email", async () => {
   vi.stubEnv("CLERK_FRONTEND_API_URL", NEW);
-  const t = convexTest(schema, modules);
+  const t = createTest();
   const before = await t.withIdentity(identity(OLD, "user_old")).mutation(api.users.store, {});
-  await t.mutation(internal.users.upsertFromClerk, { clerkUserId: "user_new", email: "Gio@example.com" });
+
+  await t.mutation(internal.users.upsertFromClerk, { clerkUserId: "user_x", email: "Gio@example.com" });
+  expect(await t.run(async (ctx) => ctx.db.query("users").take(10))).toHaveLength(2);
+  await t.run(async (ctx) => {
+    for (const row of await ctx.db.query("users").collect()) {
+      if (row.clerkUserId === "user_x") await ctx.db.delete("users", row._id);
+    }
+  });
+
+  await t.mutation(internal.users.upsertFromClerk, { clerkUserId: "user_new", email: "Gio@example.com", emailVerified: true });
   const rows = await t.run(async (ctx) => ctx.db.query("users").take(10));
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ _id: before, tokenIdentifier: `${NEW}|user_new`, clerkUserId: "user_new" });

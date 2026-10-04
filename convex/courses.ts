@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireStaffActor } from "./lib/access";
+import { enforceLimit } from "./lib/limits";
 import { courseStatusValidator, localeValidator } from "./lib/validators";
 import {
   courseDetailValidator,
@@ -51,11 +52,13 @@ export const create = mutation({
     description: v.optional(v.string()),
     semester: v.optional(v.string()),
     locale: v.optional(localeValidator),
-    universityId: v.optional(v.id("universities")),
+    // null: no university (a school class, private lessons).
+    universityId: v.optional(v.union(v.id("universities"), v.null())),
   },
   returns: v.id("courses"),
   handler: async (ctx, args) => {
     const actor = await requireStaffActor(ctx);
+    await enforceLimit(ctx, "createCourse", actor.user._id);
     return await createCourse(ctx, actor, args);
   },
 });

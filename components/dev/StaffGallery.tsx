@@ -381,7 +381,7 @@ export function StaffGallery({ view }: { view?: string }) {
     case "builder":
       return staffPage(
         <AssessmentBuilder
-          detail={{ assessment, questions, canEdit: true, course: { _id: webBasics._id, title: webBasics.title } }}
+          detail={{ assessment, questions, canEdit: true, started: 0, course: { _id: webBasics._id, title: webBasics.title } }}
           onUpdate={pause}
           onSetStatus={pause}
           onDelete={pause}

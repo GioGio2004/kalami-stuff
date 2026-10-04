@@ -1,13 +1,11 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { createTest, type TestBackend } from "./test.setup";
 import { Webhook } from "svix";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { HONESTY_NOTICE } from "./lib/honestyNotice";
-import schema from "./schema";
 
-const modules = import.meta.glob("./**/*.ts");
 const ISSUER = "https://test.clerk.accounts.dev";
 // svix secrets are "whsec_" + base64 key bytes.
 const SECRET = `whsec_${btoa("kalami-webhook-test-secret-32byt")}`;
@@ -61,7 +59,7 @@ function userEvent(
   };
 }
 
-function signedIn(t: ReturnType<typeof convexTest>, clerkUserId: string, email: string) {
+function signedIn(t: TestBackend, clerkUserId: string, email: string) {
   return t.withIdentity({
     issuer: ISSUER,
     subject: clerkUserId,
@@ -71,11 +69,11 @@ function signedIn(t: ReturnType<typeof convexTest>, clerkUserId: string, email: 
   });
 }
 
-const allUsers = (t: ReturnType<typeof convexTest>) => t.run((ctx) => ctx.db.query("users").collect());
+const allUsers = (t: TestBackend) => t.run((ctx) => ctx.db.query("users").collect());
 
 describe("Clerk webhook", () => {
   test("user.created makes the row that signing in later uses", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTest();
     const response = await t.fetch(
       "/clerk-users-webhook",
       signedRequest(userEvent("user.created", { id: "user_ana", email: "Ana@Example.com" })),
@@ -97,7 +95,7 @@ describe("Clerk webhook", () => {
   });
 
   test("user.updated follows email and avatar but keeps onboarding names", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTest();
     const ana = signedIn(t, "user_ana", "ana@example.com");
     await ana.mutation(api.users.store, {});
     await t.run(async (ctx) => {
@@ -115,7 +113,7 @@ describe("Clerk webhook", () => {
   });
 
   test("rows created before webhooks existed are matched and backfilled", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTest();
     await t.run((ctx) =>
       ctx.db.insert("users", {
         tokenIdentifier: `${ISSUER}|user_old`,
@@ -131,7 +129,7 @@ describe("Clerk webhook", () => {
   });
 
   test("signing in adopts a webhook row even if its tokenIdentifier differs", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTest();
     vi.stubEnv("CLERK_FRONTEND_API_URL", "https://stale-issuer.example");
     await t.fetch(
       "/clerk-users-webhook",
@@ -144,7 +142,7 @@ describe("Clerk webhook", () => {
   });
 
   test("user.deleted removes the person and their roles, and can repeat", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTest();
     const ana = signedIn(t, "user_ana", "ana@example.com");
     const universityId: Id<"universities"> = await t.run((ctx) =>
       ctx.db.insert("universities", { name: { ka: "ა", en: "A" }, slug: "a", status: "active" }),
@@ -163,12 +161,49 @@ describe("Clerk webhook", () => {
     const deletion = { type: "user.deleted", object: "event", data: { id: "user_ana", deleted: true } };
     expect((await t.fetch("/clerk-users-webhook", signedRequest(deletion))).status).toBe(200);
     expect((await t.fetch("/clerk-users-webhook", signedRequest(deletion))).status).toBe(200);
-    expect(await allUsers(t)).toHaveLength(0);
+    // The row stays, anonymised, so grades and history keep their references; the roles go.
+    const [row] = await allUsers(t);
+    expect(row.deletedAt).toBeDefined();
+    expect(row.firstName).toBeUndefined();
+    expect(row.lastName).toBeUndefined();
+    expect(row.clerkUserId).toBeUndefined();
+    expect(row.emailOptOut).toBe(true);
+    expect(row.email).not.toContain("ana@example.com");
     expect(await t.run((ctx) => ctx.db.query("memberships").collect())).toHaveLength(0);
+    // Signing in with the old identity no longer finds an account.
+    await expect(ana.query(api.users.me, {})).resolves.toBeNull();
+  });
+
+  test("an unverified primary email never takes over an account from the previous Clerk app", async () => {
+    const t = createTest();
+    // An account from before the move to the current Clerk app: another issuer in its identity.
+    const OLD = "https://old-app.clerk.accounts.dev";
+    await t
+      .withIdentity({ issuer: OLD, subject: "user_old", tokenIdentifier: `${OLD}|user_old`, email: "gio@example.com", emailVerified: true })
+      .mutation(api.users.store, {});
+
+    const event = (status: string) => ({
+      type: "user.created",
+      object: "event",
+      data: {
+        id: "user_new",
+        primary_email_address_id: "idn_1",
+        email_addresses: [{ id: "idn_1", email_address: "gio@example.com", verification: { status } }],
+      },
+    });
+    await t.fetch("/clerk-users-webhook", signedRequest(event("unverified")));
+    expect(await allUsers(t)).toHaveLength(2);
+    await t.run(async (ctx) => {
+      for (const row of await ctx.db.query("users").collect()) {
+        if (row.clerkUserId === "user_new") await ctx.db.delete("users", row._id);
+      }
+    });
+    await t.fetch("/clerk-users-webhook", signedRequest(event("verified")));
+    expect(await allUsers(t)).toMatchObject([{ clerkUserId: "user_new", tokenIdentifier: `${ISSUER}|user_new` }]);
   });
 
   test("unsigned, tampered or replayed requests are rejected", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTest();
     const event = userEvent("user.created", { id: "user_eve", email: "eve@example.com" });
 
     const wrongKey = `whsec_${btoa("not-the-real-secret-not-the-real")}`;
@@ -193,7 +228,7 @@ describe("Clerk webhook", () => {
   });
 
   test("without a linked primary email only a verified address is used", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTest();
     const event = (id: string, status: string) => ({
       type: "user.created",
       object: "event",
@@ -209,7 +244,7 @@ describe("Clerk webhook", () => {
   });
 
   test("a missing secret fails closed", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTest();
     vi.stubEnv("CLERK_WEBHOOK_SECRET", "");
     const response = await t.fetch(
       "/clerk-users-webhook",

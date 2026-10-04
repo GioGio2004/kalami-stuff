@@ -7,6 +7,9 @@ import {
   codeTaskValidator,
   integrityCountsValidator,
   enrollmentStatusValidator,
+  groupJoinViaValidator,
+  materialsSourceValidator,
+  materialsStatusValidator,
   responseValueValidator,
   assessmentKindValidator,
   assessmentSettingsValidator,
@@ -49,6 +52,13 @@ export default defineSchema({
     honestyVersion: v.optional(v.number()),
     // Staff only: when they dismissed the studio's "how this works" card.
     studioIntroSeenAt: v.optional(v.number()),
+    // Notification emails: switched off by the person (bell panel or the link in
+    // an email), or stopped by Resend telling us the address bounced or complained.
+    emailOptOut: v.optional(v.boolean()),
+    emailStatus: v.optional(v.union(v.literal("bounced"), v.literal("complained"))),
+    // Set when Clerk deleted the account: the row stays, anonymised, so grades and
+    // history keep their references.
+    deletedAt: v.optional(v.number()),
   })
     .index("by_tokenIdentifier", ["tokenIdentifier"])
     .index("by_clerkUserId", ["clerkUserId"])
@@ -72,7 +82,9 @@ export default defineSchema({
   invites: defineTable({
     // Lowercased. Only a signed-in user with this exact email can accept.
     email: v.string(),
-    universityId: v.id("universities"),
+    // Absent for an independent teacher (private lessons, a school class): only the
+    // super admin sends those, and only for the lecturer role.
+    universityId: v.optional(v.id("universities")),
     role: inviteRoleValidator,
     token: v.string(),
     invitedBy: v.id("users"),
@@ -92,7 +104,8 @@ export default defineSchema({
   // The container quizzes and exams hang off. Lecture content (modules,
   // lessons) comes later and will reference courses too.
   courses: defineTable({
-    universityId: v.id("universities"),
+    // Absent for a course outside any university (a school class, private lessons).
+    universityId: v.optional(v.id("universities")),
     ownerId: v.id("users"),
     title: v.string(),
     description: v.optional(v.string()),
@@ -169,16 +182,127 @@ export default defineSchema({
   // Students
   // -------------------------------------------------------------------------
 
-  // A student in a course, after typing its join code.
+  // A student in a course. Two ways in, tracked separately so leaving one keeps
+  // the other: the course's join code, and groups the course is shared with.
+  // The row goes away when the last way in does (model/groups.ts).
   enrollments: defineTable({
     courseId: v.id("courses"),
     userId: v.id("users"),
     status: enrollmentStatusValidator,
     enrolledAt: v.number(),
+    // Joined with the course's code. Absent on rows from before groups, which all came from codes.
+    viaCode: v.optional(v.boolean()),
+    // Groups of the student's that the course is shared with.
+    groupIds: v.optional(v.array(v.id("groups"))),
   })
     .index("by_userId", ["userId"])
     .index("by_courseId", ["courseId"])
     .index("by_courseId_and_userId", ["courseId", "userId"]),
+
+  // -------------------------------------------------------------------------
+  // Groups
+  // -------------------------------------------------------------------------
+
+  // A class of students a lecturer teaches: "CS-101 A", "Saturday tutoring".
+  // Students join through the group's link or a personal email invite; every
+  // course shared with the group reaches all of its members.
+  groups: defineTable({
+    ownerId: v.id("users"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    // The secret in the group's shared link (app.kalami.space/join/<code>).
+    inviteCode: v.string(),
+    inviteEnabled: v.boolean(),
+    archivedAt: v.optional(v.number()),
+    createdVia: viaValidator,
+    updatedAt: v.number(),
+  })
+    .index("by_ownerId", ["ownerId"])
+    .index("by_inviteCode", ["inviteCode"]),
+
+  groupMembers: defineTable({
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+    via: groupJoinViaValidator,
+    joinedAt: v.number(),
+  })
+    .index("by_groupId", ["groupId"])
+    .index("by_userId", ["userId"])
+    .index("by_groupId_and_userId", ["groupId", "userId"]),
+
+  // A personal invite emailed to one address. Only an account with that verified
+  // email can accept it; it also shows on that student's dashboard.
+  groupInvites: defineTable({
+    groupId: v.id("groups"),
+    // Lowercased.
+    email: v.string(),
+    token: v.string(),
+    invitedBy: v.id("users"),
+    expiresAt: v.number(),
+    acceptedAt: v.optional(v.number()),
+    acceptedBy: v.optional(v.id("users")),
+    revokedAt: v.optional(v.number()),
+    // The Resend component's id of the last email sent for it.
+    emailId: v.optional(v.string()),
+    emailedAt: v.optional(v.number()),
+  })
+    .index("by_token", ["token"])
+    .index("by_groupId", ["groupId"])
+    .index("by_email", ["email"]),
+
+  // Which groups a course is shared with.
+  courseGroups: defineTable({
+    courseId: v.id("courses"),
+    groupId: v.id("groups"),
+    addedBy: v.id("users"),
+    addedAt: v.number(),
+  })
+    .index("by_courseId", ["courseId"])
+    .index("by_groupId", ["groupId"])
+    .index("by_courseId_and_groupId", ["courseId", "groupId"]),
+
+  // -------------------------------------------------------------------------
+  // Course materials
+  // -------------------------------------------------------------------------
+
+  // The course's folder in a lecturer's Google Drive. The files stay theirs:
+  // Kalami only creates folders and shares published weeks by link.
+  courseDrive: defineTable({
+    courseId: v.id("courses"),
+    // Whose Drive. Only this person's Google connection is ever used for the course.
+    ownerId: v.id("users"),
+    folderId: v.optional(v.string()),
+    // Set while the folder is being created, so a second click doesn't make another.
+    creatingSince: v.optional(v.number()),
+    error: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index("by_courseId", ["courseId"]),
+
+  // One week (or unit, or lesson) of a course's materials: a Drive folder Kalami
+  // made, or a link to anywhere. Students see it once it's published and, for
+  // Drive, once the folder is shared ("anyone with the link can view").
+  materials: defineTable({
+    courseId: v.id("courses"),
+    order: v.number(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    source: materialsSourceValidator,
+    status: materialsStatusValidator,
+    // Drive: the week's folder and the "anyone with the link" permission on it.
+    folderId: v.optional(v.string()),
+    permissionId: v.optional(v.string()),
+    // Drive work in flight, so the page can say so and a second click waits.
+    syncing: v.optional(v.union(v.literal("folder"), v.literal("share"), v.literal("unshare"))),
+    syncingSince: v.optional(v.number()),
+    // The last Drive failure, in words the lecturer can act on.
+    driveError: v.optional(v.string()),
+    // Link: an https URL the lecturer manages access to.
+    url: v.optional(v.string()),
+    publishedAt: v.optional(v.number()),
+    createdBy: v.id("users"),
+    createdVia: viaValidator,
+    updatedAt: v.number(),
+  }).index("by_courseId_and_order", ["courseId", "order"]),
 
   // One student working on one assessment. Created on the first save.
   attempts: defineTable({
@@ -208,6 +332,12 @@ export default defineSchema({
     manualScore: v.optional(v.number()),
     gradedAt: v.optional(v.number()),
     gradedBy: v.optional(v.id("users")),
+    // Automatic grading threw (a page too big to check, for one): submitted with
+    // score 0 and this message, for the lecturer to grade by hand.
+    gradingError: v.optional(v.string()),
+    // How many times the cron handed this attempt to grading; bounded, so a
+    // grading run that keeps getting killed can't be retried forever.
+    gradingTries: v.optional(v.number()),
   })
     .index("by_userId_and_assessmentId", ["userId", "assessmentId"])
     .index("by_assessmentId", ["assessmentId"])
@@ -269,9 +399,13 @@ export default defineSchema({
     // Where tapping it goes, as a path in the student app.
     href: v.string(),
     readAt: v.optional(v.number()),
+    // The email that carried it (the Resend component's id), once one was queued.
+    emailId: v.optional(v.string()),
+    emailedAt: v.optional(v.number()),
   })
     .index("by_userId", ["userId"])
-    .index("by_userId_and_readAt", ["userId", "readAt"]),
+    .index("by_userId_and_readAt", ["userId", "readAt"])
+    .index("by_emailId", ["emailId"]),
 
   // One row per (assessment, kind) once its notifications went out, so a cron
   // run or a second publish never sends them twice.
@@ -283,10 +417,22 @@ export default defineSchema({
     sent: v.number(),
   }).index("by_assessmentId_and_kind", ["assessmentId", "kind"]),
 
+  // What an agent's creating tool returned for a request id, so a retried call
+  // (a lost response, a client that resends) returns the same ids instead of
+  // creating a second course, assessment or batch of questions.
+  agentRequests: defineTable({
+    actorId: v.id("users"),
+    requestId: v.string(),
+    result: v.union(v.string(), v.array(v.string())),
+    at: v.number(),
+  }).index("by_actorId_and_requestId", ["actorId", "requestId"]),
+
   // Who changed what, and whether a person or their agent did it.
   auditLog: defineTable({
     actorId: v.id("users"),
     via: viaValidator,
+    // MCP: the OAuth client the agent connected through (claude.ai, ChatGPT, …).
+    client: v.optional(v.string()),
     action: v.string(),
     targetTable: v.string(),
     targetId: v.string(),

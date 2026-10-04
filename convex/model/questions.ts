@@ -21,6 +21,8 @@ import {
   recountAssessment,
   requireAssessmentAccess,
   requireEditable,
+  requireNoAttempts,
+  startedCount,
   toAssessment,
 } from "./assessments";
 import { logAudit } from "./audit";
@@ -46,6 +48,8 @@ export const assessmentDetailValidator = v.object({
   assessment: assessmentValidator,
   questions: v.array(questionWithKeyValidator),
   canEdit: v.boolean(),
+  /** Students who have started. Above zero, questions are frozen except for text edits. */
+  started: v.number(),
   course: v.object({ _id: v.id("courses"), title: v.string() }),
 });
 
@@ -74,8 +78,12 @@ function requirePoints(points: number | undefined): number {
   return Math.round(points * 100) / 100;
 }
 
-/** Checks a question and splits it into what students see and what they don't. */
-export function normalizeQuestion(input: QuestionInput): NormalizedQuestion {
+/**
+ * Checks a question and splits it into what students see and what they don't.
+ * `keepIds` (an edit of a choice question) reuses the option ids by position,
+ * so answers students already saved still point at the right option.
+ */
+export function normalizeQuestion(input: QuestionInput, keepIds?: string[]): NormalizedQuestion {
   const prompt = requireText(input.prompt, "Question", 4000);
   const points = requirePoints(input.points);
   const explanation = optionalText(input.explanation, "Explanation", 2000);
@@ -86,8 +94,9 @@ export function normalizeQuestion(input: QuestionInput): NormalizedQuestion {
       if (input.options.length < 2 || input.options.length > 10) {
         throw appError("INVALID_INPUT", "A choice question needs 2 to 10 options.");
       }
-      const options = input.options.map((option) => ({
-        id: optionId(),
+      const reuse = keepIds !== undefined && keepIds.length === input.options.length;
+      const options = input.options.map((option, i) => ({
+        id: reuse ? keepIds[i] : optionId(),
         text: requireText(option.text, "Option", 500),
       }));
       const correctIds = options.flatMap((option, i) =>
@@ -208,6 +217,7 @@ export async function getAssessmentDetail(
     questions: await listQuestionsWithKeys(ctx, assessmentId),
     canEdit:
       access.canEdit && access.course.status !== "archived" && isEditableBy(actor, assessment),
+    started: await startedCount(ctx, assessmentId),
     course: { _id: access.course._id, title: access.course.title },
   };
 }
@@ -229,6 +239,7 @@ export async function addQuestions(
 ): Promise<Id<"questions">[]> {
   const { assessment } = await requireAssessmentAccess(ctx, actor, assessmentId, "edit");
   requireEditable(actor, assessment);
+  await requireNoAttempts(ctx, assessment, "add questions");
   if (inputs.length === 0 || inputs.length > MAX_QUESTIONS_PER_CALL) {
     throw appError(
       "INVALID_INPUT",
@@ -242,7 +253,7 @@ export async function addQuestions(
     );
   }
   // Validate everything first so a bad question in the middle adds nothing.
-  const normalized = inputs.map(normalizeQuestion);
+  const normalized = inputs.map((input) => normalizeQuestion(input));
   let order = await nextOrder(ctx, assessmentId);
   const ids: Id<"questions">[] = [];
   for (const { key, ...fields } of normalized) {
@@ -277,7 +288,11 @@ async function requireQuestionEditor(ctx: QueryCtx, actor: Actor, questionId: Id
   return { question, assessment };
 }
 
-/** Replaces the whole question. Option ids are regenerated, so saved answers won't match. */
+/**
+ * Replaces the question. Once students have started, only edits that keep
+ * their saved answers meaningful are allowed: the same type with the same
+ * number of options (ids are kept by position), never a code task.
+ */
 export async function updateQuestion(
   ctx: MutationCtx,
   actor: Actor,
@@ -285,7 +300,14 @@ export async function updateQuestion(
   input: QuestionInput,
 ): Promise<void> {
   const { question, assessment } = await requireQuestionEditor(ctx, actor, questionId);
-  const { key, ...fields } = normalizeQuestion(input);
+  const sameShape =
+    input.type === question.type &&
+    (question.options === undefined ||
+      ("options" in input && input.options.length === question.options.length));
+  if (!sameShape || input.type === "code") {
+    await requireNoAttempts(ctx, assessment, "change this question's type, options or code");
+  }
+  const { key, ...fields } = normalizeQuestion(input, question.options?.map((option) => option.id));
   await ctx.db.patch("questions", questionId, {
     ...fields,
     // Patching with undefined removes a field, e.g. options on a former choice question.
@@ -318,6 +340,7 @@ export async function deleteQuestion(
   questionId: Id<"questions">,
 ): Promise<void> {
   const { question, assessment } = await requireQuestionEditor(ctx, actor, questionId);
+  await requireNoAttempts(ctx, assessment, "delete questions");
   const key = await ctx.db
     .query("answerKeys")
     .withIndex("by_questionId", (q) => q.eq("questionId", questionId))
@@ -355,6 +378,7 @@ export async function reorderQuestions(
 ): Promise<void> {
   const { assessment } = await requireAssessmentAccess(ctx, actor, assessmentId, "edit");
   requireEditable(actor, assessment);
+  await requireNoAttempts(ctx, assessment, "reorder questions");
   const existing = await ctx.db
     .query("questions")
     .withIndex("by_assessmentId_and_order", (q) => q.eq("assessmentId", assessmentId))

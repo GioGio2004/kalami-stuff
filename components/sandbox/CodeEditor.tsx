@@ -99,6 +99,9 @@ const theme = EditorView.theme({
  * Blocked attempts are counted for the integrity summary.
  */
 function integrityRules(report: (event: IntegrityEvent) => void): Extension {
+  // Dragging a selection around inside the editor is still off, but it isn't
+  // something brought in from outside, so it isn't counted against the student.
+  let draggingInside = false;
   return [
     EditorView.domEventHandlers({
       paste: (event) => {
@@ -106,9 +109,18 @@ function integrityRules(report: (event: IntegrityEvent) => void): Extension {
         report("pasteBlocked");
         return true;
       },
+      dragstart: () => {
+        draggingInside = true;
+        return false;
+      },
+      dragend: () => {
+        draggingInside = false;
+        return false;
+      },
       drop: (event) => {
         event.preventDefault();
-        report("dropBlocked");
+        if (!draggingInside) report("dropBlocked");
+        draggingInside = false;
         return true;
       },
       contextmenu: (event) => {

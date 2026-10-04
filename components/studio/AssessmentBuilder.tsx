@@ -70,7 +70,7 @@ export function AssessmentBuilder({
   onDeleteQuestion: (questionId: QuestionWithKey["_id"]) => Promise<void>;
   onReorder: (questionIds: QuestionWithKey["_id"][]) => Promise<void>;
 }) {
-  const { assessment, questions, canEdit, course } = detail;
+  const { assessment, questions, canEdit, course, started } = detail;
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<QuestionWithKey | null>(null);
   const [trying, setTrying] = useState<QuestionWithKey | null>(null);
@@ -118,6 +118,11 @@ export function AssessmentBuilder({
               </Pill>
             )}
             {!canEdit && <Pill>Read only</Pill>}
+            {started > 0 && (
+              <Pill tone="lime">
+                {started} student{started === 1 ? "" : "s"} started
+              </Pill>
+            )}
           </div>
           <h1 className="mt-3 text-4xl font-medium leading-[0.98] tracking-[-0.04em] sm:text-5xl">{assessment.title}</h1>
           <p className="mt-3 text-[15px] text-graphite">
@@ -156,8 +161,14 @@ export function AssessmentBuilder({
         )}
       </div>
       <p className="mt-4 max-w-3xl px-1 text-sm leading-relaxed text-graphite">
-        {statusNote(assessment.status, questions.length, canEdit)}
+        {statusNote(assessment.status, questions.length, canEdit, started)}
       </p>
+      {canEdit && assessment.settings.resultsVisibility === "full_after_close" && assessment.settings.closesAt === undefined && (
+        <p className="mt-3 max-w-3xl rounded-2xl bg-highlighter/40 px-4 py-3 text-sm leading-relaxed">
+          Results are set to “full, after close” but there is no closing time, so students see nothing (not even their
+          score) until you set one. Set a closing time in the settings when you want to release them.
+        </p>
+      )}
       {actionError && (
         <div className="mt-4">
           <FormError>{actionError}</FormError>
@@ -279,17 +290,24 @@ export function AssessmentBuilder({
 }
 
 /** One line under the title saying what the current status means and what to do next. */
-function statusNote(status: AssessmentStatus, questionCount: number, canEdit: boolean): string {
+function statusNote(status: AssessmentStatus, questionCount: number, canEdit: boolean, started: number): string {
+  const frozen =
+    started > 0
+      ? ` ${started} student${started === 1 ? " has" : "s have"} started, so the questions are frozen: you can fix wording with Edit (answers stay valid), but not add, remove, reorder or reshuffle them. Moving it back to draft or archiving it submits their work as it stands.`
+      : "";
   switch (status) {
     case "draft":
       if (!canEdit) {
         return "Draft: only staff can see it for now.";
       }
-      return questionCount === 0
-        ? "Draft: only you and other staff can see it. Add at least one question, then Publish to make it available to students."
-        : "Draft: only you and other staff can see it. Check the questions and answer keys, then Publish to make it available to students.";
+      return (
+        (questionCount === 0
+          ? "Draft: only you and other staff can see it. Add at least one question, then Publish to make it available to students."
+          : "Draft: only you and other staff can see it. Check the questions and answer keys, then Publish to make it available to students.") +
+        frozen
+      );
     case "published":
-      return "Published: available to the course’s students from the opening time. Agents can’t change it any more. Move it back to draft to edit it with an agent, or archive it once it’s over.";
+      return `Published: available to the course’s students from the opening time; they were notified. Agents can’t change it any more.${frozen || " Move it back to draft to edit it with an agent, or archive it once it’s over."}`;
     case "archived":
       return "Archived: hidden from students and read-only. Restore it as a draft to reuse it.";
   }

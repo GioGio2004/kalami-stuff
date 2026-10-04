@@ -146,10 +146,21 @@ function parentElement(element: Element): Element | null {
   return parent !== null && isTag(parent as AnyNode) ? (parent as Element) : null;
 }
 
+/**
+ * Work budget. A student's page is a few hundred elements and rules; these caps
+ * are far above that, and keep one hostile 50 KB file from stalling grading.
+ */
+export const MAX_ELEMENTS = 4000;
+export const MAX_RULES = 1500;
+const MAX_CANDIDATES = 200_000;
+
 export class Page {
   readonly document: Document;
+  /** Set when the page is over budget: every check fails with this explanation. */
+  readonly tooLarge: string | null = null;
   private readonly files: Map<string, string>;
   private readonly candidates = new Map<Element, Candidate[]>();
+  private candidateCount = 0;
   private order = 0;
 
   constructor(files: CodeFile[], entry = "index.html") {
@@ -158,15 +169,27 @@ export class Page {
       treeAdapter: adapter,
       sourceCodeLocationInfo: true,
     }) as unknown as Document;
+    const elements = this.elements();
+    if (elements.length > MAX_ELEMENTS) {
+      this.tooLarge = `The page has more than ${MAX_ELEMENTS} elements, which is too many to check.`;
+      return;
+    }
+    const rules = this.stylesheets().flatMap((css) => parseStylesheet(css));
+    if (rules.length > MAX_RULES) {
+      this.tooLarge = `The CSS has more than ${MAX_RULES} rules, which is too many to check.`;
+      return;
+    }
     for (const rule of USER_AGENT_RULES) {
       this.applyRule(rule.selector, rule.declarations, rule.media, 0);
     }
-    for (const css of this.stylesheets()) {
-      for (const rule of parseStylesheet(css)) {
-        this.applyRule(rule.selector, rule.declarations, rule.media, 1);
+    for (const rule of rules) {
+      this.applyRule(rule.selector, rule.declarations, rule.media, 1);
+      if (this.candidateCount > MAX_CANDIDATES) {
+        this.tooLarge = "The CSS applies too many declarations to check.";
+        return;
       }
     }
-    for (const element of this.elements()) {
+    for (const element of elements) {
       const style = element.attribs.style;
       if (style !== undefined) {
         this.addDeclarations(element, parseDeclarations(style), 1, true, [0, 0, 0], []);
@@ -288,6 +311,7 @@ export class Page {
       const entries = longhands.some((l) => l.property === declaration.property)
         ? longhands
         : [{ property: declaration.property, value: declaration.value.trim().toLowerCase() }, ...longhands];
+      this.candidateCount += entries.length;
       for (const { property, value } of entries) {
         list.push({
           property,

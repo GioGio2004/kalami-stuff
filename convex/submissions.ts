@@ -6,6 +6,7 @@ import { requireStaffActor, type Actor } from "./lib/access";
 import { appError } from "./lib/errors";
 import { requireText } from "./lib/input";
 import { integrityColor, integrityScore } from "./lib/integrity";
+import { enforceLimit } from "./lib/limits";
 import {
   answerKeyValidator,
   answerValueValidator,
@@ -33,8 +34,8 @@ async function requireAttempt(ctx: QueryCtx, actor: Actor, attemptId: Id<"attemp
   if (attempt === null) {
     throw appError("NOT_FOUND", "Submission not found.");
   }
-  const { assessment } = await requireAssessmentAccess(ctx, actor, attempt.assessmentId, "view");
-  return { attempt, assessment };
+  const { assessment, access } = await requireAssessmentAccess(ctx, actor, attempt.assessmentId, "view");
+  return { attempt, assessment, access };
 }
 
 const submissionRowValidator = v.object({
@@ -57,6 +58,8 @@ const submissionRowValidator = v.object({
   questionsTotal: v.number(),
   /** An essay with an answer and no points yet. */
   needsGrading: v.boolean(),
+  /** Automatic grading failed (score 0 for now): the lecturer grades it by hand. */
+  gradingError: v.optional(v.string()),
   integrity: integrityCountsValidator,
   integrityScore: v.number(),
   integrityColor: integrityColorValidator,
@@ -102,6 +105,7 @@ export const forAssessment = query({
         answered: attempt.answered ?? 0,
         questionsTotal,
         needsGrading: attempt.needsGrading ?? false,
+        gradingError: attempt.gradingError,
         integrity: attempt.integrity,
         integrityScore: score,
         integrityColor: integrityColor(score),
@@ -122,6 +126,8 @@ export const detail = query({
     manualScore: v.optional(v.number()),
     maxScore: v.number(),
     feedback: v.optional(v.string()),
+    /** Automatic grading failed; the lecturer grades by hand. */
+    gradingError: v.optional(v.string()),
     integrity: integrityCountsValidator,
     integrityColor: integrityColorValidator,
     questions: v.array(
@@ -226,6 +232,7 @@ export const detail = query({
       manualScore: attempt.manualScore,
       maxScore: attempt.maxScore,
       feedback: attempt.feedback,
+      gradingError: attempt.gradingError,
       integrity: attempt.integrity,
       integrityColor: integrityColor(integrityScore(attempt.integrity)),
       questions: out,
@@ -249,6 +256,7 @@ export const setQuestionPoints = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const actor = await requireStaffActor(ctx);
+    await enforceLimit(ctx, "grade", actor.user._id);
     const { attempt, assessment } = await requireAttempt(ctx, actor, args.attemptId);
     if (attempt.status !== "submitted") {
       throw appError("CONFLICT", "Grade the work once it is submitted.");
@@ -294,6 +302,7 @@ export const addComment = mutation({
   returns: v.id("codeComments"),
   handler: async (ctx, args) => {
     const actor = await requireStaffActor(ctx);
+    await enforceLimit(ctx, "grade", actor.user._id);
     const { attempt, assessment } = await requireAttempt(ctx, actor, args.attemptId);
     const question = await ctx.db.get("questions", args.questionId);
     if (question === null || question.assessmentId !== attempt.assessmentId) {
@@ -325,6 +334,7 @@ export const addComment = mutation({
   },
 });
 
+/** A note can be removed by whoever wrote it, or by someone who may edit the course. */
 export const removeComment = mutation({
   args: { commentId: v.id("codeComments") },
   returns: v.null(),
@@ -334,8 +344,18 @@ export const removeComment = mutation({
     if (comment === null) {
       return null;
     }
-    await requireAttempt(ctx, actor, comment.attemptId);
+    const { attempt, assessment, access } = await requireAttempt(ctx, actor, comment.attemptId);
+    if (comment.authorId !== actor.user._id && !access.canEdit) {
+      throw appError("FORBIDDEN", "Only the person who wrote this note, or the course owner, can remove it.");
+    }
     await ctx.db.delete("codeComments", comment._id);
+    await logAudit(ctx, actor, {
+      action: "grading.uncomment",
+      targetTable: "attempts",
+      targetId: attempt._id,
+      courseId: attempt.courseId,
+      summary: `Removed a note on line ${comment.line} of ${comment.file} in “${assessment.title}”`,
+    });
     return null;
   },
 });
@@ -350,6 +370,7 @@ export const setGrade = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const actor = await requireStaffActor(ctx);
+    await enforceLimit(ctx, "grade", actor.user._id);
     const { attempt, assessment } = await requireAttempt(ctx, actor, args.attemptId);
     if (attempt.status !== "submitted") {
       throw appError("CONFLICT", "Grade the work once it is submitted.");

@@ -102,7 +102,7 @@ export async function getCurrentUser(ctx: QueryCtx): Promise<Doc<"users"> | null
 export async function requireUser(ctx: QueryCtx): Promise<Doc<"users">> {
   const identity = await requireIdentity(ctx);
   const user = await userByTokenIdentifier(ctx, identity.tokenIdentifier);
-  if (user === null) {
+  if (user === null || user.deletedAt !== undefined) {
     throw appError("USER_NOT_FOUND", "Your account is still being set up. Refresh the page.");
   }
   return user;
@@ -177,17 +177,6 @@ export async function getMemberships(ctx: QueryCtx, userId: Id<"users">) {
     .take(100);
 }
 
-/** Lecturers, university admins and the super admin. */
-export async function requireStaff(ctx: QueryCtx) {
-  const user = await requireUser(ctx);
-  const memberships = await getMemberships(ctx, user._id);
-  const staffMemberships = memberships.filter((m) => isStaffRole(m.role));
-  if (staffMemberships.length === 0) {
-    throw appError("FORBIDDEN", "This is only for lecturers and university staff.");
-  }
-  return { user, memberships: staffMemberships };
-}
-
 export async function requireSuperAdmin(ctx: QueryCtx) {
   const user = await requireUser(ctx);
   const memberships = await getMemberships(ctx, user._id);
@@ -211,13 +200,17 @@ export async function requireUniversityAdmin(ctx: QueryCtx, universityId: Id<"un
   return { user, isSuperAdmin: superAdmin };
 }
 
-/** Profile, names and the current honesty notice: everything the student app requires. */
+/**
+ * A student profile, names and the current honesty notice: everything the
+ * student app requires. The university is optional: school classes and private
+ * lessons have none.
+ */
 export function hasCompletedOnboarding(
   user: Doc<"users">,
   studentMembership: Doc<"memberships"> | undefined,
 ): boolean {
   return (
-    studentMembership?.universityId !== undefined &&
+    studentMembership !== undefined &&
     user.honestyVersion === HONESTY_NOTICE.version &&
     user.firstName !== undefined &&
     user.lastName !== undefined
@@ -226,8 +219,8 @@ export function hasCompletedOnboarding(
 
 /**
  * Onboarded students who accepted the current honesty notice. Staff accounts are
- * refused (rule 1); the super admin is not, but still needs a student profile,
- * because student data hangs off a university.
+ * refused (rule 1); the super admin is not, but still needs a student profile.
+ * `universityId` is undefined for students outside any university.
  */
 export async function requireStudent(ctx: QueryCtx) {
   const user = await requireUser(ctx);
@@ -236,7 +229,7 @@ export async function requireStudent(ctx: QueryCtx) {
     throw appError("FORBIDDEN", "Staff accounts can't use the student app.");
   }
   const membership = memberships.find((m) => m.role === "student");
-  if (membership?.universityId === undefined || !hasCompletedOnboarding(user, membership)) {
+  if (membership === undefined || !hasCompletedOnboarding(user, membership)) {
     throw appError("FORBIDDEN", "Finish onboarding first.");
   }
   return { user, membership, universityId: membership.universityId };

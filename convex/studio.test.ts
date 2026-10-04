@@ -1,13 +1,11 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { createTest } from "./test.setup";
 import type { UserIdentity } from "convex/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { HONESTY_NOTICE } from "./lib/honestyNotice";
-import schema from "./schema";
 
-const modules = import.meta.glob("./**/*.ts");
 const ISSUER = "https://test.clerk.accounts.dev";
 const SECRET = "test-service-secret-0123456789abcdef";
 
@@ -65,7 +63,7 @@ const COURSE_ARCHIVED = "This course is archived. Restore it before editing.";
  * the first one, a lecturer in the second, and a student.
  */
 async function setup() {
-  const t = convexTest(schema, modules);
+  const t = createTest();
   const admin = t.withIdentity(person("admin"));
   await admin.mutation(api.users.store, {});
   await t.mutation(internal.admin.grantSuperAdmin, { email: "admin@example.com" });
@@ -559,7 +557,8 @@ describe("MCP connector", () => {
         .withIndex("by_userId", (q) => q.eq("userId", userId))
         .take(10),
     }));
-    expect(leftovers).toEqual({ user: null, seats: [] });
+    expect(leftovers.seats).toEqual([]);
+    expect(leftovers.user?.deletedAt).toBeDefined();
     expect(await t.query(api.mcp.whoami, { token })).toBeNull();
   });
 

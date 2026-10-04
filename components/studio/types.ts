@@ -16,6 +16,18 @@ export type AssessmentStatus = Assessment["status"];
 export type AuditEntry = FunctionReturnType<typeof api.audit.recentForMe>[number];
 export type UniversityOption = FunctionReturnType<typeof api.courses.universitiesForNewCourse>[number];
 
+// The course outline: weeks with lessons, materials and placed tasks and quizzes.
+export type CourseOutline = FunctionReturnType<typeof api.weeks.outline>;
+export type OutlineWeek = CourseOutline["weeks"][number];
+export type OutlineLesson = OutlineWeek["lessons"][number];
+export type WeekLink = OutlineWeek["links"][number];
+export type WeekId = OutlineWeek["_id"];
+export type LessonId = OutlineLesson["_id"];
+export type AssessmentId = Assessment["_id"];
+export type DriveConnection = FunctionReturnType<typeof api.drive.connection>;
+export type LessonDetail = FunctionReturnType<typeof api.lessons.get>;
+export type LessonBlockInput = FunctionArgs<typeof api.lessons.saveBlocks>["blocks"][number];
+
 export type NewCourseArgs = FunctionArgs<typeof api.courses.create>;
 export type UpdateCourseArgs = Omit<FunctionArgs<typeof api.courses.update>, "courseId">;
 export type NewAssessmentArgs = Omit<FunctionArgs<typeof api.assessments.create>, "courseId">;

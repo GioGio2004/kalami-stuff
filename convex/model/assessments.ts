@@ -243,9 +243,20 @@ export async function createAssessment(
     title: string;
     instructions?: string;
     settings?: Partial<AssessmentSettings>;
+    /** Tasks and quizzes only: the week of the same course to place it in. */
+    weekId?: Id<"weeks">;
   },
 ): Promise<Id<"assessments">> {
   await requireCourseContentEditor(ctx, actor, args.courseId);
+  if (args.weekId !== undefined) {
+    if (args.kind !== "task" && args.kind !== "quiz") {
+      throw appError("INVALID_INPUT", "Midterms and finals stay in the course's Exams section.");
+    }
+    const week = await ctx.db.get("weeks", args.weekId);
+    if (week === null || week.courseId !== args.courseId) {
+      throw appError("NOT_FOUND", "Week not found in this course.");
+    }
+  }
   const title = requireText(args.title, "Title", 160);
   const instructions = optionalText(args.instructions, "Instructions", 8000);
   const settings = validateSettings({
@@ -265,6 +276,7 @@ export async function createAssessment(
     createdBy: actor.user._id,
     createdVia: actor.via,
     updatedAt: now,
+    weekId: args.weekId,
   });
   await logAudit(ctx, actor, {
     action: "assessment.create",

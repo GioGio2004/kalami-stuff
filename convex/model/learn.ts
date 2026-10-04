@@ -15,6 +15,7 @@ import {
   codeFileValidator,
   codeStepValidator,
   integrityLevelValidator,
+  studentWeekValidator,
   resultsVisibilityValidator,
   type CheckRuleDoc,
   type CodeTask,
@@ -23,7 +24,7 @@ import {
 import { lecturerName } from "./audit";
 import { MAX_FILE_CHARS, MAX_FILES } from "./codeTasks";
 import { enrollByCode } from "./enrollments";
-import { publishedMaterials, studentMaterialValidator } from "./materials";
+import { publishedWeeks } from "./weeks";
 
 /**
  * The student side: joining courses, seeing what's open, working on code tasks,
@@ -287,11 +288,27 @@ export const studentCourseValidator = v.object({
   semester: v.optional(v.string()),
   lecturer: v.string(),
   archived: v.boolean(),
-  /** Published weeks of materials, in course order. */
-  materials: v.array(studentMaterialValidator),
+  /** Published weeks, in course order: their lessons and materials. */
+  weeks: v.array(studentWeekValidator),
+  /**
+   * Legacy, for student apps from before weeks: the published weeks' Drive
+   * folders and links as a flat list. Remove once every client reads `weeks`.
+   */
+  materials: v.array(
+    v.object({
+      _id: v.string(),
+      title: v.string(),
+      description: v.optional(v.string()),
+      source: v.union(v.literal("drive"), v.literal("link")),
+      url: v.string(),
+      host: v.string(),
+    }),
+  ),
   assessments: v.array(
     v.object({
       _id: v.id("assessments"),
+      /** The week a task or quiz sits in; midterms, finals and unplaced work have none. */
+      weekId: v.optional(v.id("weeks")),
       kind: assessmentKindValidator,
       title: v.string(),
       state: v.union(v.literal("upcoming"), v.literal("open"), v.literal("closed")),
@@ -312,6 +329,7 @@ export async function getStudentCourse(ctx: QueryCtx, student: Student, courseId
   const now = Date.now();
   const published = await publishedIn(ctx, course._id);
   published.sort((a, b) => (a.publishedAt ?? 0) - (b.publishedAt ?? 0));
+  const weeks = await publishedWeeks(ctx, course._id);
   const assessments = [];
   for (const assessment of published) {
     const state = windowState(assessment, course, now);
@@ -321,6 +339,8 @@ export async function getStudentCourse(ctx: QueryCtx, student: Student, courseId
     const scores = attempts.filter((a) => a.status === "submitted").map((a) => finalScore(a) ?? 0);
     assessments.push({
       _id: assessment._id,
+      // Only weeks the student can see; work in a draft week shows with the unplaced work.
+      weekId: weeks.some((week) => week._id === assessment.weekId) ? assessment.weekId : undefined,
       kind: assessment.kind,
       title: assessment.title,
       state,
@@ -346,7 +366,13 @@ export async function getStudentCourse(ctx: QueryCtx, student: Student, courseId
     semester: course.semester,
     lecturer: lecturerName(await ctx.db.get("users", course.ownerId)),
     archived: course.status === "archived",
-    materials: await publishedMaterials(ctx, course._id),
+    weeks,
+    materials: weeks.flatMap((week) => [
+      ...(week.driveUrl
+        ? [{ _id: week._id, title: week.title, description: week.description, source: "drive" as const, url: week.driveUrl, host: "drive.google.com" }]
+        : []),
+      ...week.links.map((link) => ({ _id: `${week._id}:${link.id}`, title: link.title, source: "link" as const, url: link.url, host: link.host })),
+    ]),
     assessments,
   };
 }

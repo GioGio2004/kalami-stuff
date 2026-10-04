@@ -72,7 +72,8 @@ pilot, make sure someone actually reads it.
 
 ## Google Drive materials
 
-Lecturers connect Drive with the Google account already on their Kalami (Clerk)
+Materials live on a course's weeks (see STUDIO.md, Phase C): each week can have one Drive
+folder and any number of links. Lecturers connect Drive with the Google account already on their Kalami (Clerk)
 login; Kalami asks Google for one extra permission, `drive.file` (only files and
 folders Kalami creates). Kalami makes a private course folder with one folder per
 week in the lecturer's Drive; publishing a week shares that folder as "anyone with
@@ -94,6 +95,14 @@ Setup, once per Clerk instance:
 Troubleshooting: the week row shows Google's problem in words (connection
 expired, folder trashed, organisation blocks link sharing, Drive full) with a
 Retry button. Busy Google is retried by itself a few times.
+
+## Data migrations
+
+`convex/migrations.ts` holds one-off data moves, each idempotent and batched. Right now:
+`materialsToWeeks` (the old per-week `materials` rows become `weeks`). It runs hourly
+from crons.ts, so a deploy needs nothing by hand; to run it at once:
+`npx convex run migrations:materialsToWeeks --prod`. Once it returns 0 on every
+deployment, remove the cron, the function and the `materials` table.
 
 ## Deploying
 

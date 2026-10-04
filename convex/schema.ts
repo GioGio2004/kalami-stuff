@@ -20,6 +20,9 @@ import {
   courseStaffRoleValidator,
   courseStatusValidator,
   inviteRoleValidator,
+  lessonBlockValidator,
+  publishStatusValidator,
+  weekLinkValidator,
   localeValidator,
   localizedTextValidator,
   notificationKindValidator,
@@ -149,6 +152,9 @@ export default defineSchema({
     createdVia: viaValidator,
     publishedAt: v.optional(v.number()),
     updatedAt: v.number(),
+    // Tasks and quizzes can sit in a week; midterms and finals stay in the
+    // course's Exams section. Absent: not placed yet.
+    weekId: v.optional(v.id("weeks")),
   })
     .index("by_courseId", ["courseId"])
     .index("by_courseId_and_status", ["courseId", "status"])
@@ -288,9 +294,8 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_courseId", ["courseId"]),
 
-  // One week (or unit, or lesson) of a course's materials: a Drive folder Kalami
-  // made, or a link to anywhere. Students see it once it's published and, for
-  // Drive, once the folder is shared ("anyone with the link can view").
+  // Replaced by `weeks` (migrations.ts moves the rows); kept only until every
+  // deployment has run that migration, then removed.
   materials: defineTable({
     courseId: v.id("courses"),
     order: v.number(),
@@ -315,6 +320,55 @@ export default defineSchema({
   }).index("by_courseId_and_order", ["courseId", "order"]),
 
   // -------------------------------------------------------------------------
+  // Course outline
+  // -------------------------------------------------------------------------
+
+  // The backbone of a course: "Week 1", or any title the lecturer gives it
+  // ("Unit 2 · Forms"). A week holds lessons written in Kalami, materials (a
+  // folder in the lecturer's Google Drive and any number of links), and the
+  // tasks and quizzes placed in it. Students see it once it's published.
+  weeks: defineTable({
+    courseId: v.id("courses"),
+    order: v.number(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    status: publishStatusValidator,
+    publishedAt: v.optional(v.number()),
+    // Materials: links, in the order the lecturer put them.
+    links: v.array(weekLinkValidator),
+    // Materials: the week's folder in the course's Drive, and the "anyone with
+    // the link" permission on it while the week is published.
+    folderId: v.optional(v.string()),
+    permissionId: v.optional(v.string()),
+    // Drive work in flight, so the page can say so and a second click waits.
+    syncing: v.optional(v.union(v.literal("folder"), v.literal("share"), v.literal("unshare"))),
+    syncingSince: v.optional(v.number()),
+    // The last Drive failure, in words the lecturer can act on.
+    driveError: v.optional(v.string()),
+    createdBy: v.id("users"),
+    createdVia: viaValidator,
+    updatedAt: v.number(),
+  }).index("by_courseId_and_order", ["courseId", "order"]),
+
+  // A lesson written in Kalami: blocks of text, tips, code, images, video,
+  // step-by-step reveals and quick checks. Its own draft/published state, so an
+  // agent can draft one inside a week students already see.
+  lessons: defineTable({
+    courseId: v.id("courses"),
+    weekId: v.id("weeks"),
+    order: v.number(),
+    title: v.string(),
+    status: publishStatusValidator,
+    publishedAt: v.optional(v.number()),
+    blocks: v.array(lessonBlockValidator),
+    createdBy: v.id("users"),
+    createdVia: viaValidator,
+    updatedAt: v.number(),
+  })
+    .index("by_weekId_and_order", ["weekId", "order"])
+    .index("by_courseId", ["courseId"]),
+
+  // -------------------------------------------------------------------------
   // Messages (the contact card)
   // -------------------------------------------------------------------------
 
@@ -328,7 +382,9 @@ export default defineSchema({
     lecturerId: v.optional(v.id("users")),
     // What it's about, re-checked on the server when the student sent it.
     courseId: v.optional(v.id("courses")),
+    // Legacy (before weeks); new conversations use weekId.
     materialId: v.optional(v.id("materials")),
+    weekId: v.optional(v.id("weeks")),
     assessmentId: v.optional(v.id("assessments")),
     topic: contactTopicValidator,
     customTopic: v.optional(v.string()),

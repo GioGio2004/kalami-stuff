@@ -30,7 +30,7 @@ import {
 
 const contextArgs = {
   courseId: v.optional(v.id("courses")),
-  materialId: v.optional(v.id("materials")),
+  weekId: v.optional(v.id("weeks")),
   assessmentId: v.optional(v.id("assessments")),
 };
 

@@ -15,7 +15,7 @@ import {
   type ContactTopic,
 } from "../lib/validators";
 import { displayName, lecturerName } from "./audit";
-import { publishedMaterials } from "./materials";
+import { publishedWeeks } from "./weeks";
 import type { Student } from "./learn";
 
 /**
@@ -44,7 +44,8 @@ export const RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
 
 const contextValidator = v.object({
   course: v.optional(v.object({ _id: v.id("courses"), title: v.string(), locale: localeValidator })),
-  material: v.optional(v.object({ _id: v.id("materials"), title: v.string(), url: v.string() })),
+  /** The week, with the link to open: its Drive folder, or its first link. */
+  week: v.optional(v.object({ _id: v.id("weeks"), title: v.string(), url: v.optional(v.string()) })),
   assessment: v.optional(v.object({ _id: v.id("assessments"), title: v.string(), kind: assessmentKindValidator })),
 });
 
@@ -194,7 +195,7 @@ async function adminCount(ctx: QueryCtx): Promise<number> {
 
 type ContextIds = {
   courseId?: Id<"courses">;
-  materialId?: Id<"materials">;
+  weekId?: Id<"weeks">;
   assessmentId?: Id<"assessments">;
 };
 
@@ -206,7 +207,7 @@ type ContextIds = {
 async function resolveContext(ctx: QueryCtx, studentId: Id<"users">, ids: ContextIds) {
   const out: {
     course?: { _id: Id<"courses">; title: string; locale: "ka" | "en" };
-    material?: { _id: Id<"materials">; title: string; url: string };
+    week?: { _id: Id<"weeks">; title: string; url?: string };
     assessment?: { _id: Id<"assessments">; title: string; kind: Doc<"assessments">["kind"] };
   } = {};
   if (ids.courseId === undefined) {
@@ -217,9 +218,9 @@ async function resolveContext(ctx: QueryCtx, studentId: Id<"users">, ids: Contex
     return out;
   }
   out.course = { _id: course._id, title: course.title, locale: course.locale };
-  if (ids.materialId !== undefined) {
-    const material = (await publishedMaterials(ctx, course._id)).find((m) => m._id === ids.materialId);
-    if (material !== undefined) out.material = { _id: material._id, title: material.title, url: material.url };
+  if (ids.weekId !== undefined) {
+    const week = (await publishedWeeks(ctx, course._id)).find((w) => w._id === ids.weekId);
+    if (week !== undefined) out.week = { _id: week._id, title: week.title, url: week.driveUrl ?? week.links[0]?.url };
   }
   if (ids.assessmentId !== undefined) {
     const assessment = await ctx.db.get("assessments", ids.assessmentId);
@@ -231,7 +232,7 @@ async function resolveContext(ctx: QueryCtx, studentId: Id<"users">, ids: Contex
 }
 
 function contextLine(context: Awaited<ReturnType<typeof resolveContext>>): string | undefined {
-  const parts = [context.course?.title, context.material?.title, context.assessment?.title].filter(Boolean);
+  const parts = [context.course?.title, context.week?.title, context.assessment?.title].filter(Boolean);
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
@@ -458,7 +459,7 @@ export async function startConversation(
     recipient: args.recipient,
     lecturerId,
     courseId: context.course?._id,
-    materialId: context.material?._id,
+    weekId: context.week?._id,
     assessmentId: context.assessment?._id,
     topic: args.topic,
     customTopic,

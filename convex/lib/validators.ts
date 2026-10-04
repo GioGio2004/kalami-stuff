@@ -358,3 +358,109 @@ export type ContactRecipient = Infer<typeof contactRecipientValidator>;
 /** open: waiting for staff. answered: staff replied last. resolved: closed by either side. */
 export const conversationStatusValidator = v.union(v.literal("open"), v.literal("answered"), v.literal("resolved"));
 export type ConversationStatus = Infer<typeof conversationStatusValidator>;
+
+// --- Course outline: weeks and lessons ---------------------------------------------
+
+/** Weeks and lessons are either still being prepared or visible to students. */
+export const publishStatusValidator = v.union(v.literal("draft"), v.literal("published"));
+export type PublishStatus = Infer<typeof publishStatusValidator>;
+
+/** A link in a week's materials (OneDrive, a website, a video playlist…). */
+export const weekLinkValidator = v.object({
+  id: v.string(),
+  title: v.string(),
+  url: v.string(),
+});
+export type WeekLink = Infer<typeof weekLinkValidator>;
+
+/** A quick self-check inside a lesson. Ungraded, so the answer travels with it. */
+export const lessonCheckValidator = v.object({
+  kind: v.union(v.literal("single"), v.literal("multiple"), v.literal("short")),
+  prompt: v.string(),
+  options: v.optional(v.array(v.object({ text: v.string(), correct: v.boolean() }))),
+  // short: answers that count as right (compared ignoring case and spaces).
+  accepted: v.optional(v.array(v.string())),
+  explanation: v.optional(v.string()),
+});
+
+/**
+ * A lesson is a list of blocks, so the editor and an agent can build it piece
+ * by piece, and each block can get its own animation later. Text is Markdown,
+ * rendered as plain React text (never HTML).
+ */
+export const lessonBlockValidator = v.union(
+  v.object({ id: v.string(), type: v.literal("text"), md: v.string() }),
+  v.object({
+    id: v.string(),
+    type: v.literal("callout"),
+    tone: v.union(v.literal("tip"), v.literal("definition"), v.literal("warning"), v.literal("note")),
+    title: v.optional(v.string()),
+    md: v.string(),
+  }),
+  v.object({
+    id: v.string(),
+    type: v.literal("code"),
+    language: v.string(),
+    code: v.string(),
+    caption: v.optional(v.string()),
+    // HTML/CSS only: show the result next to the code, in the sandboxed preview.
+    preview: v.optional(v.boolean()),
+  }),
+  v.object({ id: v.string(), type: v.literal("image"), url: v.string(), alt: v.string(), caption: v.optional(v.string()) }),
+  v.object({ id: v.string(), type: v.literal("video"), url: v.string(), caption: v.optional(v.string()) }),
+  v.object({
+    id: v.string(),
+    type: v.literal("steps"),
+    title: v.optional(v.string()),
+    steps: v.array(v.object({ title: v.optional(v.string()), md: v.string() })),
+  }),
+  v.object({ id: v.string(), type: v.literal("check"), check: lessonCheckValidator }),
+);
+export type LessonBlock = Infer<typeof lessonBlockValidator>;
+
+/** A block as editors and agents send it: the id is optional (new blocks get one). */
+export const lessonBlockInputValidator = v.union(
+  v.object({ id: v.optional(v.string()), type: v.literal("text"), md: v.string() }),
+  v.object({
+    id: v.optional(v.string()),
+    type: v.literal("callout"),
+    tone: v.union(v.literal("tip"), v.literal("definition"), v.literal("warning"), v.literal("note")),
+    title: v.optional(v.string()),
+    md: v.string(),
+  }),
+  v.object({
+    id: v.optional(v.string()),
+    type: v.literal("code"),
+    language: v.string(),
+    code: v.string(),
+    caption: v.optional(v.string()),
+    preview: v.optional(v.boolean()),
+  }),
+  v.object({
+    id: v.optional(v.string()),
+    type: v.literal("image"),
+    url: v.string(),
+    alt: v.string(),
+    caption: v.optional(v.string()),
+  }),
+  v.object({ id: v.optional(v.string()), type: v.literal("video"), url: v.string(), caption: v.optional(v.string()) }),
+  v.object({
+    id: v.optional(v.string()),
+    type: v.literal("steps"),
+    title: v.optional(v.string()),
+    steps: v.array(v.object({ title: v.optional(v.string()), md: v.string() })),
+  }),
+  v.object({ id: v.optional(v.string()), type: v.literal("check"), check: lessonCheckValidator }),
+);
+export type LessonBlockInput = Infer<typeof lessonBlockInputValidator>;
+
+/** A published week as students see it (model/weeks.ts publishedWeeks). */
+export const studentWeekValidator = v.object({
+  _id: v.id("weeks"),
+  title: v.string(),
+  description: v.optional(v.string()),
+  links: v.array(v.object({ id: v.string(), title: v.string(), url: v.string(), host: v.string() })),
+  /** The week's Drive folder, once it's shared. */
+  driveUrl: v.optional(v.string()),
+  lessons: v.array(v.object({ _id: v.id("lessons"), title: v.string() })),
+});

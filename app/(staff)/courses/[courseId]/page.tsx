@@ -1,12 +1,14 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { CourseGroups } from "@/components/studio/CourseGroups";
-import { CourseMaterials, type DriveConnection } from "@/components/studio/CourseMaterials";
+import { CourseOutline } from "@/components/studio/CourseOutline";
 import { CourseView } from "@/components/studio/CourseView";
+import type { DriveConnection } from "@/components/studio/types";
+import { downloadKalami } from "@/components/kalami/KalamiFile";
 import { LoadingScreen } from "@/components/ui/StatusScreen";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -18,10 +20,10 @@ export default function CoursePage() {
   const { courseId } = useParams<{ courseId: string }>();
   const id = courseId as Id<"courses">;
   const router = useRouter();
+  const convex = useConvex();
   const course = useQuery(api.courses.get, { courseId: id });
   const history = useQuery(api.audit.recentForCourse, { courseId: id });
   const updateCourse = useMutation(api.courses.update);
-  const createAssessment = useMutation(api.assessments.create);
   const newJoinCode = useMutation(api.courses.newJoinCode);
   const setJoining = useMutation(api.courses.setJoining);
 
@@ -30,22 +32,30 @@ export default function CoursePage() {
   const shareCourse = useMutation(api.groups.shareCourse);
   const unshareCourse = useMutation(api.groups.unshareCourse);
 
-  // The clock only flags Drive jobs that stopped reporting back; a minute is fine.
+  // The clock only flags Drive jobs that stopped reporting back; half a minute is fine.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
   }, []);
-  const materials = useQuery(api.materials.forCourse, { courseId: id, now });
-  const addDrive = useMutation(api.materials.addDrive);
-  const addLink = useMutation(api.materials.addLink);
-  const updateWeek = useMutation(api.materials.update);
-  const moveWeek = useMutation(api.materials.move);
-  const publishWeek = useMutation(api.materials.publish);
-  const unpublishWeek = useMutation(api.materials.unpublish);
-  const removeWeek = useMutation(api.materials.remove);
-  const retryWeek = useMutation(api.materials.retry);
-  const moveToMyDrive = useMutation(api.materials.moveToMyDrive);
+  const outline = useQuery(api.weeks.outline, { courseId: id, now });
+  const createWeek = useMutation(api.weeks.create);
+  const updateWeek = useMutation(api.weeks.update);
+  const moveWeek = useMutation(api.weeks.move);
+  const publishWeek = useMutation(api.weeks.publish);
+  const unpublishWeek = useMutation(api.weeks.unpublish);
+  const removeWeek = useMutation(api.weeks.remove);
+  const addLinks = useMutation(api.weeks.addLinksTo);
+  const updateLink = useMutation(api.weeks.updateLinkIn);
+  const removeLink = useMutation(api.weeks.removeLinkFrom);
+  const moveLink = useMutation(api.weeks.moveLinkIn);
+  const addFolder = useMutation(api.weeks.addFolder);
+  const retryDrive = useMutation(api.weeks.retry);
+  const moveToMyDrive = useMutation(api.weeks.moveToMyDrive);
+  const place = useMutation(api.weeks.place);
+  const createLesson = useMutation(api.lessons.create);
+  const moveLesson = useMutation(api.lessons.move);
+  const createAssessment = useMutation(api.assessments.create);
 
   const { user } = useUser();
   const checkConnection = useAction(api.drive.connection);
@@ -75,12 +85,16 @@ export default function CoursePage() {
     <CourseView
       course={course}
       history={history}
+      onExport={
+        course.canEdit
+          ? async () => {
+              const { fileName, content } = await convex.query(api.kalami.exportCourse, { courseId: id });
+              downloadKalami(fileName, content);
+            }
+          : undefined
+      }
       onUpdateCourse={async (args) => {
         await updateCourse({ courseId: id, ...args });
-      }}
-      onCreateAssessment={async (args) => {
-        const assessmentId = await createAssessment({ courseId: id, ...args });
-        router.push(`/courses/${id}/assessments/${assessmentId}`);
       }}
       onNewJoinCode={async () => {
         await newJoinCode({ courseId: id });
@@ -102,10 +116,11 @@ export default function CoursePage() {
           />
         ) : undefined
       }
-      materials={
-        <CourseMaterials
-          data={materials}
+      outline={
+        <CourseOutline
+          data={outline}
           connection={connection}
+          locale={course.locale}
           actions={{
             onConnectDrive: async () => {
               if (!user) throw new Error("Sign in again, then connect Google Drive.");
@@ -120,32 +135,58 @@ export default function CoursePage() {
               if (!next) throw new Error("Google didn't open. Try again.");
               window.location.assign(next.href);
             },
-            onAddDrive: async (args) => {
-              await addDrive({ courseId: id, ...args });
-            },
-            onAddLink: async (args) => {
-              await addLink({ courseId: id, ...args });
-            },
-            onUpdate: async (materialId, patch) => {
-              await updateWeek({ materialId, ...patch });
-            },
-            onMove: async (materialId, direction) => {
-              await moveWeek({ materialId, direction });
-            },
-            onPublish: async (materialId) => {
-              await publishWeek({ materialId });
-            },
-            onUnpublish: async (materialId) => {
-              await unpublishWeek({ materialId });
-            },
-            onRemove: async (materialId) => {
-              await removeWeek({ materialId });
-            },
-            onRetry: async (materialId) => {
-              await retryWeek({ materialId });
-            },
             onMoveToMyDrive: async () => {
               await moveToMyDrive({ courseId: id });
+            },
+            onCreateWeek: async (args) => {
+              await createWeek({ courseId: id, ...args });
+            },
+            onUpdateWeek: async (weekId, patch) => {
+              await updateWeek({ weekId, ...patch });
+            },
+            onMoveWeek: async (weekId, direction) => {
+              await moveWeek({ weekId, direction });
+            },
+            onPublishWeek: async (weekId) => {
+              await publishWeek({ weekId });
+            },
+            onUnpublishWeek: async (weekId) => {
+              await unpublishWeek({ weekId });
+            },
+            onRemoveWeek: async (weekId) => {
+              await removeWeek({ weekId });
+            },
+            onAddLink: async (weekId, link) => {
+              await addLinks({ weekId, links: [link] });
+            },
+            onUpdateLink: async (weekId, linkId, link) => {
+              await updateLink({ weekId, linkId, ...link });
+            },
+            onRemoveLink: async (weekId, linkId) => {
+              await removeLink({ weekId, linkId });
+            },
+            onMoveLink: async (weekId, linkId, direction) => {
+              await moveLink({ weekId, linkId, direction });
+            },
+            onAddFolder: async (weekId) => {
+              await addFolder({ weekId });
+            },
+            onRetryDrive: async (weekId) => {
+              await retryDrive({ weekId });
+            },
+            onCreateLesson: async (weekId, title) => {
+              const lessonId = await createLesson({ weekId, title });
+              router.push(`/courses/${id}/lessons/${lessonId}`);
+            },
+            onMoveLesson: async (lessonId, direction) => {
+              await moveLesson({ lessonId, direction });
+            },
+            onCreateAssessment: async (args) => {
+              const assessmentId = await createAssessment({ courseId: id, ...args });
+              router.push(`/courses/${id}/assessments/${assessmentId}`);
+            },
+            onPlace: async (assessmentId, weekId) => {
+              await place({ assessmentId, weekId });
             },
           }}
         />

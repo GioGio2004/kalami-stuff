@@ -24,6 +24,8 @@ export const create = mutation({
     title: v.string(),
     instructions: v.optional(v.string()),
     settings: v.optional(assessmentSettingsValidator.partial()),
+    // Tasks and quizzes only: the week to place it in.
+    weekId: v.optional(v.id("weeks")),
   },
   returns: v.id("assessments"),
   handler: async (ctx, args) => {

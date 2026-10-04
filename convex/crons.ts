@@ -15,6 +15,9 @@ crons.interval("deadline reminders", { minutes: 5 }, internal.notifications.remi
 // Resolved conversations go a year after they were resolved (model/messages.ts RETENTION_MS).
 crons.interval("delete old conversations", { hours: 24 }, internal.messages.deleteExpired, {});
 
+// Until every deployment has moved its old materials rows into weeks (migrations.ts).
+crons.interval("move materials into weeks", { hours: 1 }, internal.migrations.materialsToWeeks, {});
+
 crons.interval("clean up sent emails", { hours: 24 }, internal.crons.cleanupEmails, {});
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;

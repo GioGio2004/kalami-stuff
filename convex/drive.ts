@@ -12,10 +12,10 @@ import {
   shareByLink,
   unshareByLink,
 } from "./lib/google";
-import { driveOf, STALE_SYNC_MS } from "./model/materials";
+import { driveOf, STALE_SYNC_MS } from "./model/weeks";
 
 /**
- * The Google Drive jobs model/materials.ts schedules. Each reads the week,
+ * The Google Drive jobs model/weeks.ts schedules. Each reads the week,
  * gets a fresh token for the course's Drive owner, calls Google, and reports
  * back. Google and the database can't change in one transaction, so every
  * step is safe to repeat: folders are found by their Kalami tag before one is
@@ -49,7 +49,7 @@ function shouldRetry(error: unknown, attempt: number): boolean {
 // --- What the jobs read and write ---------------------------------------------------------
 
 export const job = internalQuery({
-  args: { materialId: v.id("materials") },
+  args: { weekId: v.id("weeks") },
   returns: v.union(
     v.null(),
     v.object({
@@ -64,7 +64,7 @@ export const job = internalQuery({
     }),
   ),
   handler: async (ctx, args) => {
-    const row = await ctx.db.get("materials", args.materialId);
+    const row = await ctx.db.get("weeks", args.weekId);
     const course = row === null ? null : await ctx.db.get("courses", row.courseId);
     if (row === null || course === null) {
       return null;
@@ -151,7 +151,7 @@ export const forgetRootFolder = internalMutation({
  */
 export const report = internalMutation({
   args: {
-    materialId: v.id("materials"),
+    weekId: v.id("weeks"),
     job: jobValidator,
     folderId: v.optional(v.string()),
     permissionId: v.optional(v.union(v.string(), v.null())),
@@ -160,7 +160,7 @@ export const report = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const row = await ctx.db.get("materials", args.materialId);
+    const row = await ctx.db.get("weeks", args.weekId);
     if (row === null) {
       return null;
     }
@@ -169,7 +169,7 @@ export const report = internalMutation({
     // the meantime, the sharing is taken straight back off.
     if (args.job === "share" && typeof args.permissionId === "string") {
       const hideAgain = row.status === "draft";
-      await ctx.db.patch("materials", row._id, {
+      await ctx.db.patch("weeks", row._id, {
         permissionId: args.permissionId,
         driveError: undefined,
         ...(hideAgain
@@ -180,14 +180,14 @@ export const report = internalMutation({
         updatedAt: now,
       });
       if (hideAgain) {
-        await ctx.scheduler.runAfter(0, internal.drive.unshareWeek, { materialId: row._id, attempt: 0 });
+        await ctx.scheduler.runAfter(0, internal.drive.unshareWeek, { weekId: row._id, attempt: 0 });
       }
       return null;
     }
     if (row.syncing !== args.job) {
       return null;
     }
-    await ctx.db.patch("materials", row._id, {
+    await ctx.db.patch("weeks", row._id, {
       ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
       ...(args.permissionId !== undefined ? { permissionId: args.permissionId ?? undefined } : {}),
       driveError: args.driveError,
@@ -202,8 +202,8 @@ export const report = internalMutation({
 
 type JobRow = NonNullable<Awaited<ReturnType<typeof loadJob>>>;
 
-async function loadJob(ctx: ActionCtx, materialId: Id<"materials">) {
-  return await ctx.runQuery(internal.drive.job, { materialId });
+async function loadJob(ctx: ActionCtx, weekId: Id<"weeks">) {
+  return await ctx.runQuery(internal.drive.job, { weekId });
 }
 
 async function tokenFor(row: JobRow): Promise<string> {
@@ -218,13 +218,13 @@ async function tokenFor(row: JobRow): Promise<string> {
 /** Runs `work`; on failure reports it, or schedules another attempt when Google was just busy. */
 async function run(
   ctx: ActionCtx,
-  materialId: Id<"materials">,
+  weekId: Id<"weeks">,
   jobName: Job,
   attempt: number,
   again: (delay: number) => Promise<unknown>,
   work: (row: JobRow) => Promise<void>,
 ) {
-  const row = await loadJob(ctx, materialId);
+  const row = await loadJob(ctx, weekId);
   if (row === null) {
     return;
   }
@@ -232,27 +232,27 @@ async function run(
     await work(row);
   } catch (error) {
     if (!(error instanceof DriveError)) {
-      console.error("Drive job failed", materialId, error);
+      console.error("Drive job failed", weekId, error);
     }
     if (shouldRetry(error, attempt)) {
-      await ctx.runMutation(internal.drive.report, { materialId, job: jobName, driveError: messageOf(error), clearSyncing: false });
+      await ctx.runMutation(internal.drive.report, { weekId, job: jobName, driveError: messageOf(error), clearSyncing: false });
       await again(retryDelay(attempt));
       return;
     }
-    await ctx.runMutation(internal.drive.report, { materialId, job: jobName, driveError: messageOf(error), clearSyncing: true });
+    await ctx.runMutation(internal.drive.report, { weekId, job: jobName, driveError: messageOf(error), clearSyncing: true });
   }
 }
 
 /** Creates the week's folder inside the course folder (and the course folder, the first time). */
 export const createWeekFolder = internalAction({
-  args: { materialId: v.id("materials"), attempt: v.number() },
+  args: { weekId: v.id("weeks"), attempt: v.number() },
   returns: v.null(),
-  handler: async (ctx, { materialId, attempt }) => {
+  handler: async (ctx, { weekId, attempt }) => {
     const again = (delay: number, nextAttempt = attempt + 1) =>
-      ctx.scheduler.runAfter(delay, internal.drive.createWeekFolder, { materialId, attempt: nextAttempt });
-    await run(ctx, materialId, "folder", attempt, again, async (row) => {
+      ctx.scheduler.runAfter(delay, internal.drive.createWeekFolder, { weekId, attempt: nextAttempt });
+    await run(ctx, weekId, "folder", attempt, again, async (row) => {
       if (row.folderId !== undefined) {
-        await ctx.runMutation(internal.drive.report, { materialId, job: "folder", clearSyncing: true });
+        await ctx.runMutation(internal.drive.report, { weekId, job: "folder", clearSyncing: true });
         return;
       }
       const token = await tokenFor(row);
@@ -274,7 +274,7 @@ export const createWeekFolder = internalAction({
         }
         if (claim.state === "busy") {
           // Another week is creating the course folder right now; look again shortly.
-          await ctx.runMutation(internal.drive.report, { materialId, job: "folder", clearSyncing: false });
+          await ctx.runMutation(internal.drive.report, { weekId, job: "folder", clearSyncing: false });
           await again(ROOT_WAIT_MS, attempt);
           return;
         }
@@ -288,8 +288,8 @@ export const createWeekFolder = internalAction({
           }
         }
       }
-      const folderId = await ensureFolder(token, `week-${materialId}`, row.title, rootFolderId);
-      await ctx.runMutation(internal.drive.report, { materialId, job: "folder", folderId, clearSyncing: true });
+      const folderId = await ensureFolder(token, `week-${weekId}`, row.title, rootFolderId);
+      await ctx.runMutation(internal.drive.report, { weekId, job: "folder", folderId, clearSyncing: true });
     });
     return null;
   },
@@ -297,21 +297,21 @@ export const createWeekFolder = internalAction({
 
 /** "Anyone with the link can view" on the week's folder, so students can open it. */
 export const shareWeek = internalAction({
-  args: { materialId: v.id("materials"), attempt: v.number() },
+  args: { weekId: v.id("weeks"), attempt: v.number() },
   returns: v.null(),
-  handler: async (ctx, { materialId, attempt }) => {
+  handler: async (ctx, { weekId, attempt }) => {
     const again = (delay: number) =>
-      ctx.scheduler.runAfter(delay, internal.drive.shareWeek, { materialId, attempt: attempt + 1 });
-    await run(ctx, materialId, "share", attempt, again, async (row) => {
+      ctx.scheduler.runAfter(delay, internal.drive.shareWeek, { weekId, attempt: attempt + 1 });
+    await run(ctx, weekId, "share", attempt, again, async (row) => {
       // Unpublished while waiting, or already shared: nothing to do.
       if (row.status !== "published" || row.permissionId !== undefined || row.folderId === undefined) {
-        await ctx.runMutation(internal.drive.report, { materialId, job: "share", clearSyncing: true });
+        await ctx.runMutation(internal.drive.report, { weekId, job: "share", clearSyncing: true });
         return;
       }
       const token = await tokenFor(row);
       await requireFolder(token, row.folderId);
       const permissionId = await shareByLink(token, row.folderId);
-      await ctx.runMutation(internal.drive.report, { materialId, job: "share", permissionId, clearSyncing: true });
+      await ctx.runMutation(internal.drive.report, { weekId, job: "share", permissionId, clearSyncing: true });
     });
     return null;
   },
@@ -319,19 +319,19 @@ export const shareWeek = internalAction({
 
 /** Takes the link sharing off the week's folder. */
 export const unshareWeek = internalAction({
-  args: { materialId: v.id("materials"), attempt: v.number() },
+  args: { weekId: v.id("weeks"), attempt: v.number() },
   returns: v.null(),
-  handler: async (ctx, { materialId, attempt }) => {
+  handler: async (ctx, { weekId, attempt }) => {
     const again = (delay: number) =>
-      ctx.scheduler.runAfter(delay, internal.drive.unshareWeek, { materialId, attempt: attempt + 1 });
-    await run(ctx, materialId, "unshare", attempt, again, async (row) => {
+      ctx.scheduler.runAfter(delay, internal.drive.unshareWeek, { weekId, attempt: attempt + 1 });
+    await run(ctx, weekId, "unshare", attempt, again, async (row) => {
       if (row.permissionId === undefined || row.folderId === undefined) {
-        await ctx.runMutation(internal.drive.report, { materialId, job: "unshare", clearSyncing: true });
+        await ctx.runMutation(internal.drive.report, { weekId, job: "unshare", clearSyncing: true });
         return;
       }
       const token = await tokenFor(row);
       await unshareByLink(token, row.folderId, row.permissionId);
-      await ctx.runMutation(internal.drive.report, { materialId, job: "unshare", permissionId: null, clearSyncing: true });
+      await ctx.runMutation(internal.drive.report, { weekId, job: "unshare", permissionId: null, clearSyncing: true });
     });
     return null;
   },

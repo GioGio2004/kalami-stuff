@@ -1,8 +1,10 @@
 import { v } from "convex/values";
+import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { action, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { actorFromToken, requireTokenActor, type Actor } from "./lib/access";
 import { isSuperAdmin } from "./lib/auth";
+import { appError } from "./lib/errors";
 import { enforceLimit } from "./lib/limits";
 import {
   assessmentKindValidator,
@@ -13,10 +15,33 @@ import {
   questionInputValidator,
   roleValidator,
   codeQuestionInputValidator,
+  lessonBlockInputValidator,
   viaValidator,
 } from "./lib/validators";
 import { assessmentValidator, createAssessment, updateAssessment } from "./model/assessments";
 import { displayName } from "./model/audit";
+import {
+  addBlocks,
+  createLesson,
+  deleteBlock,
+  deleteLesson,
+  getLesson,
+  moveLesson,
+  setBlocks,
+  staffLessonValidator,
+  updateBlock,
+  updateLesson,
+} from "./model/lessons";
+import { exportCourseFile } from "./model/kalami";
+import {
+  importResultValidator,
+  inspectKalami,
+  inspectResultValidator,
+  runImport,
+  type ImportResult,
+  type InspectResult,
+} from "./model/kalamiImport";
+import { outlineValidator } from "./model/outline";
 import { codeTaskReportValidator, testCodeTask } from "./model/codeTasks";
 import {
   courseCountsValidator,
@@ -35,6 +60,16 @@ import {
   reorderQuestions,
   updateQuestion,
 } from "./model/questions";
+import {
+  addLinks,
+  createWeek,
+  getOutline,
+  placeAssessment,
+  removeLink,
+  removeWeek,
+  reorderWeeks,
+  updateWeek,
+} from "./model/weeks";
 
 /**
  * The MCP connector's view of the backend. Each function is called by the
@@ -205,6 +240,7 @@ export const createAssessmentAsAgent = mutation({
     title: v.string(),
     instructions: v.optional(v.string()),
     settings: v.optional(assessmentSettingsValidator.partial()),
+    weekId: v.optional(v.id("weeks")),
   },
   returns: v.id("assessments"),
   handler: async (ctx, { token, client, requestId, ...args }) => {
@@ -310,4 +346,272 @@ export const checkCodeTask = query({
     await requireTokenActor(ctx, args.token, args.client);
     return testCodeTask(args.question);
   },
+});
+
+// --- Course outline: weeks and lessons ---------------------------------------------
+//
+// Agents build the outline as drafts: weeks, lessons (blocks), links, and where
+// tasks and quizzes sit. They can't publish, can't create Drive folders (that
+// needs the lecturer's own Google consent), and can only change draft weeks
+// and draft lessons; they may add a new draft lesson to a published week.
+
+const linkInputValidator = v.object({ title: v.string(), url: v.string() });
+
+export const getCourseOutline = query({
+  args: { ...tokenArg, courseId: v.id("courses") },
+  returns: outlineValidator,
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    return await getOutline(ctx, actor, args.courseId, Date.now());
+  },
+});
+
+export const createWeekAsAgent = mutation({
+  args: {
+    ...tokenArg,
+    ...requestArg,
+    courseId: v.id("courses"),
+    title: v.optional(v.string()),
+    description: v.optional(v.string()),
+    links: v.optional(v.array(linkInputValidator)),
+  },
+  returns: v.id("weeks"),
+  handler: async (ctx, { token, client, requestId, ...args }) => {
+    const actor = await requireTokenActor(ctx, token, client);
+    const earlier = await remembered(ctx, actor, requestId);
+    if (typeof earlier === "string") {
+      return earlier as Id<"weeks">;
+    }
+    await enforceLimit(ctx, "agent", actor.user._id);
+    const weekId = await createWeek(ctx, actor, args);
+    await remember(ctx, actor, requestId, weekId);
+    return weekId;
+  },
+});
+
+export const updateWeekAsAgent = mutation({
+  args: { ...tokenArg, weekId: v.id("weeks"), title: v.optional(v.string()), description: v.optional(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, { token, client, weekId, ...patch }) => {
+    const actor = await requireTokenActor(ctx, token, client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await updateWeek(ctx, actor, weekId, patch);
+    return null;
+  },
+});
+
+export const reorderWeeksAsAgent = mutation({
+  args: { ...tokenArg, courseId: v.id("courses"), weekIds: v.array(v.id("weeks")) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await reorderWeeks(ctx, actor, args.courseId, args.weekIds);
+    return null;
+  },
+});
+
+export const deleteWeekAsAgent = mutation({
+  args: { ...tokenArg, weekId: v.id("weeks") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await removeWeek(ctx, actor, args.weekId);
+    return null;
+  },
+});
+
+export const addWeekLinksAsAgent = mutation({
+  args: { ...tokenArg, weekId: v.id("weeks"), links: v.array(linkInputValidator) },
+  returns: v.array(v.string()),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    return await addLinks(ctx, actor, args.weekId, args.links);
+  },
+});
+
+export const removeWeekLinkAsAgent = mutation({
+  args: { ...tokenArg, weekId: v.id("weeks"), linkId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await removeLink(ctx, actor, args.weekId, args.linkId);
+    return null;
+  },
+});
+
+export const placeAssessmentAsAgent = mutation({
+  args: { ...tokenArg, assessmentId: v.id("assessments"), weekId: v.union(v.id("weeks"), v.null()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await placeAssessment(ctx, actor, args.assessmentId, args.weekId);
+    return null;
+  },
+});
+
+export const getLessonAsAgent = query({
+  args: { ...tokenArg, lessonId: v.id("lessons") },
+  returns: staffLessonValidator,
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    return await getLesson(ctx, actor, args.lessonId);
+  },
+});
+
+export const createLessonAsAgent = mutation({
+  args: {
+    ...tokenArg,
+    ...requestArg,
+    weekId: v.id("weeks"),
+    title: v.string(),
+    blocks: v.optional(v.array(lessonBlockInputValidator)),
+  },
+  returns: v.id("lessons"),
+  handler: async (ctx, { token, client, requestId, ...args }) => {
+    const actor = await requireTokenActor(ctx, token, client);
+    const earlier = await remembered(ctx, actor, requestId);
+    if (typeof earlier === "string") {
+      return earlier as Id<"lessons">;
+    }
+    await enforceLimit(ctx, "agent", actor.user._id);
+    const lessonId = await createLesson(ctx, actor, args);
+    await remember(ctx, actor, requestId, lessonId);
+    return lessonId;
+  },
+});
+
+export const updateLessonAsAgent = mutation({
+  args: { ...tokenArg, lessonId: v.id("lessons"), title: v.optional(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, { token, client, lessonId, ...patch }) => {
+    const actor = await requireTokenActor(ctx, token, client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await updateLesson(ctx, actor, lessonId, patch);
+    return null;
+  },
+});
+
+export const setLessonBlocksAsAgent = mutation({
+  args: { ...tokenArg, lessonId: v.id("lessons"), blocks: v.array(lessonBlockInputValidator) },
+  returns: v.array(v.string()),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    return await setBlocks(ctx, actor, args.lessonId, args.blocks);
+  },
+});
+
+export const addLessonBlocksAsAgent = mutation({
+  args: {
+    ...tokenArg,
+    ...requestArg,
+    lessonId: v.id("lessons"),
+    blocks: v.array(lessonBlockInputValidator),
+    position: v.optional(v.number()),
+  },
+  returns: v.array(v.string()),
+  handler: async (ctx, { token, client, requestId, lessonId, blocks, position }) => {
+    const actor = await requireTokenActor(ctx, token, client);
+    const earlier = await remembered(ctx, actor, requestId);
+    if (Array.isArray(earlier)) {
+      return earlier;
+    }
+    await enforceLimit(ctx, "agent", actor.user._id);
+    const ids = await addBlocks(ctx, actor, lessonId, blocks, position);
+    await remember(ctx, actor, requestId, ids);
+    return ids;
+  },
+});
+
+export const updateLessonBlockAsAgent = mutation({
+  args: { ...tokenArg, lessonId: v.id("lessons"), blockId: v.string(), block: lessonBlockInputValidator },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await updateBlock(ctx, actor, args.lessonId, args.blockId, args.block);
+    return null;
+  },
+});
+
+export const deleteLessonBlockAsAgent = mutation({
+  args: { ...tokenArg, lessonId: v.id("lessons"), blockId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await deleteBlock(ctx, actor, args.lessonId, args.blockId);
+    return null;
+  },
+});
+
+export const moveLessonAsAgent = mutation({
+  args: {
+    ...tokenArg,
+    lessonId: v.id("lessons"),
+    weekId: v.optional(v.id("weeks")),
+    direction: v.optional(v.union(v.literal("up"), v.literal("down"))),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await moveLesson(ctx, actor, args.lessonId, args.weekId ? { weekId: args.weekId } : { direction: args.direction ?? "down" });
+    return null;
+  },
+});
+
+export const deleteLessonAsAgent = mutation({
+  args: { ...tokenArg, lessonId: v.id("lessons") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await deleteLesson(ctx, actor, args.lessonId);
+    return null;
+  },
+});
+
+// --- .kalami course files -----------------------------------------------------------
+//
+// An agent can hand the lecturer a whole course as a file (export), or write
+// one (see KALAMI-FORMAT.md) and import it as a new draft course. A dry run
+// checks a file and returns every problem without creating anything, so an
+// agent can fix its file before importing.
+
+export const exportCourseForAgent = query({
+  args: { ...tokenArg, courseId: v.id("courses") },
+  returns: v.object({ fileName: v.string(), content: v.string() }),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    return await exportCourseFile(ctx, actor, args.courseId);
+  },
+});
+
+export const checkKalamiForAgent = action({
+  args: { ...tokenArg, text: v.string() },
+  returns: inspectResultValidator,
+  handler: async (ctx, args): Promise<InspectResult> => {
+    const me = await ctx.runQuery(api.mcp.whoami, { token: args.token, client: args.client });
+    if (me === null) {
+      throw appError("UNAUTHENTICATED", "Not signed in to Kalami as staff. Reconnect Kalami in your assistant.");
+    }
+    return await inspectKalami(args.text);
+  },
+});
+
+export const importKalamiForAgent = action({
+  args: {
+    ...tokenArg,
+    text: v.string(),
+    universityId: v.optional(v.union(v.id("universities"), v.null())),
+  },
+  returns: importResultValidator,
+  handler: async (ctx, args): Promise<ImportResult> =>
+    await runImport(ctx, { kind: "agent", token: args.token, client: args.client }, args.text, args.universityId),
 });

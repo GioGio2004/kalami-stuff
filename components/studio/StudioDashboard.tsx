@@ -9,6 +9,7 @@ import { Layers, Plus, Robot } from "@/components/ui/icons";
 import { Pill, statusLabel, statusTone } from "@/components/ui/Pill";
 import { ActivityList } from "./ActivityList";
 import { CourseForm } from "./CourseForm";
+import { KalamiFileIcon } from "@/components/kalami/KalamiFile";
 import { StudioIntro } from "./StudioIntro";
 import type { AuditEntry, CourseSummary, NewCourseArgs, UniversityOption } from "./types";
 
@@ -24,6 +25,7 @@ export function StudioDashboard({
   introOpenInitially,
   onCreateCourse,
   onIntroSeen,
+  onImportKalami,
 }: {
   me: Me;
   courses: CourseSummary[] | undefined;
@@ -32,6 +34,8 @@ export function StudioDashboard({
   introOpenInitially: boolean;
   onCreateCourse: (args: NewCourseArgs) => Promise<void>;
   onIntroSeen: () => void;
+  /** Opens the .kalami import dialog. */
+  onImportKalami?: () => void;
 }) {
   const [introOpen, setIntroOpen] = useState(introOpenInitially);
   const [creating, setCreating] = useState(false);
@@ -58,6 +62,12 @@ export function StudioDashboard({
             <Robot className="size-4" />
             Agents
           </ButtonLink>
+          {onImportKalami && (
+            <Button variant="outline" onClick={onImportKalami}>
+              <KalamiFileIcon className="h-5 w-auto" decorative />
+              Import .kalami
+            </Button>
+          )}
           <Button onClick={() => setCreating(true)}>
             <Plus className="size-4" />
             New course

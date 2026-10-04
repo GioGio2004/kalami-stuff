@@ -131,12 +131,12 @@ describe("contact card", () => {
 
   test("context is checked: an unpublished week or someone else's course isn't attached", async () => {
     const { nino, ana, courseId } = await seed();
-    const draftWeek = await nino.mutation(api.materials.addLink, { courseId, title: "Week 9", url: "https://example.com/9" });
-    const options = await ana.query(api.messages.contactOptionsFor, { courseId, materialId: draftWeek });
-    expect(options.context.material).toBeUndefined();
-    await nino.mutation(api.materials.publish, { materialId: draftWeek });
-    const published = await ana.query(api.messages.contactOptionsFor, { courseId, materialId: draftWeek });
-    expect(published.context.material).toMatchObject({ title: "Week 9", url: "https://example.com/9" });
+    const draftWeek = await nino.mutation(api.weeks.create, { courseId, title: "Week 9", links: [{ title: "Reading", url: "https://example.com/9" }] });
+    const options = await ana.query(api.messages.contactOptionsFor, { courseId, weekId: draftWeek });
+    expect(options.context.week).toBeUndefined();
+    await nino.mutation(api.weeks.publish, { weekId: draftWeek });
+    const published = await ana.query(api.messages.contactOptionsFor, { courseId, weekId: draftWeek });
+    expect(published.context.week).toMatchObject({ title: "Week 9", url: "https://example.com/9" });
   });
 
   test("emails: the lecturer gets the message, the student a short notice, a burst emails once", async () => {

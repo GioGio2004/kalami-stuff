@@ -150,7 +150,7 @@ export function ThreadView({
           <section className="rounded-[2rem] bg-card p-6">
             <h2 className="text-xl font-medium tracking-tight">Where they were</h2>
             <p className="mt-1 text-sm text-graphite">What the student was looking at when they wrote, checked by Kalami.</p>
-            {!context.course && !context.material && !context.assessment ? (
+            {!context.course && !context.week && !context.assessment ? (
               <p className="mt-4 text-sm text-graphite">No course attached.</p>
             ) : (
               <ul className="mt-4 space-y-2">
@@ -159,9 +159,14 @@ export function ThreadView({
                     {context.course.title}
                   </ContextLink>
                 )}
-                {context.material && (
-                  <ContextLink href={context.material.url} external icon={<Notebook className="size-4" />} label="Week">
-                    {context.material.title}
+                {context.week && context.course && (
+                  <ContextLink
+                    href={context.week.url ?? `/courses/${context.course._id}`}
+                    external={context.week.url !== undefined}
+                    icon={<Notebook className="size-4" />}
+                    label="Week"
+                  >
+                    {context.week.title}
                   </ContextLink>
                 )}
                 {context.assessment && context.course && (

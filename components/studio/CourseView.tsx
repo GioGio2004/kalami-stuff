@@ -1,64 +1,59 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/buttons";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { Dialog } from "@/components/ui/Dialog";
-import { Field, FormError, TextInput } from "@/components/ui/form";
-import { ArrowLeft, ArrowRight, Clock, ListChecks, Plus, Robot, Shield } from "@/components/ui/icons";
+import { FormError } from "@/components/ui/form";
+import { ArrowLeft, ArrowRight, Robot } from "@/components/ui/icons";
 import { Pill, statusLabel, statusTone } from "@/components/ui/Pill";
 import { errorMessage } from "@/lib/errors";
-import { formatDateTime } from "@/lib/format";
+import { KalamiFileIcon } from "@/components/kalami/KalamiFile";
 import { ActivityList } from "./ActivityList";
 import { CourseForm } from "./CourseForm";
-import {
-  INTEGRITY_LABEL,
-  KIND_LABEL,
-  type Assessment,
-  type AssessmentKind,
-  type AuditEntry,
-  type CourseDetail,
-  type NewAssessmentArgs,
-  type UpdateCourseArgs,
-} from "./types";
-
-const KINDS: AssessmentKind[] = ["task", "quiz", "midterm", "final"];
-
-const KIND_BLURB: Record<AssessmentKind, string> = {
-  task: "Homework in the code sandbox: HTML and CSS in small steps, checked as students type. Best drafted by your agent.",
-  quiz: "Short checks between lessons. Standard integrity, results after close.",
-  midterm: "The mid-semester exam. Strict integrity and a 60-minute timer by default.",
-  final: "The end-of-semester exam. Strict integrity and a 90-minute timer by default.",
-};
+import type { AuditEntry, CourseDetail, UpdateCourseArgs } from "./types";
 
 export function CourseView({
   course,
   history,
   onUpdateCourse,
-  onCreateAssessment,
   onNewJoinCode,
   onSetJoining,
-  materials,
+  outline,
   groups,
+  onExport,
 }: {
   course: CourseDetail;
   history: AuditEntry[] | undefined;
   onUpdateCourse: (args: UpdateCourseArgs) => Promise<void>;
-  onCreateAssessment: (args: NewAssessmentArgs) => Promise<void>;
   onNewJoinCode: () => Promise<void>;
   onSetJoining: (enabled: boolean) => Promise<void>;
-  /** The materials section (CourseMaterials), above the assessments. */
-  materials?: ReactNode;
+  /** The main column: the course outline (CourseOutline), weeks, exams and unplaced work. */
+  outline?: ReactNode;
   /** The groups card (CourseGroups), at the top of the side column. */
   groups?: ReactNode;
+  /** Downloads the course as a .kalami file. */
+  onExport?: () => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
-  const [newKind, setNewKind] = useState<AssessmentKind | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusBusy, setStatusBusy] = useState(false);
-  const canEdit = course.canEdit && course.status !== "archived";
+  const [exporting, setExporting] = useState(false);
+
+  async function exportFile() {
+    if (!onExport) return;
+    setExporting(true);
+    setStatusError(null);
+    try {
+      await onExport();
+    } catch (error) {
+      setStatusError(errorMessage(error));
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function setCourseStatus(status: "draft" | "published") {
     setStatusBusy(true);
@@ -113,6 +108,12 @@ export function CourseView({
             <Button variant="outline" onClick={() => setEditing(true)}>
               Edit details
             </Button>
+            {onExport && (
+              <Button variant="outline" onClick={exportFile} disabled={exporting} title="The whole course in one file: weeks, lessons, quizzes and answer keys">
+                <KalamiFileIcon className="h-5 w-auto" decorative />
+                {exporting ? "Exporting…" : "Export .kalami"}
+              </Button>
+            )}
             {course.status === "draft" && (
               <Button onClick={() => setCourseStatus("published")} disabled={statusBusy}>
                 Publish course
@@ -134,40 +135,7 @@ export function CourseView({
       )}
 
       <div className="mt-8 grid gap-4 *:min-w-0 lg:grid-cols-12">
-        <div className="space-y-4 lg:col-span-8">
-          {materials}
-          {KINDS.map((kind) => {
-            const items = course.assessments.filter((a) => a.kind === kind);
-            return (
-              <section key={kind} className="rounded-[2rem] bg-card p-5 sm:p-6">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-xl font-medium tracking-tight">
-                      {kind === "quiz" ? "Quizzes" : KIND_LABEL[kind]}
-                      <span className="ml-2 text-base font-normal text-graphite">{items.length}</span>
-                    </h2>
-                    <p className="mt-0.5 text-sm text-graphite">{KIND_BLURB[kind]}</p>
-                  </div>
-                  {canEdit && (
-                    <Button size="sm" variant={items.length === 0 ? "ink" : "outline"} onClick={() => setNewKind(kind)}>
-                      <Plus className="size-4" />
-                      New {KIND_LABEL[kind].toLowerCase()}
-                    </Button>
-                  )}
-                </div>
-                {items.length > 0 && (
-                  <ul className="mt-4 space-y-2">
-                    {items.map((assessment) => (
-                      <li key={assessment._id}>
-                        <AssessmentRow assessment={assessment} courseId={course._id} />
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-            );
-          })}
-        </div>
+        <div className="lg:col-span-8">{outline}</div>
 
         <div className="space-y-4 lg:col-span-4">
           {groups}
@@ -212,10 +180,13 @@ export function CourseView({
             </span>
             <h2 className="mt-5 text-xl font-medium tracking-tight">Ask your agent</h2>
             <p className="mt-1.5 text-sm leading-relaxed text-ink/75">
-              With the connector set up, tell your AI assistant something like:
+              With the connector set up, it drafts weeks, lessons, quizzes and exams for you to check. Try:
             </p>
             <p className="mt-3 -rotate-1 rounded-2xl bg-paper px-4 py-3 font-hand text-[1.25rem] leading-tight text-ink">
-              “Draft a 10-question quiz on week 3 for my course ‘{course.title}’.”
+              “Turn my syllabus into weeks for ‘{course.title}’, with a lesson and a quiz each.”
+            </p>
+            <p className="mt-2 rotate-1 rounded-2xl bg-paper/70 px-4 py-3 font-hand text-[1.15rem] leading-tight text-ink">
+              “Write a lesson on CSS selectors for Week 3, with examples and a quick check.”
             </p>
             <Link href="/agents" className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium underline-offset-4 hover:underline">
               Set up the connector
@@ -252,19 +223,6 @@ export function CourseView({
           </div>
         </div>
       </Dialog>
-
-      <Dialog open={newKind !== null} onClose={() => setNewKind(null)} label="New assessment">
-        {newKind && (
-          <NewAssessmentForm
-            kind={newKind}
-            onSubmit={async (args) => {
-              await onCreateAssessment(args);
-              setNewKind(null);
-            }}
-            onCancel={() => setNewKind(null)}
-          />
-        )}
-      </Dialog>
     </div>
   );
 }
@@ -276,109 +234,10 @@ function courseNote(course: CourseDetail): string {
   }
   switch (course.status) {
     case "draft":
-      return "Draft course: students can’t find it yet. Publish it when it’s ready. Each quiz and exam inside is published separately, so students only ever see what you’ve released.";
+      return "Draft course: students can’t find it yet. Publish it when it’s ready. Each week, quiz and exam inside is published separately, so students only ever see what you’ve released.";
     case "published":
-      return "Published: students can find this course. Quizzes and exams still stay hidden until you publish each one.";
+      return "Published: students can find this course. Weeks, quizzes and exams still stay hidden until you publish each one.";
     case "archived":
       return "Archived: hidden from students and read-only.";
   }
-}
-
-function AssessmentRow({ assessment, courseId }: { assessment: Assessment; courseId: CourseDetail["_id"] }) {
-  const { settings } = assessment;
-  return (
-    <Link
-      href={`/courses/${courseId}/assessments/${assessment._id}`}
-      className="flex items-center gap-4 rounded-2xl border border-line bg-paper px-4 py-3 transition hover:border-ink/30"
-    >
-      <span className="grid size-10 shrink-0 place-items-center rounded-full bg-panel">
-        <ListChecks className="size-5" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="truncate font-medium">{assessment.title}</span>
-          <Pill tone={statusTone(assessment.status)}>{statusLabel(assessment.status)}</Pill>
-          {assessment.createdVia === "mcp" && (
-            <Pill tone="lime">
-              <Robot className="size-3.5" />
-              Agent
-            </Pill>
-          )}
-        </span>
-        <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-graphite">
-          <span>
-            {assessment.questionCount} question{assessment.questionCount === 1 ? "" : "s"} · {assessment.totalPoints} pts
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <Shield className="size-3.5" />
-            {INTEGRITY_LABEL[settings.integrityLevel]}
-          </span>
-          {settings.timeLimitMin && (
-            <span className="inline-flex items-center gap-1">
-              <Clock className="size-3.5" />
-              {settings.timeLimitMin} min
-            </span>
-          )}
-          {settings.opensAt && <span>Opens {formatDateTime(settings.opensAt)}</span>}
-        </span>
-      </span>
-      <ArrowRight className="size-5 shrink-0 text-graphite" />
-    </Link>
-  );
-}
-
-function NewAssessmentForm({
-  kind,
-  onSubmit,
-  onCancel,
-}: {
-  kind: AssessmentKind;
-  onSubmit: (args: NewAssessmentArgs) => Promise<void>;
-  onCancel: () => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await onSubmit({ kind, title });
-    } catch (caught) {
-      setError(errorMessage(caught));
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="p-6 sm:p-10">
-      <p className="-rotate-2 font-hand text-[1.6rem] leading-none text-graphite">A blank one</p>
-      <h2 className="mt-3 text-3xl font-medium tracking-[-0.03em]">New {KIND_LABEL[kind].toLowerCase()}</h2>
-      <p className="mt-2 text-[15px] text-graphite">{KIND_BLURB[kind]} You can change every setting afterwards.</p>
-      <div className="mt-6">
-        <Field label="Title" htmlFor="assessment-title">
-          <TextInput
-            id="assessment-title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder={kind === "quiz" ? "Week 3 · CSS selectors" : `${KIND_LABEL[kind]} · Spring 2026`}
-            maxLength={160}
-            autoFocus
-            required
-          />
-        </Field>
-      </div>
-      {error && <div className="mt-4"><FormError>{error}</FormError></div>}
-      <div className="mt-6 flex justify-end gap-3">
-        <Button variant="ghost" onClick={onCancel} disabled={busy}>
-          Cancel
-        </Button>
-        <Button type="submit" disabled={busy || title.trim() === ""}>
-          Create draft
-        </Button>
-      </div>
-    </form>
-  );
 }

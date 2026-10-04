@@ -52,19 +52,42 @@ describe("MCP server", () => {
     const { result } = await body(response);
     const names = (result?.tools as { name: string }[]).map((tool) => tool.name).sort();
     expect(names).toEqual([
+      "add_lesson_blocks",
       "add_questions",
+      "add_week_links",
       "check_code_task",
+      "check_kalami_file",
       "create_assessment",
       "create_course",
+      "create_lesson",
+      "create_week",
+      "delete_lesson",
+      "delete_lesson_block",
       "delete_question",
+      "delete_week",
+      "export_course_file",
       "get_assessment",
       "get_course",
+      "get_course_outline",
+      "get_kalami_format",
+      "get_lesson",
+      "import_kalami_file",
       "list_courses",
+      "move_lesson",
+      "place_assessment",
+      "remove_week_link",
       "reorder_questions",
+      "reorder_weeks",
+      "replace_lesson_blocks",
       "update_assessment",
+      "update_lesson",
+      "update_lesson_block",
       "update_question",
+      "update_week",
       "whoami",
     ]);
+    // Publishing stays a person's click in the dashboard.
+    expect(names.some((name) => /publish/.test(name))).toBe(false);
   });
 
   test("the header route refuses a request without a token", async () => {

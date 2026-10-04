@@ -160,11 +160,31 @@ their whole semester's quizzes and exams, by hand or with an agent.
    sleeps filtered out; the live monitor is still to build.
 7. ✅ Notifications (bell + email through Resend) for new work and deadlines; see `OPERATIONS.md`.
 
-### Phase C — Lectures with animations
+### Phase C — Course outline and lessons (core built 2026-10-04)
 
-The goal from the brief: lessons that are easier to follow than a PDF because things
-*happen* on the page. Plan it as **blocks**, not a document, so both the editor and an
-agent can build a lesson piece by piece:
+**Built:** a course is an outline of **weeks** (`weeks` table; "Week N" by default, any
+title). A week holds **lessons** (`lessons`, blocks stored on the lesson), **materials**
+(one Drive folder and any number of links, on the week itself) and the **tasks and
+quizzes** placed in it (`assessments.weekId`). Midterms and finals stay in the course's
+Exams section. Weeks and lessons are draft/published; publishing a week publishes its
+draft lessons and shares its Drive folder. Backend: `convex/model/weeks.ts`,
+`convex/model/lessons.ts`, API in `weeks.ts`, `lessons.ts`; the student reader is
+`lessons.read`. Agents: 17 new MCP tools (`get_course_outline`, `create_week`,
+`create_lesson`, `add_lesson_blocks`, `place_assessment`, …), drafts only, no Drive
+folders. The old `materials` table is migrated by `migrations.materialsToWeeks` (an
+hourly cron until every deployment is empty, then both go).
+
+Blocks built now: `text`, `callout` (tip/definition/warning/note), `code` (live
+HTML/CSS preview in the sandbox iframe), `image` (alt required), `video`
+(YouTube/Vimeo embed), `steps` (one at a time), `check` (ungraded self-check). One
+renderer, `components/lessons/LessonBlocks.tsx`, serves the staff preview and the
+student reader (synced by `sync:student`). Each block slides in on scroll;
+`prefers-reduced-motion` turns it off.
+
+**Still to do:** the richer animations below (self-drawing callout borders, typewriter
+code, `reveal`, `diagram`), time-on-lesson tracking, scheduled week release.
+
+The original plan, kept for the animation work:
 
 | Block | What the student sees | Animation |
 |---|---|---|

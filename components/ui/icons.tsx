@@ -252,6 +252,88 @@ export function Scale(props: IconProps) {
   );
 }
 
+/** Three dots: a "more actions" menu. */
+export function Dots(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="5.5" cy="12" r="1.2" fill="currentColor" />
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+      <circle cx="18.5" cy="12" r="1.2" fill="currentColor" />
+    </Icon>
+  );
+}
+
+/** A chain link (named so it doesn't clash with next/link). */
+export function LinkChain(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.2 1.2" />
+      <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.2-1.2" />
+    </Icon>
+  );
+}
+
+export function Trash(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4.5 7h15M9.5 7V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v2M6.5 7l.8 11.2a2 2 0 0 0 2 1.8h5.4a2 2 0 0 0 2-1.8L17.5 7" />
+    </Icon>
+  );
+}
+
+export function Duplicate(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="8.5" y="8.5" width="11" height="11" rx="2.5" />
+      <path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2M14 11.5v5M11.5 14h5" />
+    </Icon>
+  );
+}
+
+export function Play(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="5" width="18" height="14" rx="3" />
+      <path d="m10 9 5 3-5 3z" />
+    </Icon>
+  );
+}
+
+export function ImageIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+      <circle cx="9" cy="9.5" r="1.6" />
+      <path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5" />
+    </Icon>
+  );
+}
+
+export function TextLines(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4.5 6.5h15M4.5 11h15M4.5 15.5h10" />
+    </Icon>
+  );
+}
+
+export function Bulb(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9 17.5h6M10 20.5h4M12 3.5a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3.5z" />
+    </Icon>
+  );
+}
+
+export function Question(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M9.6 9.5a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .9-1 1.6v.6M12 16.8v.2" />
+    </Icon>
+  );
+}
+
 /** The four-point sparkle used as a bullet (filled, not stroked). */
 export function Sparkle({ className }: { className?: string }) {
   return (

@@ -13,6 +13,9 @@ const isPublicRoute = createRouteMatcher([
   "/invite(.*)",
   "/api/mcp(.*)",
   "/.well-known(.*)",
+  // The .kalami format guide and its JSON Schema: files and AI assistants link to them.
+  "/kalami-format",
+  "/kalami.schema.json",
 ]);
 // Sample-data screen gallery; the page itself 404s outside development too.
 const isDevGallery = createRouteMatcher(["/dev(.*)"]);

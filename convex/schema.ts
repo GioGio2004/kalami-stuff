@@ -5,6 +5,9 @@ import {
   attemptStatusValidator,
   checkOutcomeValidator,
   codeTaskValidator,
+  contactRecipientValidator,
+  contactTopicValidator,
+  conversationStatusValidator,
   integrityCountsValidator,
   enrollmentStatusValidator,
   groupJoinViaValidator,
@@ -303,6 +306,61 @@ export default defineSchema({
     createdVia: viaValidator,
     updatedAt: v.number(),
   }).index("by_courseId_and_order", ["courseId", "order"]),
+
+  // -------------------------------------------------------------------------
+  // Messages (the contact card)
+  // -------------------------------------------------------------------------
+
+  // A private thread a student starts with one of their lecturers or with the
+  // Kalami team (the super admins). Only the student, that lecturer, or (for
+  // the team) a super admin can read it; nobody else, admins included.
+  conversations: defineTable({
+    studentId: v.id("users"),
+    recipient: contactRecipientValidator,
+    // Set when recipient is "lecturer": the one lecturer the student chose.
+    lecturerId: v.optional(v.id("users")),
+    // What it's about, re-checked on the server when the student sent it.
+    courseId: v.optional(v.id("courses")),
+    materialId: v.optional(v.id("materials")),
+    assessmentId: v.optional(v.id("assessments")),
+    topic: contactTopicValidator,
+    customTopic: v.optional(v.string()),
+    subject: v.string(),
+    status: conversationStatusValidator,
+    lastMessageAt: v.number(),
+    lastMessageFrom: v.union(v.literal("student"), v.literal("staff")),
+    messageCount: v.number(),
+    resolvedAt: v.optional(v.number()),
+  })
+    .index("by_studentId_and_lastMessageAt", ["studentId", "lastMessageAt"])
+    .index("by_lecturerId_and_lastMessageAt", ["lecturerId", "lastMessageAt"])
+    .index("by_recipient_and_lastMessageAt", ["recipient", "lastMessageAt"])
+    .index("by_status_and_resolvedAt", ["status", "resolvedAt"]),
+
+  conversationMessages: defineTable({
+    conversationId: v.id("conversations"),
+    senderId: v.id("users"),
+    from: v.union(v.literal("student"), v.literal("staff")),
+    // Plain text; the apps never render it as HTML.
+    body: v.string(),
+    // The sender's own id for this send, so a double tap or a retry after a
+    // timeout lands once.
+    clientOpId: v.string(),
+    // Notification emails queued for it (Resend component ids), and why none were, if so.
+    emailIds: v.optional(v.array(v.string())),
+    emailSkipped: v.optional(v.string()),
+  })
+    .index("by_conversationId", ["conversationId"])
+    .index("by_senderId_and_clientOpId", ["senderId", "clientOpId"]),
+
+  // How far each participant has read a conversation.
+  conversationReads: defineTable({
+    conversationId: v.id("conversations"),
+    userId: v.id("users"),
+    lastReadAt: v.number(),
+  })
+    .index("by_userId_and_conversationId", ["userId", "conversationId"])
+    .index("by_conversationId", ["conversationId"]),
 
   // One student working on one assessment. Created on the first save.
   attempts: defineTable({

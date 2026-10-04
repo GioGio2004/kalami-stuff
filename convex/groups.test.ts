@@ -205,6 +205,7 @@ describe("outside universities", () => {
   test("an independent teacher creates courses with no university, and anyone can join them by code", async () => {
     const { t, admin, ana } = await seed();
     const { token } = await admin.mutation(api.invites.create, { email: "tutor@example.com", role: "lecturer" });
+    expect((await admin.query(api.invites.listForUniversity, {})).map((i) => i.email)).toEqual(["tutor@example.com"]);
     const tutor = t.withIdentity(person("tutor"));
     await tutor.mutation(api.users.store, {});
     await tutor.mutation(api.invites.accept, { token });

@@ -37,6 +37,7 @@ export default function AdminPage() {
       renderInvites={(university) => (
         <UniversityInvites universityId={university._id} canInviteAdmins={me.isSuperAdmin} />
       )}
+      independent={me.isSuperAdmin ? <UniversityInvites canInviteAdmins={false} /> : undefined}
     />
   );
 }

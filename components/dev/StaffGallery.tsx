@@ -7,9 +7,19 @@ import { InvitesBoard, type Invite } from "@/components/admin/InvitesBoard";
 import { AgentsView } from "@/components/agents/AgentsView";
 import { InviteScreen } from "@/components/AcceptInvite";
 import { CurrentUserContext, type CurrentUser, type Me } from "@/components/CurrentUserProvider";
+import { GroupsDashboard } from "@/components/groups/GroupsDashboard";
+import { GroupView, type GroupActions } from "@/components/groups/GroupView";
+import type { CourseGroups as CourseGroupsData, GroupDetail, GroupSummary } from "@/components/groups/types";
 import { StaffGate } from "@/components/StaffGate";
 import { StaffNav } from "@/components/StaffNav";
 import { AssessmentBuilder } from "@/components/studio/AssessmentBuilder";
+import { CourseGroups } from "@/components/studio/CourseGroups";
+import {
+  CourseMaterials,
+  type CourseMaterialsData,
+  type DriveConnection,
+  type MaterialsActions,
+} from "@/components/studio/CourseMaterials";
 import { CourseView } from "@/components/studio/CourseView";
 import { StudioDashboard } from "@/components/studio/StudioDashboard";
 import type {
@@ -300,11 +310,149 @@ async function pause(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 600));
 }
 
+// --- Groups and materials samples ----------------------------------------------
+
+const groupA: GroupSummary = {
+  _id: "sample_group_a" as GroupSummary["_id"],
+  _creationTime: NOW - 10 * DAY,
+  name: "CS-101 A",
+  description: "Mondays and Thursdays, room 204",
+  inviteEnabled: true,
+  archived: false,
+  members: 3,
+  pendingInvites: 2,
+  courses: [{ _id: webBasics._id, title: webBasics.title, status: "published" }],
+  updatedAt: NOW - DAY,
+};
+
+const groups: GroupSummary[] = [
+  groupA,
+  {
+    ...groupA,
+    _id: "sample_group_tutor" as GroupSummary["_id"],
+    name: "Saturday tutoring",
+    description: undefined,
+    members: 0,
+    pendingInvites: 0,
+    courses: [],
+    inviteEnabled: false,
+  },
+  { ...groupA, _id: "sample_group_old" as GroupSummary["_id"], name: "CS-101 A (2025)", archived: true, pendingInvites: 0 },
+];
+
+type MemberId = GroupDetail["memberList"][number]["userId"];
+type GroupInviteId = GroupDetail["inviteList"][number]["_id"];
+
+const groupDetail: GroupDetail = {
+  ...groupA,
+  inviteCode: "q3Xk9-mPz2LtV8wRbN4c",
+  ownerName: "Nino Beridze",
+  memberList: [
+    { userId: "sample_u1" as MemberId, name: "Ana Kapanadze", email: "ana.k@gmail.com", via: "link", joinedAt: NOW - 6 * DAY },
+    { userId: "sample_u2" as MemberId, name: "Giorgi Lomidze", email: "giorgi@school.ge", via: "email", joinedAt: NOW - 5 * DAY },
+    { userId: "sample_u3" as MemberId, name: "Mariam Tsereteli", email: "mariam.ts@gmail.com", via: "link", joinedAt: NOW - DAY },
+  ],
+  inviteList: [
+    { _id: "sample_gi1" as GroupInviteId, email: "luka@gmail.com", createdAt: NOW - 2 * DAY, expiresAt: NOW + 28 * DAY, emailedAt: NOW - 2 * DAY },
+    { _id: "sample_gi2" as GroupInviteId, email: "old.address@mail.ru", createdAt: NOW - 40 * DAY, expiresAt: NOW - 10 * DAY, emailedAt: undefined },
+  ],
+};
+
+const groupActions: GroupActions = {
+  onUpdate: pause,
+  onNewLink: pause,
+  onSetLink: pause,
+  onInvite: async (emails) => {
+    await pause();
+    return {
+      invited: emails.split(/[\s,;]+/).filter((e) => e.includes("@")),
+      emailed: 1,
+      alreadyMembers: [],
+      alreadyInvited: [],
+      invalid: [],
+    };
+  },
+  onResend: async () => {
+    await pause();
+    return true;
+  },
+  onWithdraw: pause,
+  onRemoveStudent: pause,
+  onShareCourse: pause,
+  onUnshareCourse: pause,
+};
+
+const courseGroups: CourseGroupsData = {
+  shared: [{ _id: groupA._id, name: groupA.name, members: 3, archived: false }],
+  available: [{ _id: groups[1]._id, name: groups[1].name, members: 0 }],
+};
+
+type Week = CourseMaterialsData["weeks"][number];
+const week = (fields: Partial<Week> & Pick<Week, "title" | "order">): Week => ({
+  _id: ("sample_week_" + fields.order) as Week["_id"],
+  source: "drive",
+  status: "draft",
+  url: "https://drive.google.com/drive/folders/sample",
+  shared: false,
+  stale: false,
+  syncing: undefined,
+  driveError: undefined,
+  description: undefined,
+  publishedAt: undefined,
+  ...fields,
+});
+
+const materialsData: CourseMaterialsData = {
+  canEdit: true,
+  driveAvailable: true,
+  drive: { ownerName: "Nino Beridze", mine: true, folderUrl: "https://drive.google.com/drive/folders/sample-root", error: undefined },
+  weeks: [
+    week({ order: 1, title: "Week 1 · What is the web", status: "published", shared: true, publishedAt: NOW - 14 * DAY, description: "Slides and the first reading." }),
+    week({ order: 2, title: "Week 2 · HTML structure", status: "published", syncing: "share" }),
+    week({ order: 3, title: "Week 3 · CSS selectors" }),
+    week({ order: 4, title: "Week 4 · Layout", syncing: "folder", url: undefined }),
+    week({ order: 5, title: "Week 5 · Forms", status: "published", driveError: "Your Google connection expired. Connect Google Drive again." }),
+    week({ order: 6, title: "MDN guide", source: "link", url: "https://developer.mozilla.org/en-US/docs/Learn", status: "published" }),
+  ],
+};
+
+const materialsActions: MaterialsActions = {
+  onConnectDrive: pause,
+  onAddDrive: pause,
+  onAddLink: pause,
+  onUpdate: pause,
+  onMove: pause,
+  onPublish: pause,
+  onUnpublish: pause,
+  onRemove: pause,
+  onRetry: pause,
+};
+
+function coursePage(materials: CourseMaterialsData, connection: DriveConnection) {
+  return (
+    <CourseView
+      course={courseDetail}
+      history={activity}
+      onUpdateCourse={pause}
+      onCreateAssessment={pause}
+      onNewJoinCode={pause}
+      onSetJoining={pause}
+      groups={<CourseGroups groups={courseGroups} canEdit onShare={pause} onUnshare={pause} />}
+      materials={<CourseMaterials data={materials} connection={connection} actions={materialsActions} />}
+    />
+  );
+}
+
 const views: Record<string, string> = {
   courses: "Studio · courses",
   "courses-empty": "Studio · no courses yet",
   "studio-intro": "Studio · first-visit intro card",
-  course: "Studio · course page",
+  course: "Studio · course page (Drive connected)",
+  "course-connect": "Studio · course page (connect Drive, no weeks)",
+  "course-no-drive": "Studio · course page (Drive not set up on server)",
+  groups: "Groups · list",
+  "groups-empty": "Groups · none yet",
+  group: "Groups · one group",
   builder: "Studio · assessment builder",
   agents: "Agents · connect an MCP client",
   admin: "Admin · super admin",
@@ -368,16 +516,22 @@ export function StaffGallery({ view }: { view?: string }) {
     case "studio-intro":
       return staffPage(dashboard(true, courses));
     case "course":
+      return staffPage(coursePage(materialsData, { available: true, connected: true }));
+    case "course-connect":
+      return staffPage(coursePage({ ...materialsData, drive: null, weeks: [] }, { available: true, connected: false }));
+    case "course-no-drive":
       return staffPage(
-        <CourseView
-          course={courseDetail}
-          history={activity}
-          onUpdateCourse={pause}
-          onCreateAssessment={pause}
-          onNewJoinCode={pause}
-          onSetJoining={pause}
-        />,
+        coursePage(
+          { ...materialsData, driveAvailable: false, drive: null, weeks: [materialsData.weeks[5]] },
+          { available: false, connected: false },
+        ),
       );
+    case "groups":
+      return staffPage(<GroupsDashboard groups={groups} onCreate={pause} />);
+    case "groups-empty":
+      return staffPage(<GroupsDashboard groups={[]} onCreate={pause} />);
+    case "group":
+      return staffPage(<GroupView group={groupDetail} courses={courses} now={NOW} actions={groupActions} />);
     case "builder":
       return staffPage(
         <AssessmentBuilder
@@ -395,7 +549,13 @@ export function StaffGallery({ view }: { view?: string }) {
       return staffPage(<AgentsView />);
     case "admin":
       return staffPage(
-        <AdminView isSuperAdmin universities={[gori]} onCreateUniversity={pause} renderInvites={() => board} />,
+        <AdminView
+          isSuperAdmin
+          universities={[gori]}
+          onCreateUniversity={pause}
+          renderInvites={() => board}
+          independent={board}
+        />,
       );
     case "admin-empty":
       return staffPage(<AdminView isSuperAdmin universities={[]} onCreateUniversity={pause} renderInvites={() => null} />);

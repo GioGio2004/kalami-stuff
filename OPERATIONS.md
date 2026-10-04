@@ -20,6 +20,7 @@ Values are never in the repos. Names only:
 | Convex | `EMAIL_REPLY_TO` | Optional reply address |
 | Convex | `STUDENT_APP_URL` | Links in emails; defaults to `https://app.kalami.space`. Set it on dev to the dev URL. |
 | Convex | `RESEND_TEST_MODE` | `true` to only allow Resend's test addresses (dev) |
+| Convex | `CLERK_SECRET_KEY` | The Clerk secret key of the same Clerk instance (dev key on dev, live key on prod). Only for Google Drive materials: Convex asks Clerk for the lecturer's Google token. Without it Drive weeks are refused and links still work. |
 | Convex | `CODE_ASSET_URL_PREFIX` | The Kalami ImageKit endpoint, with a trailing slash, e.g. `https://ik.imagekit.io/kalami/`. Without it any ImageKit account passes. |
 | Vercel (both apps) | `NEXT_PUBLIC_CODE_ASSET_URL_PREFIX` | Same value as above: the preview's CSP allows images from it |
 | Vercel staff | `MCP_OAUTH_AUDIENCE` | Optional: `https://staff.kalami.space/api/mcp` once confirmed that Clerk binds OAuth tokens to it |
@@ -45,6 +46,31 @@ Deliverability checklist, all in place or one setting away:
 5. Bounces and spam complaints stop further emails to that address (`users.emailStatus`). For that to work, create a webhook in Resend at `https://<prod deployment>.convex.site/resend-webhook` for all `email.*` events and set `RESEND_WEBHOOK_SECRET`.
 6. Volume: Resend's free plan is 100 emails a day. A 300-student course publishing one quiz exceeds it; the component queues the rest for the next day, so nothing is lost, but reminders arrive late. Resend Pro ($20/month) is the fix.
 7. Unsubscribe page: `https://<deployment>.convex.site/email/unsubscribe` (served by the backend, signed links, nothing to configure).
+
+## Google Drive materials
+
+Lecturers connect Drive with the Google account already on their Kalami (Clerk)
+login; Kalami asks Google for one extra permission, `drive.file` (only files and
+folders Kalami creates). Kalami makes a private course folder with one folder per
+week in the lecturer's Drive; publishing a week shares that folder as "anyone with
+the link can view", unpublishing takes it back. Files never pass through Kalami.
+
+Setup, once per Clerk instance:
+
+1. The Google login in Clerk must use **your own** Google OAuth client (Clerk's
+   shared dev credentials can't ask for extra permissions). Production has one.
+   For dev, add the same client to the dev instance (Clerk dashboard → SSO
+   connections → Google → custom credentials) and add the dev redirect URI Clerk
+   shows to the client in Google Cloud.
+2. In that Google Cloud project: enable the **Google Drive API**, and on the OAuth
+   consent screen (Data access) add the scope
+   `https://www.googleapis.com/auth/drive.file`. It is a non-sensitive scope: no
+   security assessment, but the consent screen must be published (In production).
+3. Set `CLERK_SECRET_KEY` on the Convex deployment (see Settings).
+
+Troubleshooting: the week row shows Google's problem in words (connection
+expired, folder trashed, organisation blocks link sharing, Drive full) with a
+Retry button. Busy Google is retried by itself a few times.
 
 ## Deploying
 

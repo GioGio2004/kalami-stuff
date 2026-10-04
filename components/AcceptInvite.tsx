@@ -111,9 +111,11 @@ export function InviteScreen({
             <div className="p-7 sm:p-9">
               <p className="-rotate-2 font-hand text-[1.8rem] leading-none text-graphite">You&apos;re invited!</p>
               <h1 className="mt-4 text-3xl font-medium leading-tight tracking-[-0.035em] sm:text-4xl">
-                Join {invite.universityName.en} as {roleLabel}
+                {invite.universityName ? <>Join {invite.universityName.en} as {roleLabel}</> : <>Join Kalami as {roleLabel}</>}
               </h1>
-              <p className="mt-2 text-graphite">{invite.universityName.ka}</p>
+              <p className="mt-2 text-graphite">
+                {invite.universityName?.ka ?? "For your own classes and students: no university needed."}
+              </p>
             </div>
             <div className="flex h-[5.5rem] items-center gap-6 border-t border-dashed border-ink/15 px-7 sm:px-9">
               <div className="min-w-0">

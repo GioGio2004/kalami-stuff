@@ -217,6 +217,116 @@ export function renderGroupInviteEmail(input: GroupInviteEmailInput): RenderedEm
   return { subject, html, text };
 }
 
+export type StaffMessageEmailInput = {
+  locale: Locale;
+  studentName: string;
+  subject: string;
+  /** What it's about, e.g. "Web basics · Week 3". */
+  context?: string;
+  body: string;
+  /** A reply, rather than the first message of the conversation. */
+  isReply: boolean;
+  /** The conversation in the staff app. */
+  url: string;
+};
+
+const MESSAGE_COPY = {
+  ka: {
+    staffSubject: (name: string, subject: string, reply: boolean) => `${reply ? "პასუხი" : "შეტყობინება"}: ${subject} · ${name}`,
+    staffLead: (name: string, reply: boolean) => (reply ? `${name} გიპასუხა კალამში:` : `${name} მოგწერა კალამში:`),
+    about: (context: string) => `თემა: ${context}`,
+    staffButton: "პასუხი კალამში",
+    staffFooter: "ამ წერილზე პასუხი სტუდენტამდე ვერ მივა: უპასუხე კალამში, ღილაკით.",
+    studentSubject: (name: string, subject: string) => `${name} გიპასუხა: ${subject}`,
+    studentLead: (name: string, subject: string) => `${name} გიპასუხა შენს შეტყობინებაზე „${subject}“.`,
+    studentHint: "პასუხის წასაკითხად და დასაწერად გახსენი კალამი.",
+    studentButton: "საუბრის გახსნა",
+    unsubscribe: "წერილების გამორთვა",
+    footer: "კალამი · შენი საქმე, შენი ხელით.",
+  },
+  en: {
+    staffSubject: (name: string, subject: string, reply: boolean) => `${reply ? "Reply" : "Message"}: ${subject} · ${name}`,
+    staffLead: (name: string, reply: boolean) => (reply ? `${name} replied in Kalami:` : `${name} wrote to you in Kalami:`),
+    about: (context: string) => `About: ${context}`,
+    staffButton: "Reply in Kalami",
+    staffFooter: "Replies to this email don't reach the student: answer in Kalami with the button.",
+    studentSubject: (name: string, subject: string) => `${name} replied: ${subject}`,
+    studentLead: (name: string, subject: string) => `${name} replied to your message “${subject}”.`,
+    studentHint: "Open Kalami to read it and reply.",
+    studentButton: "Open the conversation",
+    unsubscribe: "Stop these emails",
+    footer: "Kalami · Your own work, written by your own hand.",
+  },
+} as const;
+
+const MAX_EMAIL_BODY_LINES = 40;
+
+/**
+ * A student wrote to a lecturer or the Kalami team. The message is in the email
+ * so staff can triage it, but replies happen in Kalami: the reply-to is not the
+ * student, and the email says so.
+ */
+export function renderStaffMessageEmail(input: StaffMessageEmailInput): RenderedEmail {
+  const copy = MESSAGE_COPY[input.locale];
+  const subject = copy.staffSubject(input.studentName, input.subject, input.isReply);
+  const bodyLines = input.body.trim().split(/\r?\n/).slice(0, MAX_EMAIL_BODY_LINES);
+  const lines = [
+    copy.staffLead(input.studentName, input.isReply),
+    ...(input.context ? [copy.about(input.context)] : []),
+    "",
+    ...bodyLines,
+  ];
+  const text = [...lines, "", `${copy.staffButton}: ${input.url}`, "", copy.staffFooter, "", copy.footer].join("\n");
+  const html = emailShell({
+    lang: input.locale,
+    subject,
+    preheader: bodyLines[0] ?? subject,
+    lines,
+    button: { label: copy.staffButton, url: input.url },
+    footerHtml: `<p style="margin:0 0 6px;">${escapeHtml(copy.staffFooter)}</p>
+<p style="margin:0;">${escapeHtml(copy.footer)} · <a href="https://kalami.space" style="color:#64635e;">kalami.space</a></p>`,
+  });
+  return { subject, html, text };
+}
+
+export type StudentReplyEmailInput = {
+  locale: Locale;
+  staffName: string;
+  subject: string;
+  url: string;
+  unsubscribeUrl: string;
+};
+
+/**
+ * Staff replied to a student. Deliberately without the reply itself: answers
+ * about grades or absences shouldn't sit in a lock-screen preview. One tap
+ * opens the conversation.
+ */
+export function renderStudentReplyEmail(input: StudentReplyEmailInput): RenderedEmail {
+  const copy = MESSAGE_COPY[input.locale];
+  const subject = copy.studentSubject(input.staffName, input.subject);
+  const lines = [copy.studentLead(input.staffName, input.subject), copy.studentHint];
+  const text = [
+    ...lines,
+    "",
+    `${copy.studentButton}: ${input.url}`,
+    "",
+    `${copy.unsubscribe}: ${input.unsubscribeUrl}`,
+    "",
+    copy.footer,
+  ].join("\n");
+  const html = emailShell({
+    lang: input.locale,
+    subject,
+    preheader: lines[0],
+    lines,
+    button: { label: copy.studentButton, url: input.url },
+    footerHtml: `<p style="margin:0 0 6px;"><a href="${escapeHtml(input.unsubscribeUrl)}" style="color:#64635e;text-decoration:underline;">${escapeHtml(copy.unsubscribe)}</a></p>
+<p style="margin:0;">${escapeHtml(copy.footer)} · <a href="https://kalami.space" style="color:#64635e;">kalami.space</a></p>`,
+  });
+  return { subject, html, text };
+}
+
 /** The unsubscribe page served by the backend (GET: a question, POST: done), both languages at once. */
 export function renderUnsubscribePage(state: "ask" | "done" | "invalid"): string {
   const body =

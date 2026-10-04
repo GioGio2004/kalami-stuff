@@ -6,12 +6,18 @@ import { Field, FormError, Segmented, SelectInput, TextArea, TextInput } from "@
 import { errorMessage } from "@/lib/errors";
 import type { CourseDetail, NewCourseArgs, UniversityOption } from "./types";
 
+const NO_UNIVERSITY = "none";
+
 const LOCALES = [
   { value: "ka" as const, label: "ქართული" },
   { value: "en" as const, label: "English" },
 ];
 
-/** Create or edit a course. `universities` is only shown when there's a choice. */
+/**
+ * Create or edit a course. A new course can belong to one of `universities`,
+ * or to none (a school class, private lessons); with no universities to pick
+ * from it simply has none.
+ */
 export function CourseForm({
   course,
   universities = [],
@@ -46,7 +52,11 @@ export function CourseForm({
         semester: semester || undefined,
         locale,
         universityId:
-          !course && universities.length > 1 ? (universityId as UniversityOption["_id"]) : undefined,
+          course || universities.length === 0
+            ? undefined
+            : universityId === NO_UNIVERSITY
+              ? null
+              : (universityId as UniversityOption["_id"]),
       });
     } catch (caught) {
       setError(errorMessage(caught));
@@ -81,15 +91,19 @@ export function CourseForm({
           <Segmented label="Language" value={locale} options={LOCALES} onChange={setLocale} />
         </Field>
       </div>
-      {!course && universities.length > 1 && (
-        <Field label="University" htmlFor="course-university" hint="The course belongs to this university for good.">
-
+      {!course && universities.length > 0 && (
+        <Field
+          label="University"
+          htmlFor="course-university"
+          hint="Fixed once the course exists. Pick none for a school class or private lessons."
+        >
           <SelectInput id="course-university" value={universityId} onChange={(e) => setUniversityId(e.target.value)}>
             {universities.map((u) => (
               <option key={u._id} value={u._id}>
                 {u.name.en} · {u.name.ka}
               </option>
             ))}
+            <option value={NO_UNIVERSITY}>No university (school, private lessons)</option>
           </SelectInput>
         </Field>
       )}

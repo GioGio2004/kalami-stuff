@@ -17,6 +17,7 @@ export function StaffNav({ avatar }: { avatar?: ReactNode }) {
       tag="AntiCheat"
       links={[
         { href: "/courses", label: "Courses" },
+        { href: "/groups", label: "Groups" },
         { href: "/agents", label: "Agents" },
         ...(canAdmin ? [{ href: "/admin", label: "Admin" }] : []),
       ]}

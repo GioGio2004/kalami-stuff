@@ -103,7 +103,7 @@ const DELETE_BATCH = 200;
 
 /**
  * Clerk `user.deleted`: the person can no longer sign in, their roles, staff
- * seats and enrollments go, their notifications are deleted, and the `users`
+ * seats, groups and enrollments go, their notifications are deleted, and the `users`
  * row is anonymised rather than deleted, so their attempts, grades and the
  * course history keep a valid reference ("Deleted account"). Safe to receive
  * twice: the second delivery finds nobody.
@@ -131,6 +131,12 @@ export const deleteFromClerk = internalMutation({
       if (seats.length < DELETE_BATCH) {
         break;
       }
+    }
+    for (const member of await ctx.db
+      .query("groupMembers")
+      .withIndex("by_userId", (q) => q.eq("userId", user._id))
+      .take(DELETE_BATCH)) {
+      await ctx.db.delete("groupMembers", member._id);
     }
     for (const enrollment of await ctx.db
       .query("enrollments")

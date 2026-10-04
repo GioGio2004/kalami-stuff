@@ -36,11 +36,14 @@ export function AdminView({
   universities,
   onCreateUniversity,
   renderInvites,
+  independent,
 }: {
   isSuperAdmin: boolean;
   universities: AdminUniversity[] | undefined;
   onCreateUniversity: (args: { nameKa: string; nameEn: string; slug: string }) => Promise<unknown>;
   renderInvites: (university: AdminUniversity) => ReactNode;
+  /** Super admin: invites for teachers outside any university (schools, private lessons). */
+  independent?: ReactNode;
 }) {
   return (
     <div className="space-y-4">
@@ -78,6 +81,23 @@ export function AdminView({
           </Enter>
         )}
       </Enter>
+
+      {independent && (
+        <Reveal as="section" kind="up" amount={0.1} className="rounded-[2.5rem] bg-panel p-3 sm:p-6 lg:p-8">
+          <header className="flex flex-wrap items-center gap-4 px-2 pb-6 pt-2">
+            <span className="grid size-14 shrink-0 place-items-center rounded-full bg-ink text-lg font-semibold text-highlighter">
+              ✎
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-2xl font-medium tracking-tight">Independent teachers</h2>
+              <p className="text-sm text-graphite">
+                School teachers and private tutors: no university. They make their own groups and courses.
+              </p>
+            </div>
+          </header>
+          {independent}
+        </Reveal>
+      )}
 
       {universities === undefined ? (
         <div className="flex justify-center py-16">

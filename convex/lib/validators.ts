@@ -335,3 +335,26 @@ export type MaterialsSource = Infer<typeof materialsSourceValidator>;
 
 export const materialsStatusValidator = v.union(v.literal("draft"), v.literal("published"));
 export type MaterialsStatus = Infer<typeof materialsStatusValidator>;
+
+// --- Messages (the contact card) ----------------------------------------------------
+
+/** Stable topic ids; the labels live in the apps and can change freely. */
+export const contactTopicValidator = v.union(
+  v.literal("materials_access"),
+  v.literal("missing_material"),
+  v.literal("assignment"),
+  v.literal("grade"),
+  v.literal("submission"),
+  v.literal("absence"),
+  v.literal("app_problem"),
+  v.literal("other"),
+);
+export type ContactTopic = Infer<typeof contactTopicValidator>;
+
+/** Who a conversation goes to: one of the student's lecturers, or the Kalami team. */
+export const contactRecipientValidator = v.union(v.literal("lecturer"), v.literal("admin"));
+export type ContactRecipient = Infer<typeof contactRecipientValidator>;
+
+/** open: waiting for staff. answered: staff replied last. resolved: closed by either side. */
+export const conversationStatusValidator = v.union(v.literal("open"), v.literal("answered"), v.literal("resolved"));
+export type ConversationStatus = Infer<typeof conversationStatusValidator>;

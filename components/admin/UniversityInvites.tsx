@@ -5,11 +5,12 @@ import { InvitesBoard } from "@/components/admin/InvitesBoard";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 
+/** Invites for one university, or (no universityId; super admin only) for independent teachers. */
 export function UniversityInvites({
   universityId,
   canInviteAdmins,
 }: {
-  universityId: Id<"universities">;
+  universityId?: Id<"universities">;
   canInviteAdmins: boolean;
 }) {
   const invites = useQuery(api.invites.listForUniversity, { universityId });

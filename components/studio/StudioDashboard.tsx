@@ -153,7 +153,7 @@ function CourseCard({ course }: { course: CourseSummary }) {
         </Link>
       </h3>
       <p className="mt-1.5 text-sm text-graphite">
-        {[course.semester, course.universityName.en].filter(Boolean).join(" · ")}
+        {[course.semester, course.universityName?.en].filter(Boolean).join(" · ")}
       </p>
       <p className="mt-4 text-[15px] text-ink/80">
         {parts.length > 0 ? parts.join(" · ") : "No assessments yet"}

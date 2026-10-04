@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "@/components/ui/buttons";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { Dialog } from "@/components/ui/Dialog";
@@ -39,6 +39,8 @@ export function CourseView({
   onCreateAssessment,
   onNewJoinCode,
   onSetJoining,
+  materials,
+  groups,
 }: {
   course: CourseDetail;
   history: AuditEntry[] | undefined;
@@ -46,6 +48,10 @@ export function CourseView({
   onCreateAssessment: (args: NewAssessmentArgs) => Promise<void>;
   onNewJoinCode: () => Promise<void>;
   onSetJoining: (enabled: boolean) => Promise<void>;
+  /** The materials section (CourseMaterials), above the assessments. */
+  materials?: ReactNode;
+  /** The groups card (CourseGroups), at the top of the side column. */
+  groups?: ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
   const [newKind, setNewKind] = useState<AssessmentKind | null>(null);
@@ -96,7 +102,7 @@ export function CourseView({
           </div>
           <h1 className="mt-3 text-4xl font-medium leading-[0.98] tracking-[-0.04em] sm:text-6xl">{course.title}</h1>
           <p className="mt-3 text-[15px] text-graphite">
-            {[course.semester, course.universityName.en, course.locale === "ka" ? "ქართული" : "English"]
+            {[course.semester, course.universityName?.en, course.locale === "ka" ? "ქართული" : "English"]
               .filter(Boolean)
               .join(" · ")}
           </p>
@@ -129,6 +135,7 @@ export function CourseView({
 
       <div className="mt-8 grid gap-4 *:min-w-0 lg:grid-cols-12">
         <div className="space-y-4 lg:col-span-8">
+          {materials}
           {KINDS.map((kind) => {
             const items = course.assessments.filter((a) => a.kind === kind);
             return (
@@ -163,6 +170,7 @@ export function CourseView({
         </div>
 
         <div className="space-y-4 lg:col-span-4">
+          {groups}
           <section className="notch-sides rounded-[2rem] bg-ink p-6 text-paper [--notch-y:38%]">
             <p className="text-xs uppercase tracking-[0.18em] text-paper/55">Join code</p>
             <p className={`mt-2 font-mono text-4xl font-semibold tracking-[0.16em] ${course.joinEnabled ? "" : "text-paper/40 line-through"}`}>
@@ -170,11 +178,11 @@ export function CourseView({
             </p>
             <p className={`mt-3 text-sm font-medium ${course.students === 0 ? "text-highlighter" : "text-paper"}`}>
               {course.students === 0
-                ? "No students yet. They only see this course after joining with the code."
+                ? "No students yet. Share the course with a group, or give students this code."
                 : `${course.students} student${course.students === 1 ? "" : "s"} joined`}
             </p>
             <p className="mt-2 text-sm leading-relaxed text-paper/65">
-              Students type this code on their dashboard in the student app.{" "}
+              A backup to groups: students can also type this code on their dashboard.{" "}
               {course.joinEnabled
                 ? "Switch it off once everyone is in; New code replaces this one and the old code stops working."
                 : "Joining is switched off: nobody new can join with it."}

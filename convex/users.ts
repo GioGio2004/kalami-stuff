@@ -21,6 +21,8 @@ import { HONESTY_NOTICE } from "./lib/honestyNotice";
 import { normalizeEmail, optionalText, requireText } from "./lib/input";
 import { localeValidator, localizedTextValidator, roleValidator } from "./lib/validators";
 import type { Doc } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
+import { closeGroupsOf, leaveAllGroups } from "./model/groups";
 
 /** Both apps call this right after sign-in to create or refresh the user's row. */
 export const store = mutation({
@@ -103,7 +105,9 @@ const DELETE_BATCH = 200;
 
 /**
  * Clerk `user.deleted`: the person can no longer sign in, their roles, staff
- * seats, groups and enrollments go, their notifications are deleted, and the `users`
+ * seats, group memberships and enrollments go, groups they run stop taking
+ * anyone new, their notifications and the conversations they started are
+ * deleted, and the `users`
  * row is anonymised rather than deleted, so their attempts, grades and the
  * course history keep a valid reference ("Deleted account"). Safe to receive
  * twice: the second delivery finds nobody.
@@ -132,12 +136,10 @@ export const deleteFromClerk = internalMutation({
         break;
       }
     }
-    for (const member of await ctx.db
-      .query("groupMembers")
-      .withIndex("by_userId", (q) => q.eq("userId", user._id))
-      .take(DELETE_BATCH)) {
-      await ctx.db.delete("groupMembers", member._id);
-    }
+    // Their conversations can be long; they go in batches of their own.
+    await ctx.scheduler.runAfter(0, internal.messages.deleteForStudent, { studentId: user._id });
+    await leaveAllGroups(ctx, user._id);
+    await closeGroupsOf(ctx, user._id);
     for (const enrollment of await ctx.db
       .query("enrollments")
       .withIndex("by_userId", (q) => q.eq("userId", user._id))

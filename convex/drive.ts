@@ -12,19 +12,27 @@ import {
   shareByLink,
   unshareByLink,
 } from "./lib/google";
-import { driveOf } from "./model/materials";
+import { driveOf, STALE_SYNC_MS } from "./model/materials";
 
 /**
  * The Google Drive jobs model/materials.ts schedules. Each reads the week,
  * gets a fresh token for the course's Drive owner, calls Google, and reports
  * back. Google and the database can't change in one transaction, so every
  * step is safe to repeat: folders are found by their Kalami tag before one is
- * created, and unsharing something already unshared counts as done. Busy or
- * flaky Google gets a few retries with growing pauses; anything else stops
- * with a message the lecturer can act on.
+ * created, creating the course folder is claimed first so two jobs don't both
+ * make one, and unsharing something already unshared counts as done. A late
+ * result from a job that was overtaken is ignored, except a share, which is
+ * always recorded so it can be taken back. Busy or flaky Google gets a few
+ * retries with growing pauses; anything else stops with a message the
+ * lecturer can act on.
  */
 
 const MAX_ATTEMPTS = 4;
+/** How long a job waits before looking again while another one creates the course folder. */
+const ROOT_WAIT_MS = 3_000;
+
+const jobValidator = v.union(v.literal("folder"), v.literal("share"), v.literal("unshare"));
+type Job = "folder" | "share" | "unshare";
 
 function retryDelay(attempt: number): number {
   return 5_000 * 2 ** attempt + Math.floor(Math.random() * 2_000);
@@ -76,22 +84,75 @@ export const job = internalQuery({
   },
 });
 
-export const saveRootFolder = internalMutation({
-  args: { courseId: v.id("courses"), folderId: v.string() },
+/**
+ * Who makes the course folder: the first job to ask. Others wait and look
+ * again; a claim that never finished is taken over once it's stale.
+ */
+export const claimRootFolder = internalMutation({
+  args: { courseId: v.id("courses") },
+  returns: v.union(
+    v.object({ state: v.literal("ready"), folderId: v.string() }),
+    v.object({ state: v.literal("claimed") }),
+    v.object({ state: v.literal("busy") }),
+    v.object({ state: v.literal("gone") }),
+  ),
+  handler: async (ctx, args) => {
+    const drive = await driveOf(ctx, args.courseId);
+    if (drive === null) {
+      return { state: "gone" as const };
+    }
+    if (drive.folderId !== undefined) {
+      return { state: "ready" as const, folderId: drive.folderId };
+    }
+    const now = Date.now();
+    if (drive.creatingSince !== undefined && now - drive.creatingSince < STALE_SYNC_MS) {
+      return { state: "busy" as const };
+    }
+    await ctx.db.patch("courseDrive", drive._id, { creatingSince: now, updatedAt: now });
+    return { state: "claimed" as const };
+  },
+});
+
+/** Saves the course folder (or, without one, gives up the claim so another job can try). */
+export const finishRootFolder = internalMutation({
+  args: { courseId: v.id("courses"), folderId: v.optional(v.string()) },
   returns: v.null(),
   handler: async (ctx, args) => {
     const drive = await driveOf(ctx, args.courseId);
-    if (drive !== null && drive.folderId === undefined) {
-      await ctx.db.patch("courseDrive", drive._id, { folderId: args.folderId, error: undefined, updatedAt: Date.now() });
+    if (drive !== null) {
+      await ctx.db.patch("courseDrive", drive._id, {
+        folderId: drive.folderId ?? args.folderId,
+        creatingSince: undefined,
+        error: undefined,
+        updatedAt: Date.now(),
+      });
     }
     return null;
   },
 });
 
-/** Records a job's outcome. `clearSyncing` ends the "working on it" state. */
+/** The course folder was deleted in Drive: forget it, so the next job makes a new one. */
+export const forgetRootFolder = internalMutation({
+  args: { courseId: v.id("courses"), folderId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const drive = await driveOf(ctx, args.courseId);
+    if (drive !== null && drive.folderId === args.folderId) {
+      await ctx.db.patch("courseDrive", drive._id, { folderId: undefined, updatedAt: Date.now() });
+    }
+    return null;
+  },
+});
+
+/**
+ * Records a job's outcome, if that job is still the one the week is waiting
+ * for. `clearSyncing` ends the "working on it" state; without it the job is
+ * retrying and only its heartbeat is refreshed.
+ */
 export const report = internalMutation({
   args: {
     materialId: v.id("materials"),
+    job: jobValidator,
     folderId: v.optional(v.string()),
     permissionId: v.optional(v.union(v.string(), v.null())),
     driveError: v.optional(v.string()),
@@ -103,12 +164,35 @@ export const report = internalMutation({
     if (row === null) {
       return null;
     }
+    const now = Date.now();
+    // A share that went through is always recorded: if the week was hidden in
+    // the meantime, the sharing is taken straight back off.
+    if (args.job === "share" && typeof args.permissionId === "string") {
+      const hideAgain = row.status === "draft";
+      await ctx.db.patch("materials", row._id, {
+        permissionId: args.permissionId,
+        driveError: undefined,
+        ...(hideAgain
+          ? { syncing: "unshare" as const, syncingSince: now }
+          : row.syncing === "share"
+            ? { syncing: undefined, syncingSince: undefined }
+            : {}),
+        updatedAt: now,
+      });
+      if (hideAgain) {
+        await ctx.scheduler.runAfter(0, internal.drive.unshareWeek, { materialId: row._id, attempt: 0 });
+      }
+      return null;
+    }
+    if (row.syncing !== args.job) {
+      return null;
+    }
     await ctx.db.patch("materials", row._id, {
       ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
       ...(args.permissionId !== undefined ? { permissionId: args.permissionId ?? undefined } : {}),
       driveError: args.driveError,
-      ...(args.clearSyncing ? { syncing: undefined, syncingSince: undefined } : { syncingSince: Date.now() }),
-      updatedAt: Date.now(),
+      ...(args.clearSyncing ? { syncing: undefined, syncingSince: undefined } : { syncingSince: now }),
+      updatedAt: now,
     });
     return null;
   },
@@ -116,43 +200,46 @@ export const report = internalMutation({
 
 // --- The jobs ---------------------------------------------------------------------------
 
-type Job = NonNullable<Awaited<ReturnType<typeof loadJob>>>;
+type JobRow = NonNullable<Awaited<ReturnType<typeof loadJob>>>;
 
 async function loadJob(ctx: ActionCtx, materialId: Id<"materials">) {
   return await ctx.runQuery(internal.drive.job, { materialId });
 }
 
-async function tokenFor(job: Job): Promise<string> {
-  if (job.ownerClerkId === undefined) {
-    throw new DriveError("The person whose Google Drive holds this course's materials no longer has an account.");
+async function tokenFor(row: JobRow): Promise<string> {
+  if (row.ownerClerkId === undefined) {
+    throw new DriveError(
+      "The person whose Google Drive holds this course's materials no longer has an account. Use “Move to my Drive” on the course page.",
+    );
   }
-  return await googleAccessToken(job.ownerClerkId);
+  return await googleAccessToken(row.ownerClerkId);
 }
 
 /** Runs `work`; on failure reports it, or schedules another attempt when Google was just busy. */
 async function run(
   ctx: ActionCtx,
   materialId: Id<"materials">,
+  jobName: Job,
   attempt: number,
   again: (delay: number) => Promise<unknown>,
-  work: (job: Job) => Promise<void>,
+  work: (row: JobRow) => Promise<void>,
 ) {
-  const job = await loadJob(ctx, materialId);
-  if (job === null) {
+  const row = await loadJob(ctx, materialId);
+  if (row === null) {
     return;
   }
   try {
-    await work(job);
+    await work(row);
   } catch (error) {
     if (!(error instanceof DriveError)) {
       console.error("Drive job failed", materialId, error);
     }
     if (shouldRetry(error, attempt)) {
-      await ctx.runMutation(internal.drive.report, { materialId, driveError: messageOf(error), clearSyncing: false });
+      await ctx.runMutation(internal.drive.report, { materialId, job: jobName, driveError: messageOf(error), clearSyncing: false });
       await again(retryDelay(attempt));
       return;
     }
-    await ctx.runMutation(internal.drive.report, { materialId, driveError: messageOf(error), clearSyncing: true });
+    await ctx.runMutation(internal.drive.report, { materialId, job: jobName, driveError: messageOf(error), clearSyncing: true });
   }
 }
 
@@ -161,24 +248,48 @@ export const createWeekFolder = internalAction({
   args: { materialId: v.id("materials"), attempt: v.number() },
   returns: v.null(),
   handler: async (ctx, { materialId, attempt }) => {
-    const again = (delay: number) =>
-      ctx.scheduler.runAfter(delay, internal.drive.createWeekFolder, { materialId, attempt: attempt + 1 });
-    await run(ctx, materialId, attempt, again, async (job) => {
-      if (job.folderId !== undefined) {
-        await ctx.runMutation(internal.drive.report, { materialId, clearSyncing: true });
+    const again = (delay: number, nextAttempt = attempt + 1) =>
+      ctx.scheduler.runAfter(delay, internal.drive.createWeekFolder, { materialId, attempt: nextAttempt });
+    await run(ctx, materialId, "folder", attempt, again, async (row) => {
+      if (row.folderId !== undefined) {
+        await ctx.runMutation(internal.drive.report, { materialId, job: "folder", clearSyncing: true });
         return;
       }
-      const token = await tokenFor(job);
-      let rootFolderId = job.rootFolderId;
-      if (rootFolderId === undefined) {
-        rootFolderId = await ensureFolder(token, `course-${job.courseId}`, `Kalami · ${job.courseTitle}`);
-        await ctx.runMutation(internal.drive.saveRootFolder, { courseId: job.courseId, folderId: rootFolderId });
-        // Two weeks created at once can race to make the course folder; the tag
-        // search makes the loser find the winner's folder, and the first save wins.
-        rootFolderId = (await loadJob(ctx, materialId))?.rootFolderId ?? rootFolderId;
+      const token = await tokenFor(row);
+      let rootFolderId = row.rootFolderId;
+      if (rootFolderId !== undefined) {
+        try {
+          await requireFolder(token, rootFolderId);
+        } catch (error) {
+          if (!(error instanceof DriveError && error.missing)) throw error;
+          // The course folder was deleted in Drive: start a fresh one.
+          await ctx.runMutation(internal.drive.forgetRootFolder, { courseId: row.courseId, folderId: rootFolderId });
+          rootFolderId = undefined;
+        }
       }
-      const folderId = await ensureFolder(token, `week-${materialId}`, job.title, rootFolderId);
-      await ctx.runMutation(internal.drive.report, { materialId, folderId, clearSyncing: true });
+      if (rootFolderId === undefined) {
+        const claim = await ctx.runMutation(internal.drive.claimRootFolder, { courseId: row.courseId });
+        if (claim.state === "gone") {
+          throw new DriveError("This course's Google Drive was reset. Create the week again.");
+        }
+        if (claim.state === "busy") {
+          // Another week is creating the course folder right now; look again shortly.
+          await ctx.runMutation(internal.drive.report, { materialId, job: "folder", clearSyncing: false });
+          await again(ROOT_WAIT_MS, attempt);
+          return;
+        }
+        if (claim.state === "ready") {
+          rootFolderId = claim.folderId;
+        } else {
+          try {
+            rootFolderId = await ensureFolder(token, `course-${row.courseId}`, `Kalami · ${row.courseTitle}`);
+          } finally {
+            await ctx.runMutation(internal.drive.finishRootFolder, { courseId: row.courseId, folderId: rootFolderId });
+          }
+        }
+      }
+      const folderId = await ensureFolder(token, `week-${materialId}`, row.title, rootFolderId);
+      await ctx.runMutation(internal.drive.report, { materialId, job: "folder", folderId, clearSyncing: true });
     });
     return null;
   },
@@ -191,16 +302,16 @@ export const shareWeek = internalAction({
   handler: async (ctx, { materialId, attempt }) => {
     const again = (delay: number) =>
       ctx.scheduler.runAfter(delay, internal.drive.shareWeek, { materialId, attempt: attempt + 1 });
-    await run(ctx, materialId, attempt, again, async (job) => {
+    await run(ctx, materialId, "share", attempt, again, async (row) => {
       // Unpublished while waiting, or already shared: nothing to do.
-      if (job.status !== "published" || job.permissionId !== undefined || job.folderId === undefined) {
-        await ctx.runMutation(internal.drive.report, { materialId, clearSyncing: true });
+      if (row.status !== "published" || row.permissionId !== undefined || row.folderId === undefined) {
+        await ctx.runMutation(internal.drive.report, { materialId, job: "share", clearSyncing: true });
         return;
       }
-      const token = await tokenFor(job);
-      await requireFolder(token, job.folderId);
-      const permissionId = await shareByLink(token, job.folderId);
-      await ctx.runMutation(internal.drive.report, { materialId, permissionId, clearSyncing: true });
+      const token = await tokenFor(row);
+      await requireFolder(token, row.folderId);
+      const permissionId = await shareByLink(token, row.folderId);
+      await ctx.runMutation(internal.drive.report, { materialId, job: "share", permissionId, clearSyncing: true });
     });
     return null;
   },
@@ -213,14 +324,14 @@ export const unshareWeek = internalAction({
   handler: async (ctx, { materialId, attempt }) => {
     const again = (delay: number) =>
       ctx.scheduler.runAfter(delay, internal.drive.unshareWeek, { materialId, attempt: attempt + 1 });
-    await run(ctx, materialId, attempt, again, async (job) => {
-      if (job.permissionId === undefined || job.folderId === undefined) {
-        await ctx.runMutation(internal.drive.report, { materialId, clearSyncing: true });
+    await run(ctx, materialId, "unshare", attempt, again, async (row) => {
+      if (row.permissionId === undefined || row.folderId === undefined) {
+        await ctx.runMutation(internal.drive.report, { materialId, job: "unshare", clearSyncing: true });
         return;
       }
-      const token = await tokenFor(job);
-      await unshareByLink(token, job.folderId, job.permissionId);
-      await ctx.runMutation(internal.drive.report, { materialId, permissionId: null, clearSyncing: true });
+      const token = await tokenFor(row);
+      await unshareByLink(token, row.folderId, row.permissionId);
+      await ctx.runMutation(internal.drive.report, { materialId, job: "unshare", permissionId: null, clearSyncing: true });
     });
     return null;
   },
@@ -267,4 +378,3 @@ export const connection = action({
     }
   },
 });
-

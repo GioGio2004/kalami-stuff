@@ -25,6 +25,8 @@ export type MaterialsActions = {
   onUnpublish: (materialId: WeekId) => Promise<void>;
   onRemove: (materialId: WeekId) => Promise<void>;
   onRetry: (materialId: WeekId) => Promise<void>;
+  /** The Drive owner is gone: new folders in the viewer's own Drive. */
+  onMoveToMyDrive: () => Promise<void>;
 };
 
 type Editing = { mode: "drive" } | { mode: "link" } | { mode: "edit"; week: MaterialWeek };
@@ -97,6 +99,7 @@ export function CourseMaterials({
           data={data}
           connection={connection}
           connecting={connecting}
+          onMoveToMyDrive={() => run(actions.onMoveToMyDrive)}
           onConnect={async () => {
             setConnecting(true);
             setError(null);
@@ -170,11 +173,13 @@ function DriveStatus({
   connection,
   connecting,
   onConnect,
+  onMoveToMyDrive,
 }: {
   data: CourseMaterialsData;
   connection: DriveConnection | undefined;
   connecting: boolean;
   onConnect: () => void;
+  onMoveToMyDrive: () => void;
 }) {
   if (!data.driveAvailable) {
     return (
@@ -185,10 +190,22 @@ function DriveStatus({
   }
   if (data.drive !== null && !data.drive.mine) {
     return (
-      <p className="mt-4 rounded-2xl bg-panel px-4 py-3 text-sm text-graphite">
-        This course&apos;s folders live in {data.drive.ownerName}&apos;s Google Drive, so only they can add Drive weeks or
-        share them. You can still add links, and hide any week.
-      </p>
+      <div className="mt-4 rounded-2xl bg-panel px-4 py-3 text-sm text-graphite">
+        <p>
+          This course&apos;s folders live in {data.drive.ownerName}&apos;s Google Drive, so only they can add Drive weeks or
+          share them. You can still add links, and hide any week.
+        </p>
+        {data.drive.canTakeOver && connection?.connected && (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button size="sm" variant="outline" onClick={onMoveToMyDrive}>
+              Move to my Drive
+            </Button>
+            <span className="text-xs">
+              Kalami makes new folders for every week in your Drive (as drafts). The old folders stay where they are.
+            </span>
+          </div>
+        )}
+      </div>
     );
   }
   if (connection === undefined) {

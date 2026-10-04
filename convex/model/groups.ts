@@ -2,10 +2,11 @@ import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { sendGroupInviteEmail } from "../email";
-import { requireCourseEditor, type Actor } from "../lib/access";
+import { courseAccess, requireCourseEditor, type Actor } from "../lib/access";
 import { getCurrentUser, isSuperAdmin, requireIdentity } from "../lib/auth";
 import { appError } from "../lib/errors";
 import { normalizeEmail, optionalText, requireText } from "../lib/input";
+import { enforceLimit } from "../lib/limits";
 import { generateLinkToken } from "../lib/tokens";
 import { courseStatusValidator, groupJoinViaValidator } from "../lib/validators";
 import { displayName, lecturerName, logAudit } from "./audit";
@@ -143,13 +144,26 @@ async function linksOf(ctx: QueryCtx, groupId: Id<"groups">) {
     .take(MAX_COURSES_PER_GROUP + 1);
 }
 
+/** Open invites (not accepted, not withdrawn), newest first. Expired ones included: the page marks them. */
 async function pendingInvitesOf(ctx: QueryCtx, groupId: Id<"groups">) {
-  const rows = await ctx.db
+  return await ctx.db
     .query("groupInvites")
-    .withIndex("by_groupId", (q) => q.eq("groupId", groupId))
+    .withIndex("by_groupId_and_acceptedAt_and_revokedAt", (q) =>
+      q.eq("groupId", groupId).eq("acceptedAt", undefined).eq("revokedAt", undefined),
+    )
     .order("desc")
-    .take(MAX_PENDING_INVITES * 2);
-  return rows.filter((row) => row.acceptedAt === undefined && row.revokedAt === undefined);
+    .take(MAX_PENDING_INVITES);
+}
+
+// The counts live on the group row, so a join reads one document instead of
+// every member (150 students opening the link at once mustn't trip over each
+// other). Rows from before the counts existed are counted once, the slow way.
+async function memberCountOf(ctx: QueryCtx, group: Doc<"groups">) {
+  return group.memberCount ?? (await membersOf(ctx, group._id)).length;
+}
+
+async function pendingCountOf(ctx: QueryCtx, group: Doc<"groups">) {
+  return group.pendingInvites ?? (await pendingInvitesOf(ctx, group._id)).length;
 }
 
 async function membership(ctx: QueryCtx, groupId: Id<"groups">, userId: Id<"users">) {
@@ -175,9 +189,9 @@ async function uniqueInviteCode(ctx: QueryCtx): Promise<string> {
 
 async function toSummary(ctx: QueryCtx, group: Doc<"groups">) {
   const [members, links, pending] = await Promise.all([
-    membersOf(ctx, group._id),
+    memberCountOf(ctx, group),
     linksOf(ctx, group._id),
-    pendingInvitesOf(ctx, group._id),
+    pendingCountOf(ctx, group),
   ]);
   const courses = [];
   for (const link of links) {
@@ -193,8 +207,8 @@ async function toSummary(ctx: QueryCtx, group: Doc<"groups">) {
     description: group.description,
     inviteEnabled: group.inviteEnabled,
     archived: group.archivedAt !== undefined,
-    members: members.length,
-    pendingInvites: pending.length,
+    members,
+    pendingInvites: pending,
     courses,
     updatedAt: group.updatedAt,
   };
@@ -210,10 +224,12 @@ async function addMember(
   if ((await membership(ctx, group._id, userId)) !== null) {
     return false;
   }
-  if ((await membersOf(ctx, group._id)).length >= MAX_MEMBERS) {
+  const count = await memberCountOf(ctx, group);
+  if (count >= MAX_MEMBERS) {
     throw appError("CONFLICT", `This group is full (${MAX_MEMBERS} students). Ask your teacher.`);
   }
   await ctx.db.insert("groupMembers", { groupId: group._id, userId, via, joinedAt: Date.now() });
+  await ctx.db.patch("groups", group._id, { memberCount: count + 1 });
   for (const link of await linksOf(ctx, group._id)) {
     await enrollThroughGroup(ctx, link.courseId, userId, group._id);
   }
@@ -280,6 +296,8 @@ export async function createGroup(
     description,
     inviteCode: await uniqueInviteCode(ctx),
     inviteEnabled: true,
+    memberCount: 0,
+    pendingInvites: 0,
     createdVia: actor.via,
     updatedAt: Date.now(),
   });
@@ -378,12 +396,8 @@ export async function inviteByEmail(ctx: MutationCtx, actor: Actor, groupId: Id<
   if (emails.length > MAX_EMAILS_PER_CALL) {
     throw appError("INVALID_INPUT", `Invite at most ${MAX_EMAILS_PER_CALL} addresses at a time.`);
   }
-  const pending = await pendingInvitesOf(ctx, groupId);
-  if (pending.length + emails.length > MAX_PENDING_INVITES) {
-    throw appError("CONFLICT", "Too many invites are waiting. Withdraw old ones first.");
-  }
   const now = Date.now();
-  const inviter = displayName(actor.user);
+  const fresh: string[] = [];
   for (const email of emails) {
     const users = await ctx.db
       .query("users")
@@ -397,10 +411,35 @@ export async function inviteByEmail(ctx: MutationCtx, actor: Actor, groupId: Id<
       result.alreadyMembers.push(email);
       continue;
     }
-    if (pending.some((invite) => invite.email === email && invite.expiresAt > now)) {
+    const earlier = await ctx.db
+      .query("groupInvites")
+      .withIndex("by_email", (q) => q.eq("email", email))
+      .take(50);
+    if (
+      earlier.some(
+        (invite) =>
+          invite.groupId === groupId &&
+          invite.acceptedAt === undefined &&
+          invite.revokedAt === undefined &&
+          invite.expiresAt > now,
+      )
+    ) {
       result.alreadyInvited.push(email);
       continue;
     }
+    fresh.push(email);
+  }
+  if (fresh.length === 0) {
+    return result;
+  }
+  const pendingCount = await pendingCountOf(ctx, group);
+  if (pendingCount + fresh.length > MAX_PENDING_INVITES) {
+    throw appError("CONFLICT", "Too many invites are waiting. Withdraw old ones first.");
+  }
+  // Counted after cleaning up the paste: names, duplicates and bad addresses cost nothing.
+  await enforceLimit(ctx, "groupInvite", actor.user._id, fresh.length);
+  const inviter = lecturerName(actor.user);
+  for (const email of fresh) {
     const token = generateLinkToken();
     const inviteId = await ctx.db.insert("groupInvites", {
       groupId,
@@ -415,7 +454,7 @@ export async function inviteByEmail(ctx: MutationCtx, actor: Actor, groupId: Id<
     }
   }
   if (result.invited.length > 0) {
-    await ctx.db.patch("groups", groupId, { updatedAt: now });
+    await ctx.db.patch("groups", groupId, { updatedAt: now, pendingInvites: pendingCount + result.invited.length });
     await logAudit(ctx, actor, {
       action: "group.invite",
       targetTable: "groups",
@@ -446,16 +485,18 @@ export async function resendInvite(ctx: MutationCtx, actor: Actor, inviteId: Id<
     throw appError("CONFLICT", "It was emailed a few minutes ago. Give it a little time to arrive.");
   }
   await ctx.db.patch("groupInvites", invite._id, { expiresAt: now + INVITE_TTL_MS });
-  return await sendGroupInviteEmail(ctx, invite, { inviterName: displayName(actor.user), groupName: group.name });
+  return await sendGroupInviteEmail(ctx, invite, { inviterName: lecturerName(actor.user), groupName: group.name });
 }
 
 export async function revokeInvite(ctx: MutationCtx, actor: Actor, inviteId: Id<"groupInvites">) {
-  const { invite } = await requireManagedInvite(ctx, actor, inviteId);
+  const { invite, group } = await requireManagedInvite(ctx, actor, inviteId);
   if (invite.acceptedAt !== undefined) {
     throw appError("CONFLICT", "This invite was already accepted. Remove the student instead.");
   }
   if (invite.revokedAt === undefined) {
+    const pending = await pendingCountOf(ctx, group);
     await ctx.db.patch("groupInvites", invite._id, { revokedAt: Date.now() });
+    await ctx.db.patch("groups", group._id, { pendingInvites: Math.max(0, pending - 1) });
   }
 }
 
@@ -476,7 +517,9 @@ export async function removeMember(ctx: MutationCtx, actor: Actor, groupId: Id<"
 }
 
 async function leave(ctx: MutationCtx, group: Doc<"groups">, row: Doc<"groupMembers">) {
+  const count = await memberCountOf(ctx, group);
   await ctx.db.delete("groupMembers", row._id);
+  await ctx.db.patch("groups", group._id, { memberCount: Math.max(0, count - 1) });
   for (const link of await linksOf(ctx, group._id)) {
     await unenrollFromGroup(ctx, link.courseId, row.userId, group._id);
   }
@@ -510,10 +553,19 @@ export async function linkCourse(ctx: MutationCtx, actor: Actor, groupId: Id<"gr
   });
 }
 
-/** Stops sharing; members keep the course only if they joined it another way. */
+/**
+ * Stops sharing; members keep the course only if they joined it another way.
+ * Either side may do it, the group's manager or the course's editor: it only
+ * ever narrows who sees the course.
+ */
 export async function unlinkCourse(ctx: MutationCtx, actor: Actor, groupId: Id<"groups">, courseId: Id<"courses">) {
-  const group = await requireGroupManager(ctx, actor, groupId);
-  const { course } = await requireCourseEditor(ctx, actor, courseId);
+  const group = await ctx.db.get("groups", groupId);
+  const access = await courseAccess(ctx, actor, courseId);
+  const managesGroup = group !== null && (group.ownerId === actor.user._id || isSuperAdmin(actor.memberships));
+  if (group === null || (!managesGroup && !access.canEdit)) {
+    throw appError("NOT_FOUND", "Group not found.");
+  }
+  const { course } = access;
   const existing = await ctx.db
     .query("courseGroups")
     .withIndex("by_courseId_and_groupId", (q) => q.eq("courseId", courseId).eq("groupId", groupId))
@@ -549,7 +601,7 @@ export async function groupsForCourse(ctx: QueryCtx, actor: Actor, courseId: Id<
       shared.push({
         _id: group._id,
         name: group.name,
-        members: (await membersOf(ctx, group._id)).length,
+        members: await memberCountOf(ctx, group),
         archived: group.archivedAt !== undefined,
       });
     }
@@ -561,7 +613,7 @@ export async function groupsForCourse(ctx: QueryCtx, actor: Actor, courseId: Id<
   const available = [];
   for (const group of own) {
     if (group.archivedAt !== undefined || shared.some((s) => s._id === group._id)) continue;
-    available.push({ _id: group._id, name: group.name, members: (await membersOf(ctx, group._id)).length });
+    available.push({ _id: group._id, name: group.name, members: await memberCountOf(ctx, group) });
   }
   return { shared, available };
 }
@@ -671,8 +723,10 @@ export async function acceptInvite(ctx: MutationCtx, student: Student, token: st
   if (identity.emailVerified !== true) {
     throw appError("FORBIDDEN", "Verify your email address first.");
   }
+  const pending = await pendingCountOf(ctx, group);
   await addMember(ctx, group, student.user._id, "email");
   await ctx.db.patch("groupInvites", invite._id, { acceptedAt: Date.now(), acceptedBy: student.user._id });
+  await ctx.db.patch("groups", group._id, { pendingInvites: Math.max(0, pending - 1) });
   return group._id;
 }
 
@@ -725,4 +779,44 @@ export async function leaveGroup(ctx: MutationCtx, student: Student, groupId: Id
     return;
   }
   await leave(ctx, group, row);
+}
+
+/**
+ * A teacher's account was deleted: their groups stop taking anyone new (the
+ * link closes, open invites are withdrawn) but keep their members, so the
+ * courses others still run on them keep working.
+ */
+export async function closeGroupsOf(ctx: MutationCtx, ownerId: Id<"users">) {
+  const now = Date.now();
+  const owned = await ctx.db
+    .query("groups")
+    .withIndex("by_ownerId", (q) => q.eq("ownerId", ownerId))
+    .take(200);
+  for (const group of owned) {
+    for (const invite of await pendingInvitesOf(ctx, group._id)) {
+      await ctx.db.patch("groupInvites", invite._id, { revokedAt: now });
+    }
+    await ctx.db.patch("groups", group._id, {
+      inviteEnabled: false,
+      archivedAt: group.archivedAt ?? now,
+      pendingInvites: 0,
+      updatedAt: now,
+    });
+  }
+}
+
+/** A deleted account leaves every group; their enrollments are handled by the caller. */
+export async function leaveAllGroups(ctx: MutationCtx, userId: Id<"users">) {
+  const rows = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .take(200);
+  for (const row of rows) {
+    const group = await ctx.db.get("groups", row.groupId);
+    const count = group === null ? 0 : await memberCountOf(ctx, group);
+    await ctx.db.delete("groupMembers", row._id);
+    if (group !== null) {
+      await ctx.db.patch("groups", group._id, { memberCount: Math.max(0, count - 1) });
+    }
+  }
 }

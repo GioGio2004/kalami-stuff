@@ -12,6 +12,9 @@ crons.interval("auto-submit closed tasks", { minutes: 1 }, internal.learn.autoSu
 crons.interval("deadline reminders", { minutes: 5 }, internal.notifications.remindDue, {});
 
 // The Resend component keeps every sent email's status; a week is enough to debug delivery.
+// Resolved conversations go a year after they were resolved (model/messages.ts RETENTION_MS).
+crons.interval("delete old conversations", { hours: 24 }, internal.messages.deleteExpired, {});
+
 crons.interval("clean up sent emails", { hours: 24 }, internal.crons.cleanupEmails, {});
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;

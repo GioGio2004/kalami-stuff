@@ -19,6 +19,7 @@ Values are never in the repos. Names only:
 | Convex | `EMAIL_FROM` | Defaults to `Kalami <notifications@kalami.space>`; must be on the verified domain |
 | Convex | `EMAIL_REPLY_TO` | Optional reply address |
 | Convex | `STUDENT_APP_URL` | Links in emails; defaults to `https://app.kalami.space`. Set it on dev to the dev URL. |
+| Convex | `STAFF_APP_URL` | Links in message emails to staff; defaults to `https://staff.kalami.space`. Set it on dev to the dev URL. |
 | Convex | `RESEND_TEST_MODE` | `true` to only allow Resend's test addresses (dev) |
 | Convex | `CLERK_SECRET_KEY` | The Clerk secret key of the same Clerk instance (dev key on dev, live key on prod). Only for Google Drive materials: Convex asks Clerk for the lecturer's Google token. Without it Drive weeks are refused and links still work. |
 | Convex | `CODE_ASSET_URL_PREFIX` | The Kalami ImageKit endpoint, with a trailing slash, e.g. `https://ik.imagekit.io/kalami/`. Without it any ImageKit account passes. |
@@ -46,6 +47,28 @@ Deliverability checklist, all in place or one setting away:
 5. Bounces and spam complaints stop further emails to that address (`users.emailStatus`). For that to work, create a webhook in Resend at `https://<prod deployment>.convex.site/resend-webhook` for all `email.*` events and set `RESEND_WEBHOOK_SECRET`.
 6. Volume: Resend's free plan is 100 emails a day. A 300-student course publishing one quiz exceeds it; the component queues the rest for the next day, so nothing is lost, but reminders arrive late. Resend Pro ($20/month) is the fix.
 7. Unsubscribe page: `https://<deployment>.convex.site/email/unsubscribe` (served by the backend, signed links, nothing to configure).
+
+## Messages (the contact card)
+
+Students write from the contact card ("Something wrong? Let's bother someone :))")
+to one of their lecturers (resolved from their courses and groups, never a typed
+address) or to Admin, which means **every super admin**: they share the Kalami
+team inbox, and the student sees answers as coming from "Kalami team". Before a
+pilot, make sure someone actually reads it.
+
+* Each message is saved in Kalami first; email is only a notice. Staff get the
+  message text in the email with a "Reply in Kalami" button (replying to the email
+  reaches nobody). Students get a short "X replied" email without the text, and
+  no email if they switched emails off.
+* Several messages from the same side within 5 minutes send one email.
+* Privacy: only the student, the chosen lecturer, and (for team messages) super
+  admins can open a conversation. University admins can't, and super admins can't
+  open lecturer conversations.
+* Retention: resolved conversations are deleted one year after they were
+  resolved (daily cron, `RETENTION_MS` in `convex/model/messages.ts`). Open ones
+  stay. A deleted student account deletes the conversations it started.
+* Not built yet: push notifications (needs the PWA), replying by email,
+  reassigning a conversation to someone else, attachments.
 
 ## Google Drive materials
 

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { HONESTY_NOTICE } from "./lib/honestyNotice";
 import { renderGroupInviteEmail } from "./lib/email/templates";
 import { expectAppError, person, seed } from "./test.setup";
@@ -222,5 +222,68 @@ describe("outside universities", () => {
 
     // Only the super admin sends independent invites.
     await expectAppError(tutor.mutation(api.invites.create, { email: "x@example.com", role: "lecturer" }), "FORBIDDEN");
+  });
+});
+
+describe("groups: hardening", () => {
+  test("a pasted spreadsheet only costs the valid new addresses, and names don't break it", async () => {
+    const { nino } = await seed();
+    const groupId = await nino.mutation(api.groups.create, { name: "Big class" });
+    const rows = Array.from({ length: 80 }, (_, i) => `Student Number${i} student${i}@example.com`);
+    const result = await nino.mutation(api.groups.invite, { groupId, emails: [rows.join("\n")] });
+    expect(result.invited).toHaveLength(80);
+    expect(result.invalid.length).toBeGreaterThan(0);
+    expect((await nino.query(api.groups.get, { groupId })).pendingInvites).toBe(80);
+  });
+
+  test("the course's owner can take it back from someone else's group", async () => {
+    const { nino, maka, admin, courseId } = await seed();
+    // The super admin shares nino's course with a group nino doesn't run.
+    const groupId = await admin.mutation(api.groups.create, { name: "Admin's group" });
+    await admin.mutation(api.groups.shareCourse, { groupId, courseId });
+    const { inviteCode } = await admin.query(api.groups.get, { groupId });
+    await maka.mutation(api.groups.join, { code: inviteCode });
+    expect(await maka.query(api.learn.myCourses, {})).toHaveLength(1);
+    await nino.mutation(api.groups.unshareCourse, { groupId, courseId });
+    expect(await maka.query(api.learn.myCourses, {})).toHaveLength(0);
+  });
+
+  test("member and invite counts stay right through joins, leaves, accepts and withdrawals", async () => {
+    const { nino, ana, maka, giorgi } = await seed();
+    const groupId = await nino.mutation(api.groups.create, { name: "Counts" });
+    const { inviteCode } = await nino.query(api.groups.get, { groupId });
+    await ana.mutation(api.groups.join, { code: inviteCode });
+    await giorgi.mutation(api.groups.join, { code: inviteCode });
+    await nino.mutation(api.groups.invite, { groupId, emails: ["maka@example.com", "x@example.com"] });
+    const [invite] = await maka.query(api.groups.myInvites, {});
+    await maka.mutation(api.groups.acceptEmailInvite, { token: invite.token });
+    await giorgi.mutation(api.groups.leave, { groupId });
+    let detail = await nino.query(api.groups.get, { groupId });
+    expect([detail.members, detail.memberList.length, detail.pendingInvites, detail.inviteList.length]).toEqual([2, 2, 1, 1]);
+    await nino.mutation(api.groups.withdrawInvite, { inviteId: detail.inviteList[0]._id });
+    detail = await nino.query(api.groups.get, { groupId });
+    expect([detail.members, detail.pendingInvites]).toEqual([2, 0]);
+  });
+
+  test("a deleted teacher's group stops taking new students but keeps its members", async () => {
+    const { t, nino, ana, maka } = await seed();
+    const groupId = await nino.mutation(api.groups.create, { name: "Orphan" });
+    const { inviteCode } = await nino.query(api.groups.get, { groupId });
+    await ana.mutation(api.groups.join, { code: inviteCode });
+    await t.mutation(internal.users.deleteFromClerk, { clerkUserId: "nino" });
+    expect(await t.query(api.groups.preview, { code: inviteCode })).toBeNull();
+    await expectAppError(maka.mutation(api.groups.join, { code: inviteCode }), "NOT_FOUND");
+    expect((await ana.query(api.groups.mine, {})).map((g) => g.name)).toEqual(["Orphan"]);
+  });
+
+  test("students never see a lecturer's email address as their name", async () => {
+    const { t, nino, maka } = await seed();
+    const ninoId = (await nino.query(api.users.me, {}))!._id;
+    await t.run(async (ctx) => {
+      await ctx.db.patch("users", ninoId, { firstName: undefined, lastName: undefined });
+    });
+    const groupId = await nino.mutation(api.groups.create, { name: "No name" });
+    const { inviteCode } = await nino.query(api.groups.get, { groupId });
+    expect((await maka.query(api.groups.preview, { code: inviteCode }))?.teacher).toBe("Lecturer");
   });
 });

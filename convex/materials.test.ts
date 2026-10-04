@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { DRIVE_SCOPE } from "./lib/google";
 import { expectAppError, seed, settle } from "./test.setup";
@@ -198,5 +198,66 @@ describe("Google Drive materials", () => {
     expect((await nino.query(api.materials.forCourse, { courseId, now: Date.now() })).driveAvailable).toBe(false);
     await expectAppError(nino.mutation(api.materials.addDrive, { courseId, title: "Week 1" }), "CONFLICT");
     await nino.mutation(api.materials.addLink, { courseId, title: "Week 1", url: "https://example.com/w1" });
+  });
+});
+
+describe("Google Drive materials: hardening", () => {
+  test("a course folder deleted in Drive is made again for the next week", async () => {
+    const google = fakeGoogle();
+    const { t, nino, courseId } = await seed();
+    await nino.mutation(api.materials.addDrive, { courseId, title: "Week 1" });
+    await settle(t);
+    const [rootId] = [...google.folders.entries()].find(([, f]) => f.parent === undefined)!;
+    google.folders.delete(rootId);
+    await nino.mutation(api.materials.addDrive, { courseId, title: "Week 2" });
+    await settle(t);
+    const roots = [...google.folders.values()].filter((f) => f.parent === undefined);
+    expect(roots).toHaveLength(1);
+    const week2 = (await weeks(nino, courseId)).find((w) => w.title === "Week 2")!;
+    expect(week2.driveError).toBeUndefined();
+    expect(week2.url).toBeDefined();
+  });
+
+  test("two weeks added at once share one course folder", async () => {
+    const google = fakeGoogle();
+    const { t, nino, courseId } = await seed();
+    await nino.mutation(api.materials.addDrive, { courseId, title: "Week 1" });
+    await nino.mutation(api.materials.addDrive, { courseId, title: "Week 2" });
+    await settle(t);
+    expect([...google.folders.values()].filter((f) => f.parent === undefined)).toHaveLength(1);
+  });
+
+  test("a share that lands after the week was hidden is taken straight back off", async () => {
+    const google = fakeGoogle();
+    const { t, nino, courseId } = await seed();
+    const materialId = await nino.mutation(api.materials.addDrive, { courseId, title: "Week 1" });
+    await settle(t);
+    await nino.mutation(api.materials.publish, { materialId });
+    // The lecturer hides it before the share job runs (the job looked stuck).
+    await t.run(async (ctx) => {
+      await ctx.db.patch("materials", materialId, { status: "draft", syncing: undefined, syncingSince: undefined });
+    });
+    await t.mutation(internal.drive.report, { materialId, job: "share", permissionId: "late-perm", clearSyncing: true });
+    await settle(t);
+    const row = await t.run(async (ctx) => await ctx.db.get("materials", materialId));
+    expect(row).toMatchObject({ status: "draft" });
+    expect(row?.permissionId).toBeUndefined();
+    expect([...google.folders.values()].every((f) => f.permissions.size === 0)).toBe(true);
+  });
+
+  test("when the Drive owner leaves, another editor moves the course to their own Drive", async () => {
+    fakeGoogle();
+    const { t, nino, admin, courseId } = await seed();
+    await nino.mutation(api.materials.addDrive, { courseId, title: "Week 1" });
+    await settle(t);
+    await t.mutation(internal.users.deleteFromClerk, { clerkUserId: "nino" });
+    const before = await admin.query(api.materials.forCourse, { courseId, now: Date.now() });
+    expect(before.drive).toMatchObject({ mine: false, canTakeOver: true });
+    await admin.mutation(api.materials.moveToMyDrive, { courseId });
+    await settle(t);
+    const after = await admin.query(api.materials.forCourse, { courseId, now: Date.now() });
+    expect(after.drive).toMatchObject({ mine: true });
+    expect(after.weeks[0]).toMatchObject({ status: "draft", shared: false });
+    expect(after.weeks[0].url).toBeDefined();
   });
 });

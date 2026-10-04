@@ -45,6 +45,7 @@ export default function CoursePage() {
   const unpublishWeek = useMutation(api.materials.unpublish);
   const removeWeek = useMutation(api.materials.remove);
   const retryWeek = useMutation(api.materials.retry);
+  const moveToMyDrive = useMutation(api.materials.moveToMyDrive);
 
   const { user } = useUser();
   const checkConnection = useAction(api.drive.connection);
@@ -142,6 +143,9 @@ export default function CoursePage() {
             },
             onRetry: async (materialId) => {
               await retryWeek({ materialId });
+            },
+            onMoveToMyDrive: async () => {
+              await moveToMyDrive({ courseId: id });
             },
           }}
         />

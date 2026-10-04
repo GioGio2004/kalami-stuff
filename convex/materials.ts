@@ -11,6 +11,7 @@ import {
   publishWeek,
   removeWeek,
   retryWeek,
+  takeOverDrive,
   unpublishWeek,
   updateWeek,
 } from "./model/materials";
@@ -110,6 +111,18 @@ export const retry = mutation({
     const actor = await requireStaffActor(ctx);
     await enforceLimit(ctx, "drive", actor.user._id);
     await retryWeek(ctx, actor, args.materialId);
+    return null;
+  },
+});
+
+/** When the course's Drive owner is gone: new folders in the signed-in editor's Drive instead. */
+export const moveToMyDrive = mutation({
+  args: { courseId: v.id("courses") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireStaffActor(ctx);
+    await enforceLimit(ctx, "drive", actor.user._id);
+    await takeOverDrive(ctx, actor, args.courseId);
     return null;
   },
 });

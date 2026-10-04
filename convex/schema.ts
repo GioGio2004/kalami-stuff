@@ -217,6 +217,10 @@ export default defineSchema({
     inviteCode: v.string(),
     inviteEnabled: v.boolean(),
     archivedAt: v.optional(v.number()),
+    // Kept in step by every join, leave and invite change, so lists and the
+    // member cap never have to count rows. Absent on rows made before they existed.
+    memberCount: v.optional(v.number()),
+    pendingInvites: v.optional(v.number()),
     createdVia: viaValidator,
     updatedAt: v.number(),
   })
@@ -251,7 +255,10 @@ export default defineSchema({
   })
     .index("by_token", ["token"])
     .index("by_groupId", ["groupId"])
-    .index("by_email", ["email"]),
+    // Open invites only: neither accepted nor withdrawn.
+    .index("by_groupId_and_acceptedAt_and_revokedAt", ["groupId", "acceptedAt", "revokedAt"])
+    .index("by_email", ["email"])
+    .index("by_emailId", ["emailId"]),
 
   // Which groups a course is shared with.
   courseGroups: defineTable({
@@ -361,6 +368,25 @@ export default defineSchema({
   })
     .index("by_userId_and_conversationId", ["userId", "conversationId"])
     .index("by_conversationId", ["conversationId"]),
+
+  // -------------------------------------------------------------------------
+  // Email bookkeeping
+  // -------------------------------------------------------------------------
+
+  // Which address each invite or message email went to, so a bounce or spam
+  // complaint reported by Resend can be traced back to it.
+  emailLog: defineTable({
+    emailId: v.string(),
+    email: v.string(),
+  }).index("by_emailId", ["emailId"]),
+
+  // Addresses Kalami no longer emails because they bounced or complained,
+  // including people who have no account (invite recipients).
+  emailSuppressions: defineTable({
+    email: v.string(),
+    status: v.union(v.literal("bounced"), v.literal("complained")),
+    at: v.number(),
+  }).index("by_email", ["email"]),
 
   // One student working on one assessment. Created on the first save.
   attempts: defineTable({

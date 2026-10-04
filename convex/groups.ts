@@ -30,7 +30,6 @@ import {
   resendInvite,
   revokeInvite,
   setInviteEnabled,
-  splitEmails,
   unlinkCourse,
   updateGroup,
 } from "./model/groups";
@@ -107,7 +106,7 @@ export const invite = mutation({
   returns: inviteResultValidator,
   handler: async (ctx, args) => {
     const actor = await requireStaffActor(ctx);
-    await enforceLimit(ctx, "groupInvite", actor.user._id, Math.max(1, splitEmails(args.emails).length));
+    // The rate limit is applied inside, to the addresses actually invited.
     return await inviteByEmail(ctx, actor, args.groupId, args.emails);
   },
 });

@@ -6,6 +6,9 @@ import { AdminView, type AdminUniversity } from "@/components/admin/AdminView";
 import { InvitesBoard, type Invite } from "@/components/admin/InvitesBoard";
 import { AgentsView } from "@/components/agents/AgentsView";
 import { InviteScreen } from "@/components/AcceptInvite";
+import { InboxView } from "@/components/inbox/InboxView";
+import { ThreadView } from "@/components/inbox/ThreadView";
+import type { InboxItem, Thread } from "@/components/inbox/types";
 import { CurrentUserContext, type CurrentUser, type Me } from "@/components/CurrentUserProvider";
 import { GroupsDashboard } from "@/components/groups/GroupsDashboard";
 import { GroupView, type GroupActions } from "@/components/groups/GroupView";
@@ -300,7 +303,7 @@ function staffPage(children: ReactNode) {
   return asUser(
     { status: "ready", me: superAdmin },
     <>
-      <StaffNav avatar={fakeAvatar} />
+      <StaffNav avatar={fakeAvatar} unread={2} />
       <main className="mx-auto w-full max-w-[88rem] flex-1 px-3 pb-10 pt-5 sm:px-6">{children}</main>
     </>,
   );
@@ -405,7 +408,7 @@ const week = (fields: Partial<Week> & Pick<Week, "title" | "order">): Week => ({
 const materialsData: CourseMaterialsData = {
   canEdit: true,
   driveAvailable: true,
-  drive: { ownerName: "Nino Beridze", mine: true, folderUrl: "https://drive.google.com/drive/folders/sample-root", error: undefined },
+  drive: { ownerName: "Nino Beridze", mine: true, canTakeOver: false, folderUrl: "https://drive.google.com/drive/folders/sample-root", error: undefined },
   weeks: [
     week({ order: 1, title: "Week 1 · What is the web", status: "published", shared: true, publishedAt: NOW - 14 * DAY, description: "Slides and the first reading." }),
     week({ order: 2, title: "Week 2 · HTML structure", status: "published", syncing: "share" }),
@@ -426,6 +429,73 @@ const materialsActions: MaterialsActions = {
   onUnpublish: pause,
   onRemove: pause,
   onRetry: pause,
+  onMoveToMyDrive: pause,
+};
+
+// --- Inbox samples ---------------------------------------------------------------
+
+type ConversationId = InboxItem["_id"];
+const inboxItem = (fields: Partial<InboxItem> & Pick<InboxItem, "subject" | "studentName">): InboxItem => ({
+  _id: ("sample_conv_" + fields.subject.length) as ConversationId,
+  recipient: "lecturer",
+  topic: "assignment",
+  customTopic: undefined,
+  status: "open",
+  lastMessageAt: NOW - 2 * 60 * 60 * 1000,
+  lastMessageFrom: "student",
+  messageCount: 1,
+  unread: false,
+  courseId: webBasics._id,
+  courseTitle: webBasics.title,
+  as: "lecturer",
+  ...fields,
+});
+
+const inboxItems: InboxItem[] = [
+  inboxItem({ subject: "Web basics · Week 3 · can't open the materials", studentName: "Ana Kapanadze", topic: "materials_access", unread: true, lastMessageAt: NOW - 20 * 60 * 1000 }),
+  inboxItem({ subject: "Problem in Kalami: Web basics", studentName: "Giorgi Lomidze", topic: "app_problem", recipient: "admin", as: "admin", unread: true, lastMessageAt: NOW - 3 * 60 * 60 * 1000 }),
+  inboxItem({ subject: "Web basics · Quiz 2 · grade question", studentName: "Mariam Tsereteli", topic: "grade", status: "answered", lastMessageFrom: "staff", messageCount: 2, lastMessageAt: NOW - DAY }),
+  inboxItem({ subject: "Web basics · absence or schedule", studentName: "Luka Beridze", topic: "absence", status: "resolved", messageCount: 3, lastMessageAt: NOW - 6 * DAY }),
+];
+
+type MessageId = Thread["messages"][number]["_id"];
+const sampleThread: Thread = {
+  _id: inboxItems[0]._id,
+  viewer: "lecturer",
+  recipient: "lecturer",
+  recipientName: "Nino Beridze",
+  studentName: "Ana Kapanadze",
+  studentEmail: "ana.k@gmail.com",
+  topic: "materials_access",
+  customTopic: undefined,
+  subject: "Web basics · Week 3 · can't open the materials",
+  status: "answered",
+  context: {
+    course: { _id: webBasics._id, title: webBasics.title, locale: "en" },
+    material: { _id: "sample_week_3" as NonNullable<Thread["context"]["material"]>["_id"], title: "Week 3 · CSS selectors", url: "https://drive.google.com/drive/folders/sample" },
+    assessment: undefined,
+  },
+  messages: [
+    {
+      _id: "sample_msg_1" as MessageId,
+      _creationTime: NOW - 3 * 60 * 60 * 1000,
+      from: "student",
+      senderName: "Ana Kapanadze",
+      mine: false,
+      body: "Hello Nino Beridze,\n\nI can't open the “Week 3 · CSS selectors” materials for Web basics.\nLink: https://drive.google.com/drive/folders/sample\nWhat I see: Access denied.\n\nCould you check the link?\n\nThanks,\nAna Kapanadze",
+      emailed: true,
+    },
+    {
+      _id: "sample_msg_2" as MessageId,
+      _creationTime: NOW - 20 * 60 * 1000,
+      from: "staff",
+      senderName: "Nino Beridze",
+      mine: true,
+      body: "Thanks Ana! I forgot to publish it. Try again now.",
+      emailed: true,
+    },
+  ],
+  truncated: false,
 };
 
 function coursePage(materials: CourseMaterialsData, connection: DriveConnection) {
@@ -450,6 +520,10 @@ const views: Record<string, string> = {
   course: "Studio · course page (Drive connected)",
   "course-connect": "Studio · course page (connect Drive, no weeks)",
   "course-no-drive": "Studio · course page (Drive not set up on server)",
+  inbox: "Inbox · lecturer and team messages",
+  "inbox-empty": "Inbox · nothing yet",
+  thread: "Inbox · one conversation",
+  "thread-team": "Inbox · a Kalami team conversation",
   groups: "Groups · list",
   "groups-empty": "Groups · none yet",
   group: "Groups · one group",
@@ -525,6 +599,30 @@ export function StaffGallery({ view }: { view?: string }) {
           { ...materialsData, driveAvailable: false, drive: null, weeks: [materialsData.weeks[5]] },
           { available: false, connected: false },
         ),
+      );
+    case "inbox":
+      return staffPage(<InboxView items={inboxItems} now={NOW} />);
+    case "inbox-empty":
+      return staffPage(<InboxView items={[]} now={NOW} />);
+    case "thread":
+      return staffPage(<ThreadView thread={sampleThread} onReply={pause} onResolve={pause} />);
+    case "thread-team":
+      return staffPage(
+        <ThreadView
+          thread={{
+            ...sampleThread,
+            viewer: "admin",
+            recipient: "admin",
+            recipientName: "Kalami team",
+            topic: "app_problem",
+            subject: "Problem in Kalami: Web basics",
+            status: "open",
+            context: { course: sampleThread.context.course, material: undefined, assessment: undefined },
+            messages: [{ ...sampleThread.messages[0], body: "Hello Kalami team,\n\nSomething in Kalami isn't working for me (Web basics).\nWhat happened: the quiz froze after question 3.\n\nCould you take a look?\n\nThanks,\nGiorgi" }],
+          }}
+          onReply={pause}
+          onResolve={pause}
+        />,
       );
     case "groups":
       return staffPage(<GroupsDashboard groups={groups} onCreate={pause} />);

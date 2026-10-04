@@ -20,10 +20,15 @@ export class DriveError extends Error {
   constructor(
     message: string,
     readonly retry = false,
+    /** The file or folder is gone (deleted, or in the trash). */
+    readonly missing = false,
   ) {
     super(message);
   }
 }
+
+/** No Google or Clerk call may hang a job past the point the page calls it stuck. */
+const TIMEOUT_MS = 30_000;
 
 export function driveConfigured(): boolean {
   return Boolean(process.env.CLERK_SECRET_KEY);
@@ -39,8 +44,10 @@ export async function googleAccessToken(clerkUserId: string): Promise<string> {
   }
   const response = await fetch(
     `https://api.clerk.com/v1/users/${encodeURIComponent(clerkUserId)}/oauth_access_tokens/oauth_google`,
-    { headers: { Authorization: `Bearer ${secret}` } },
-  );
+    { headers: { Authorization: `Bearer ${secret}` }, signal: AbortSignal.timeout(TIMEOUT_MS) },
+  ).catch(() => {
+    throw new DriveError("Couldn't reach the sign-in service. Try again in a minute.", true);
+  });
   if (response.status >= 500) {
     throw new DriveError("Couldn't reach the sign-in service. Try again in a minute.", true);
   }
@@ -75,7 +82,7 @@ async function failure(response: Response): Promise<DriveError> {
     return new DriveError("Your Google connection expired. Connect Google Drive again.");
   }
   if (response.status === 404) {
-    return new DriveError("The folder is gone from Google Drive (deleted or in the trash). Restore it, or remove this week.");
+    return new DriveError("The folder is gone from Google Drive (deleted or in the trash). Restore it, or remove this week.", false, true);
   }
   if (response.status === 429 || /rateLimitExceeded|userRateLimitExceeded|sharingRateLimitExceeded|backendError/.test(reason)) {
     return new DriveError("Google Drive is busy. Kalami will try again shortly.", true);
@@ -104,6 +111,7 @@ async function drive(token: string, path: string, init: RequestInit = {}): Promi
   try {
     response = await fetch(`${DRIVE_API}${path}`, {
       ...init,
+      signal: AbortSignal.timeout(TIMEOUT_MS),
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(init.headers ?? {}) },
     });
   } catch {
@@ -154,7 +162,7 @@ export async function requireFolder(token: string, folderId: string): Promise<vo
     throw await failure(response);
   }
   if (((await response.json()) as { trashed?: boolean }).trashed) {
-    throw new DriveError("The folder is in your Google Drive trash. Restore it, then try again.");
+    throw new DriveError("The folder is in your Google Drive trash. Restore it, then try again.", false, true);
   }
 }
 

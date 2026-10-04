@@ -6,7 +6,8 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { Logo } from "@/components/Logo";
 
-type NavLink = { href: string; label: string };
+/** `badge`: a count shown next to the label (unread messages), hidden at 0. */
+type NavLink = { href: string; label: string; badge?: number };
 
 /** The floating pill header used across the app (the landing page has its own). */
 export function PillHeader({
@@ -57,6 +58,14 @@ export function PillHeader({
                     />
                   )}
                   <span className="relative">{link.label}</span>
+                  {link.badge !== undefined && link.badge > 0 && (
+                    <span
+                      className="relative ml-1.5 inline-grid min-w-5 place-items-center rounded-full bg-red-pen px-1.5 text-[11px] font-semibold leading-5 text-paper"
+                      aria-label={`${link.badge} unread`}
+                    >
+                      {link.badge > 99 ? "99+" : link.badge}
+                    </span>
+                  )}
                 </Link>
               );
             })}

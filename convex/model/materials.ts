@@ -3,6 +3,7 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { courseAccess, requireCourseContentEditor, type Actor } from "../lib/access";
+import { getMemberships, isStaffRole, isSuperAdmin } from "../lib/auth";
 import { appError } from "../lib/errors";
 import { driveConfigured, folderUrl } from "../lib/google";
 import { optionalText, requireText } from "../lib/input";
@@ -52,6 +53,8 @@ export const courseMaterialsValidator = v.object({
       ownerName: v.string(),
       /** Only the owner's Google account is ever used for this course. */
       mine: v.boolean(),
+      /** The owner left (or the viewer is the super admin): the viewer may move it to their own Drive. */
+      canTakeOver: v.boolean(),
       folderUrl: v.optional(v.string()),
       error: v.optional(v.string()),
     }),
@@ -119,6 +122,8 @@ export async function listCourseMaterials(ctx: QueryCtx, actor: Actor, courseId:
         : {
             ownerName: displayName(await ctx.db.get("users", drive.ownerId)),
             mine: drive.ownerId === actor.user._id,
+            canTakeOver:
+              access.canEdit && drive.ownerId !== actor.user._id && (await mayTakeOver(ctx, actor, drive.ownerId)),
             folderUrl: drive.folderId ? folderUrl(drive.folderId) : undefined,
             error: drive.error,
           },
@@ -408,4 +413,66 @@ export async function retryWeek(ctx: MutationCtx, actor: Actor, materialId: Id<"
   } else {
     await ctx.scheduler.runAfter(0, internal.drive.unshareWeek, { materialId, attempt: 0 });
   }
+}
+
+/** Whether the course's Drive may move away from its owner: they lost their account or role, or the super admin says so. */
+async function mayTakeOver(ctx: QueryCtx, actor: Actor, ownerId: Id<"users">) {
+  if (isSuperAdmin(actor.memberships)) {
+    return true;
+  }
+  const owner = await ctx.db.get("users", ownerId);
+  if (owner === null || owner.deletedAt !== undefined) {
+    return true;
+  }
+  return !(await getMemberships(ctx, owner._id)).some((m) => isStaffRole(m.role));
+}
+
+/**
+ * Moves a course's materials to the actor's own Drive when its owner can't
+ * continue. Kalami forgets the old folders (they stay in the old owner's Drive;
+ * folders shared there stay shared, since nobody can reach that Drive any
+ * more), every Drive week goes back to draft, and new folders get created in
+ * the actor's Drive. Link weeks are untouched.
+ */
+export async function takeOverDrive(ctx: MutationCtx, actor: Actor, courseId: Id<"courses">) {
+  const { course } = await requireCourseContentEditor(ctx, actor, courseId);
+  const drive = await driveOf(ctx, courseId);
+  if (drive === null || drive.ownerId === actor.user._id) {
+    return;
+  }
+  if (!(await mayTakeOver(ctx, actor, drive.ownerId))) {
+    throw appError("FORBIDDEN", "The course's Drive owner is still active. Ask them, or the platform admin.");
+  }
+  if (!driveConfigured()) {
+    throw appError("CONFLICT", "Google Drive isn't set up on this Kalami server yet.");
+  }
+  const previous = displayName(await ctx.db.get("users", drive.ownerId));
+  const now = Date.now();
+  await ctx.db.patch("courseDrive", drive._id, {
+    ownerId: actor.user._id,
+    folderId: undefined,
+    creatingSince: undefined,
+    error: undefined,
+    updatedAt: now,
+  });
+  for (const week of await weeksOf(ctx, courseId)) {
+    if (week.source !== "drive") continue;
+    await ctx.db.patch("materials", week._id, {
+      status: "draft",
+      folderId: undefined,
+      permissionId: undefined,
+      syncing: "folder",
+      syncingSince: now,
+      driveError: undefined,
+      updatedAt: now,
+    });
+    await ctx.scheduler.runAfter(0, internal.drive.createWeekFolder, { materialId: week._id, attempt: 0 });
+  }
+  await logAudit(ctx, actor, {
+    action: "materials.takeOverDrive",
+    targetTable: "courses",
+    targetId: courseId,
+    courseId,
+    summary: `Moved the materials of "${course.title}" from ${previous}'s Google Drive to their own`,
+  });
 }

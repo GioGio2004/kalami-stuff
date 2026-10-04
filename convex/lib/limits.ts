@@ -17,6 +17,9 @@ export const LIMITS = {
   saveCode: { kind: "token bucket", rate: 60, period: MINUTE, capacity: 15 },
   integrity: { kind: "token bucket", rate: 12, period: MINUTE, capacity: 6 },
   submit: { kind: "token bucket", rate: 5, period: MINUTE, capacity: 3 },
+  // The contact card: new conversations and replies (staff replies count too).
+  startConversation: { kind: "token bucket", rate: 6, period: HOUR, capacity: 4 },
+  sendMessage: { kind: "token bucket", rate: 30, period: 10 * MINUTE, capacity: 10 },
   emailPreference: { kind: "token bucket", rate: 10, period: MINUTE, capacity: 5 },
   // Staff
   createCourse: { kind: "token bucket", rate: 10, period: HOUR, capacity: 10 },

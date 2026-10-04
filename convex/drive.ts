@@ -187,13 +187,23 @@ export const report = internalMutation({
     if (row.syncing !== args.job) {
       return null;
     }
+    // A lecturer can add a folder after publishing the week. Finish that
+    // operation by sharing it, using the current status (not the action's
+    // earlier snapshot) so a week hidden in the meantime stays private.
+    const shareFolder = args.job === "folder" && args.clearSyncing && args.driveError === undefined &&
+      (args.folderId ?? row.folderId) !== undefined && row.status === "published" && row.permissionId === undefined;
     await ctx.db.patch("weeks", row._id, {
       ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
       ...(args.permissionId !== undefined ? { permissionId: args.permissionId ?? undefined } : {}),
       driveError: args.driveError,
-      ...(args.clearSyncing ? { syncing: undefined, syncingSince: undefined } : { syncingSince: now }),
+      ...(shareFolder
+        ? { syncing: "share" as const, syncingSince: now }
+        : args.clearSyncing ? { syncing: undefined, syncingSince: undefined } : { syncingSince: now }),
       updatedAt: now,
     });
+    if (shareFolder) {
+      await ctx.scheduler.runAfter(0, internal.drive.shareWeek, { weekId: row._id, attempt: 0 });
+    }
     return null;
   },
 });

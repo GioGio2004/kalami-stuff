@@ -217,6 +217,38 @@ describe("course outline", () => {
 });
 
 describe("Google Drive folders on weeks", () => {
+  test("a folder added after publishing is shared and visible to students", async () => {
+    const google = fakeGoogle();
+    const { t, nino, ana, courseId } = await seed();
+    const weekId = await nino.mutation(api.weeks.create, { courseId, title: "Already published" });
+    await nino.mutation(api.weeks.publish, { weekId });
+    await nino.mutation(api.weeks.addFolder, { weekId });
+    expect((await ana.query(api.learn.course, { courseId })).weeks[0].driveUrl).toBeUndefined();
+    await settle(t);
+    expect((await ana.query(api.learn.course, { courseId })).weeks[0].driveUrl).toBeDefined();
+    expect([...google.folders.values()].filter((f) => f.permissions.size > 0).map((f) => f.name))
+      .toEqual(["Already published"]);
+    expect((await outline(nino, courseId)).weeks[0].drive).toMatchObject({ shared: true });
+    await nino.mutation(api.weeks.retry, { weekId });
+    await settle(t);
+    expect(google.calls.filter((call) => call.startsWith("POST") && call.endsWith("/permissions")))
+      .toHaveLength(1);
+  });
+
+  test("a folder finishing after its week was hidden stays private", async () => {
+    const google = fakeGoogle();
+    const { t, nino, ana, courseId } = await seed();
+    const weekId = await nino.mutation(api.weeks.create, { courseId });
+    await nino.mutation(api.weeks.publish, { weekId });
+    await nino.mutation(api.weeks.addFolder, { weekId });
+    await t.run(async (ctx) => {
+      await ctx.db.patch("weeks", weekId, { status: "draft" });
+    });
+    await settle(t);
+    expect([...google.folders.values()].every((f) => f.permissions.size === 0)).toBe(true);
+    expect((await ana.query(api.learn.course, { courseId })).weeks).toEqual([]);
+  });
+
   test("a week gets its own folder inside one private course folder, shared by link only once published", async () => {
     const google = fakeGoogle();
     const { t, nino, ana, courseId } = await seed();

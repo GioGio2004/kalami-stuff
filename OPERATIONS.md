@@ -96,6 +96,34 @@ Troubleshooting: the week row shows Google's problem in words (connection
 expired, folder trashed, organisation blocks link sharing, Drive full) with a
 Retry button. Busy Google is retried by itself a few times.
 
+Adding a folder to an already published week also shares it once creation
+finishes. If an older published week has a private folder, use Retry on that
+week; do not unpublish and republish all its lessons just to repair sharing.
+
+### Prepare reading files from existing lessons
+
+The admin script `scripts/prepare-reading-files.mjs` exports one Markdown reading
+file per week from the existing lesson blocks, preserving code examples. It does
+not generate new teaching content or export assessments, student data or exercise
+answer keys. Run with Node 24 from this repository:
+
+```powershell
+node --experimental-transform-types scripts/prepare-reading-files.mjs <courseId> <outputDirectory>
+```
+
+Review the local files, then repeat with `--upload`. The script uses the production
+course owner's existing Google connection. Published lessons go into their already
+shared week folders; drafts go into a separate private `Draft reading files` folder
+under the course folder. Draft exports are not automatically released when a week
+is later published: rerun the export to put its current published lessons in its
+shared week folder. These are Markdown files, not native Google Docs or PDFs.
+
+The upload verifies downloaded content and sharing permissions. Identical content
+in the same destination is reused on rerun; changed content creates a new snapshot
+and leaves older files intact. This is an admin maintenance tool, not a new public
+MCP permission or an automatic sync. Google upload protocol reference:
+https://developers.google.com/workspace/drive/api/guides/manage-uploads
+
 ## Data migrations
 
 `convex/migrations.ts` holds one-off data moves, each idempotent and batched. Right now:

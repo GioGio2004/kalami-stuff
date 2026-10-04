@@ -441,7 +441,7 @@ function FolderRow({
         </span>
       </span>
       <span className="flex flex-wrap items-center gap-1.5">
-        {canEdit && (drive.error !== undefined || drive.stale) && (
+        {canEdit && status.problem && !working && (
           <Button size="sm" variant="outline" disabled={busy} onClick={onRetry}>
             Retry
           </Button>

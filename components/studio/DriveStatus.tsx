@@ -144,5 +144,8 @@ export function folderStatus(drive: WeekDrive, weekStatus: OutlineWeek["status"]
   if (weekStatus === "published" && drive.shared) {
     return { text: "Students can open it (anyone with the link can view)", problem: false };
   }
+  if (weekStatus === "published") {
+    return { text: "This week is published, but its folder is still private. Try again to share it with students.", problem: true };
+  }
   return { text: "Private. Upload files to it in Drive; students get it when you publish the week.", problem: false };
 }

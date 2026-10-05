@@ -13,7 +13,7 @@ Values are never in the repos. Names only:
 |---|---|---|
 | Convex (dev and prod) | `CLERK_FRONTEND_API_URL` | The Clerk Frontend API this deployment trusts |
 | Convex | `CLERK_WEBHOOK_SECRET` | Signs Clerk's `user.*` webhooks |
-| Convex + Vercel staff | `MCP_SERVICE_SECRET` | Signs the MCP service credential and the unsubscribe links. **Use different values on dev and prod.** |
+| Convex + Vercel staff + Vercel student | `MCP_SERVICE_SECRET` | Signs the MCP service credential (both connectors: lecturers on the staff app, students on the student app) and the unsubscribe links. One value per environment, the same on Convex and both apps. **Use different values on dev and prod.** |
 | Convex | `RESEND_API_KEY` | Sending email. Without it, nothing is sent and nothing fails. |
 | Convex | `RESEND_WEBHOOK_SECRET` | Resend's delivery events (bounces, complaints). Optional but recommended. |
 | Convex | `EMAIL_FROM` | Defaults to `Kalami <notifications@kalami.space>`; must be on the verified domain |

@@ -2,14 +2,18 @@ import { clerkClient } from "@clerk/nextjs/server";
 
 /**
  * "Sign in with Kalami" for MCP clients such as claude.ai. Clerk is the OAuth
- * authorization server: the client sends the lecturer to Clerk, they sign in
+ * authorization server: the client sends the person to Clerk, they sign in
  * with their own Kalami account and press Allow, and the client gets a
  * short-lived access token. No link or token to copy, so nothing to leak.
  *
  * This file is the resource-server side: the metadata that tells clients where
  * to sign in, checking Clerk's tokens, and a signed, short-lived credential
  * that tells Convex which Clerk user the request is for. Convex still decides
- * whether that person is staff (lib/access.ts).
+ * what that person may do (lib/access.ts: staff on the staff connector, an
+ * onboarded student on the student app's).
+ *
+ * Shared by both apps: the copy in the student app comes from the staff repo
+ * (scripts/sync-student.mjs); edit it there.
  */
 
 /** A credential is minted per request and used within milliseconds; a minute covers slow calls. */
@@ -36,15 +40,15 @@ export function publicOrigin(req: Request): string {
   return new URL(req.url).origin;
 }
 
-/** RFC 9728: tells MCP clients that /api/mcp is protected and Clerk is where to sign in. */
-export function protectedResourceMetadata(origin: string) {
+/** RFC 9728: tells MCP clients that /api/mcp is protected and Clerk is where to sign in. `docs` is the page that explains the connector. */
+export function protectedResourceMetadata(origin: string, docs = "/agents") {
   return {
     resource: `${origin}/api/mcp`,
     authorization_servers: [clerkIssuer()],
     scopes_supported: ["openid", "profile", "email"],
     bearer_methods_supported: ["header"],
     resource_name: "Kalami",
-    resource_documentation: `${origin}/agents`,
+    resource_documentation: `${origin}${docs}`,
   };
 }
 

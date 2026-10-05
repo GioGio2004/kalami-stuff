@@ -1,6 +1,14 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
-import { getMemberships, isStaffRole, isSuperAdmin, requireUser, userByClerkUserId } from "./auth";
+import {
+  getMemberships,
+  hasCompletedOnboarding,
+  isStaffOnly,
+  isStaffRole,
+  isSuperAdmin,
+  requireUser,
+  userByClerkUserId,
+} from "./auth";
 import { appError } from "./errors";
 import { verifyServiceCredential } from "./tokens";
 import type { Via } from "./validators";
@@ -60,6 +68,44 @@ export async function requireTokenActor(ctx: QueryCtx, token: string, client?: s
     throw appError("UNAUTHENTICATED", "Not signed in to Kalami as staff. Reconnect Kalami in your assistant.");
   }
   return actor;
+}
+
+/** What the student app's model functions take for the signed-in student (lib/auth.ts requireStudent). */
+export type TokenStudent = {
+  user: Doc<"users">;
+  membership: Doc<"memberships">;
+  universityId: Id<"universities"> | undefined;
+};
+
+/**
+ * The student an MCP request acts for (the student app's read-only connector,
+ * study.ts): the same credential as actorFromToken, but the person must be an
+ * onboarded student. Staff accounts, unfinished onboarding, a deleted account
+ * or a bad credential all get null, so the connector refuses them.
+ */
+export async function studentFromToken(ctx: QueryCtx, token: string): Promise<TokenStudent | null> {
+  const clerkUserId = await verifyServiceCredential(token);
+  const user = clerkUserId === null ? null : await userByClerkUserId(ctx, clerkUserId);
+  if (user === null || user.deletedAt !== undefined) {
+    return null;
+  }
+  const memberships = await getMemberships(ctx, user._id);
+  if (isStaffOnly(memberships)) {
+    return null;
+  }
+  const membership = memberships.find((m) => m.role === "student");
+  if (membership === undefined || !hasCompletedOnboarding(user, membership)) {
+    return null;
+  }
+  return { user, membership, universityId: membership.universityId };
+}
+
+export async function requireTokenStudent(ctx: QueryCtx, token: string): Promise<TokenStudent> {
+  const student = await studentFromToken(ctx, token);
+  if (student === null) {
+    throw appError("UNAUTHENTICATED", "Not signed in to Kalami as a student. Reconnect Kalami in your assistant.");
+  }
+  return student;
 }
 
 /** Universities this actor may create courses in. Empty for the super admin means "any". */

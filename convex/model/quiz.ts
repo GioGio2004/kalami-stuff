@@ -131,7 +131,7 @@ function effectiveDeadline(limitEnd: number | undefined, closesAt: number | unde
 }
 
 /** A question as this student sees it: their option order, their code variant. */
-function studentQuestion(question: Doc<"questions">, student: Student, assessment: Doc<"assessments">) {
+export function studentQuestion(question: Doc<"questions">, student: Student, assessment: Doc<"assessments">) {
   const base = { _id: question._id, type: question.type, prompt: question.prompt, points: question.points };
   if (question.type === "code" && question.code !== undefined) {
     const { code, values } = taskFor(question.code, student.user, assessment._id);
@@ -147,7 +147,7 @@ function studentQuestion(question: Doc<"questions">, student: Student, assessmen
 }
 
 /** The questions in the order this attempt shows them. */
-function attemptOrder(questions: Doc<"questions">[], student: Student, assessment: Doc<"assessments">, attempt: Doc<"attempts">) {
+export function attemptOrder(questions: Doc<"questions">[], student: Student, assessment: Doc<"assessments">, attempt: Doc<"attempts">) {
   return assessment.settings.shuffleQuestions
     ? seededShuffle(questions, `${student.user._id}:${assessment._id}:${attempt.number}`)
     : questions;

@@ -129,6 +129,28 @@ credential lives 60 s. Settings in `OPERATIONS.md`.
 
 ---
 
+### 4.1 The student connector (2026-10-06)
+
+**Endpoint:** `https://app.kalami.space/api/mcp`, served by the student app (`kalami/lib/mcp/server.ts`,
+`kalami/app/api/mcp`, the same `.well-known` metadata), with the same Sign in with Kalami flow and
+the same `MCP_SERVICE_SECRET` credential; `lib/mcp/oauth.ts` is synced from this repo. Convex side:
+`convex/study.ts` + `convex/model/study.ts`, queries only, `requireTokenStudent` (an onboarded
+student; staff get 401 there, as students do here).
+
+| Tool | Does |
+|---|---|
+| `whoami`, `list_courses`, `get_course` | the student, their courses, a course's weeks with lessons, materials and work |
+| `get_lesson`, `find_in_lessons` | a lesson's blocks; where a phrase appears across their published lessons |
+| `my_progress`, `whats_next` | every piece of work with status and visible score; open work by deadline |
+| `get_my_work` | a **finished** task, quiz or exam: questions as seen, own answers, score, feedback and comments, as far as `resultsVisibility` allows |
+
+Finished = submitted and no way to take it again (closed, a code task, or no attempts left).
+Questions and own answers show once closed or with full results; correct answers and
+explanations only with full results; the score only when the setting shows it. Everything
+reuses the student app's model functions (`getStudentCourse`, `getStudentLesson`,
+`getStudentTask`, the quiz helpers), so the connector never shows more than the screen.
+Students connect from `/assistant` in the student app. Tests: `convex/study.test.ts`.
+
 ## 5. Roadmap
 
 ### Phase A — Assessments + agents (done, this session)

@@ -3,6 +3,7 @@
 import { useMutation, useQuery } from "convex/react";
 import { AdminView } from "@/components/admin/AdminView";
 import { SuperAdminInvites } from "@/components/admin/SuperAdminInvites";
+import { SuperAdminPeople } from "@/components/admin/SuperAdminPeople";
 import { UniversityGroups } from "@/components/admin/UniversityGroups";
 import { UniversityInvites } from "@/components/admin/UniversityInvites";
 import { useCurrentUser } from "@/components/CurrentUserProvider";
@@ -39,6 +40,7 @@ export default function AdminPage() {
       // The super admin invites everyone from one place, picking the university per invite;
       // a university admin invites inside their university.
       invites={me.isSuperAdmin ? <SuperAdminInvites universities={universities} /> : undefined}
+      people={me.isSuperAdmin ? <SuperAdminPeople universities={universities} /> : undefined}
       renderInvites={
         me.isSuperAdmin
           ? undefined

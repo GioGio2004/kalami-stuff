@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { AdminView, type AdminUniversity } from "@/components/admin/AdminView";
 import { InviteCenter, type AnyInvite } from "@/components/admin/InviteCenter";
+import { PeoplePanel, type Person } from "@/components/admin/PeoplePanel";
 import { EmailPreviews } from "@/components/dev/EmailPreviews";
 import { InvitesBoard, type Invite } from "@/components/admin/InvitesBoard";
 import { AgentsView } from "@/components/agents/AgentsView";
@@ -99,6 +100,28 @@ const tsu: AdminUniversity = {
   slug: "tsu",
   status: "active",
 };
+
+type PersonMembership = Person["memberships"][number];
+const samplePeople: Person[] = [
+  {
+    _id: "sample_p1" as Person["_id"],
+    email: "nino.beridze@gtu.ge",
+    name: "Nino Beridze",
+    memberships: [{ _id: "sample_m1" as PersonMembership["_id"], role: "lecturer", universityId: gori._id, universityName: gori.name }],
+  },
+  {
+    _id: "sample_p2" as Person["_id"],
+    email: "nino.k@gmail.com",
+    name: "Nino Kapanadze",
+    memberships: [{ _id: "sample_m2" as PersonMembership["_id"], role: "student", universityId: gori._id, universityName: gori.name }],
+  },
+  {
+    _id: "sample_p3" as Person["_id"],
+    email: "nino.tutor@gmail.com",
+    name: "",
+    memberships: [{ _id: "sample_m3" as PersonMembership["_id"], role: "lecturer", universityId: undefined, universityName: undefined }],
+  },
+];
 
 /** The super admin's list across universities. */
 const allInvites: AnyInvite[] = [
@@ -1011,6 +1034,16 @@ export function StaffGallery({ view }: { view?: string }) {
                 return "recent" as const;
               }}
               onRevoke={pause}
+            />
+          }
+          people={
+            <PeoplePanel
+              query="nino"
+              onQuery={() => undefined}
+              people={samplePeople}
+              universities={[gori, tsu]}
+              onChange={pause}
+              onRemove={pause}
             />
           }
           renderGroups={() => groupsBoard}

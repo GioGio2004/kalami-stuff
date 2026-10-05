@@ -38,6 +38,7 @@ export function AdminView({
   renderInvites,
   renderGroups,
   invites,
+  people,
   independent,
 }: {
   isSuperAdmin: boolean;
@@ -47,6 +48,8 @@ export function AdminView({
   renderInvites?: (university: AdminUniversity) => ReactNode;
   /** The super admin's invites for every university in one place (InviteCenter), above the universities. */
   invites?: ReactNode;
+  /** The super admin's people search and role changes (PeoplePanel), under the invites. */
+  people?: ReactNode;
   /** The university's groups: admins make them, lecturers join them. */
   renderGroups?: (university: AdminUniversity) => ReactNode;
   /** Super admin: invites for teachers outside any university (schools, private lessons). */
@@ -104,6 +107,21 @@ export function AdminView({
             </div>
           </header>
           {invites}
+        </section>
+      )}
+
+      {people && (
+        <section className="rounded-[2.5rem] bg-panel p-3 sm:p-6 lg:p-8">
+          <header className="flex flex-wrap items-center gap-4 px-2 pb-6 pt-2">
+            <span className="grid size-14 shrink-0 place-items-center rounded-full bg-highlighter text-lg font-semibold">
+              @
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-2xl font-medium tracking-tight">People</h2>
+              <p className="text-sm text-graphite">Find anyone by email, see their roles and change a staff role.</p>
+            </div>
+          </header>
+          {people}
         </section>
       )}
 

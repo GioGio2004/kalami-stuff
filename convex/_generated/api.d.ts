@@ -67,6 +67,7 @@ import type * as model_quiz from "../model/quiz.js";
 import type * as model_weeks from "../model/weeks.js";
 import type * as notifications from "../notifications.js";
 import type * as ops from "../ops.js";
+import type * as people from "../people.js";
 import type * as questions from "../questions.js";
 import type * as submissions from "../submissions.js";
 import type * as universities from "../universities.js";
@@ -139,6 +140,7 @@ declare const fullApi: ApiFromModules<{
   "model/weeks": typeof model_weeks;
   notifications: typeof notifications;
   ops: typeof ops;
+  people: typeof people;
   questions: typeof questions;
   submissions: typeof submissions;
   universities: typeof universities;

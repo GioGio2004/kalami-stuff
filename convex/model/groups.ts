@@ -1227,6 +1227,24 @@ export async function stopTeachingAll(ctx: MutationCtx, userId: Id<"users">) {
   }
 }
 
+/**
+ * Someone no longer works at a university (moved, or lost the role): they stop
+ * teaching its groups. Like a deleted lecturer, the courses they shared stay
+ * with the students; the university's admins can unshare them.
+ */
+export async function stopTeachingAtUniversity(ctx: MutationCtx, userId: Id<"users">, universityId: Id<"universities">) {
+  const rows = await ctx.db
+    .query("groupLecturers")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .take(200);
+  for (const row of rows) {
+    const group = await ctx.db.get("groups", row.groupId);
+    if (group?.universityId === universityId) {
+      await ctx.db.delete("groupLecturers", row._id);
+    }
+  }
+}
+
 /** A deleted account leaves every group; their enrollments are handled by the caller. */
 export async function leaveAllGroups(ctx: MutationCtx, userId: Id<"users">) {
   const rows = await ctx.db

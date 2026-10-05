@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { InviteCenter } from "@/components/admin/InviteCenter";
-import type { AdminUniversity } from "@/components/admin/AdminView";
+import type { AdminUniversity } from "@/components/admin/types";
 import { api } from "@/convex/_generated/api";
 
 /** The super admin's invite form (with a university picker) and every invite, in one place. */

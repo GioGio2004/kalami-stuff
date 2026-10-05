@@ -345,3 +345,31 @@ export function Sparkle({ className }: { className?: string }) {
     </svg>
   );
 }
+
+export function Search(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m20 20-4.2-4.2" />
+    </Icon>
+  );
+}
+
+export function Grid(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="4" y="4" width="6.5" height="6.5" rx="2" />
+      <rect x="13.5" y="4" width="6.5" height="6.5" rx="2" />
+      <rect x="4" y="13.5" width="6.5" height="6.5" rx="2" />
+      <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="2" />
+    </Icon>
+  );
+}
+
+export function Pulse(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3.5 12h3.6l2.4-6 3.6 12 2.4-6h5" />
+    </Icon>
+  );
+}

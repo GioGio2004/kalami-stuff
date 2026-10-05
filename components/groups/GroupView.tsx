@@ -54,7 +54,7 @@ export function GroupView({
   const live = !group.archived;
   const manages = group.manages;
   // An admin who doesn't teach the group came from the admin page.
-  const back = manages && !group.teaches && !group.isPrivate ? { href: "/admin", label: "Admin" } : { href: "/groups", label: "Groups" };
+  const back = manages && !group.teaches && !group.isPrivate ? { href: "/admin/groups", label: "Admin" } : { href: "/groups", label: "Groups" };
   const totalCourses = group.courses.length + group.otherCourses;
 
   async function run(action: () => Promise<unknown>) {

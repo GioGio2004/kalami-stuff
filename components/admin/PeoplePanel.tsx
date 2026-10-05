@@ -7,7 +7,7 @@ import { FormError, Segmented, SelectInput, TextInput } from "@/components/ui/fo
 import { Pill } from "@/components/ui/Pill";
 import type { api } from "@/convex/_generated/api";
 import { errorMessage } from "@/lib/errors";
-import type { AdminUniversity } from "./AdminView";
+import type { AdminUniversity } from "./types";
 
 export type Person = FunctionReturnType<typeof api.people.search>[number];
 type Membership = Person["memberships"][number];

@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { useEffect, useState } from "react";
-import type { AdminUniversity } from "@/components/admin/AdminView";
+import type { AdminUniversity } from "@/components/admin/types";
 import { PeoplePanel } from "@/components/admin/PeoplePanel";
 import { api } from "@/convex/_generated/api";
 

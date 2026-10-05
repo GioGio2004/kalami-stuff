@@ -62,7 +62,7 @@ export function GroupsDashboard({
         </div>
         <div className="flex flex-wrap gap-2.5">
           {isAdmin && (
-            <ButtonLink href="/admin" variant="outline">
+            <ButtonLink href="/admin/groups" variant="outline">
               Manage groups
             </ButtonLink>
           )}
@@ -129,7 +129,7 @@ export function GroupsDashboard({
           <p className="mt-2 max-w-xl text-[15px] leading-relaxed text-graphite">
             Each university has its groups there: make them, invite the students, and see which lecturers teach them.
           </p>
-          <ButtonLink href="/admin" className="mt-5">
+          <ButtonLink href="/admin/groups" className="mt-5">
             Open the admin page
           </ButtonLink>
         </section>

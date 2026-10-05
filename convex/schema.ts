@@ -83,7 +83,9 @@ export default defineSchema({
     studentNumber: v.optional(v.string()),
   })
     .index("by_userId", ["userId"])
-    .index("by_universityId_and_role", ["universityId", "role"]),
+    .index("by_universityId_and_role", ["universityId", "role"])
+    // The admin panel: everyone with a role across universities (students page by page, staff at once).
+    .index("by_role_and_universityId", ["role", "universityId"]),
 
   invites: defineTable({
     // Lowercased. Only a signed-in user with this exact email can accept.
@@ -129,7 +131,10 @@ export default defineSchema({
   })
     .index("by_universityId", ["universityId"])
     .index("by_ownerId", ["ownerId"])
-    .index("by_joinCode", ["joinCode"]),
+    .index("by_joinCode", ["joinCode"])
+    // The admin panel lists courses by status, platform-wide or inside one university.
+    .index("by_status", ["status"])
+    .index("by_universityId_and_status", ["universityId", "status"]),
 
   // Who may work on a course besides university admins and the super admin.
   courseStaff: defineTable({
@@ -610,5 +615,7 @@ export default defineSchema({
     at: v.number(),
   })
     .index("by_courseId", ["courseId"])
-    .index("by_actorId", ["actorId"]),
+    .index("by_actorId", ["actorId"])
+    // The admin panel filters the log by what was changed.
+    .index("by_targetTable", ["targetTable"]),
 });

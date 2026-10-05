@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { AdminView, type AdminUniversity } from "@/components/admin/AdminView";
+import type { AdminUniversity } from "@/components/admin/types";
+import { adminPage, adminViews, renderAdminView, uniAdminMe } from "@/components/dev/AdminGallery";
+import { PanelHeader } from "@/components/admin/panel/ui";
 import { InviteCenter, type AnyInvite } from "@/components/admin/InviteCenter";
 import { PeoplePanel, type Person } from "@/components/admin/PeoplePanel";
 import { EmailPreviews } from "@/components/dev/EmailPreviews";
@@ -20,9 +22,7 @@ import type {
   GroupDetail,
   GroupSearchResult,
   GroupSummary,
-  UniversityGroup,
 } from "@/components/groups/types";
-import { GroupsBoard } from "@/components/admin/GroupsBoard";
 import { StaffGate } from "@/components/StaffGate";
 import { StaffNav } from "@/components/StaffNav";
 import { AssessmentBuilder } from "@/components/studio/AssessmentBuilder";
@@ -378,12 +378,6 @@ const groupSearchResults: GroupSearchResult[] = [
   { _id: "sample_group_d" as GroupSearchResult["_id"], name: "ICT-24-4", description: undefined, universityName: gori.name, members: 0, lecturers: 0, joined: false },
 ];
 
-const universityGroups: UniversityGroup[] = [
-  { _id: groupA._id, name: "ICT-24-1", description: groupA.description, archived: false, inviteEnabled: true, members: 38, lecturers: 3, courses: 3 },
-  { _id: "sample_group_c" as UniversityGroup["_id"], name: "ICT-24-3", description: "Informatics, first year, evening", archived: false, inviteEnabled: false, members: 41, lecturers: 4, courses: 5 },
-  { _id: "sample_group_d" as UniversityGroup["_id"], name: "ICT-24-4", description: undefined, archived: false, inviteEnabled: true, members: 0, lecturers: 0, courses: 0 },
-  { _id: "sample_group_old" as UniversityGroup["_id"], name: "ICT-21-1", description: undefined, archived: true, inviteEnabled: false, members: 35, lecturers: 2, courses: 4 },
-];
 
 type MemberId = GroupDetail["memberList"][number]["userId"];
 type GroupInviteId = GroupDetail["inviteList"][number]["_id"];
@@ -844,10 +838,11 @@ const views: Record<string, string> = {
   "group-admin": "Groups · one group, as its university admin",
   builder: "Studio · assessment builder",
   agents: "Agents · connect an MCP client",
-  admin: "Admin · super admin (one invite list, university picker)",
-  "admin-uni": "Admin · university admin",
+  ...adminViews,
+  admin: "Admin panel · invites (platform admin)",
+  "admin-people": "Admin panel · find a person",
+  "admin-uni": "Admin panel · invites (university admin)",
   emails: "Emails · every email Kalami sends (sample data)",
-  "admin-empty": "Admin · no universities yet",
   "invite-signed-out": "Invite · signed out",
   "invite-ready": "Invite · signed in with the invited email",
   "invite-mismatch": "Invite · signed in with another email",
@@ -888,16 +883,6 @@ export function StaffGallery({ view }: { view?: string }) {
         return "sent" as const;
       }}
       onRevoke={pause}
-    />
-  );
-
-  const groupsBoard = (
-    <GroupsBoard
-      groups={universityGroups}
-      onCreate={async () => {
-        await pause();
-        return "sample_group_new";
-      }}
     />
   );
 
@@ -1016,59 +1001,41 @@ export function StaffGallery({ view }: { view?: string }) {
     case "agents":
       return staffPage(<AgentsView />);
     case "admin":
-      return staffPage(
-        <AdminView
-          isSuperAdmin
-          universities={[gori, tsu]}
-          onCreateUniversity={pause}
-          invites={
-            <InviteCenter
-              universities={[gori, tsu]}
-              invites={allInvites}
-              onCreate={async () => {
-                await pause();
-                return { token: "sample-token-new", email: "sent" as const };
-              }}
-              onResend={async () => {
-                await pause();
-                return "recent" as const;
-              }}
-              onRevoke={pause}
-            />
-          }
-          people={
-            <PeoplePanel
-              query="nino"
-              onQuery={() => undefined}
-              people={samplePeople}
-              universities={[gori, tsu]}
-              onChange={pause}
-              onRemove={pause}
-            />
-          }
-          renderGroups={() => groupsBoard}
-        />,
+      return adminPage(
+        <>
+          <PanelHeader note="People" title="Invites" description="Invite lecturers and university admins to any university, or independent teachers, and keep track of every invitation in one list." />
+          <InviteCenter
+            universities={[gori, tsu]}
+            invites={allInvites}
+            onCreate={async () => {
+              await pause();
+              return { token: "sample-token-new", email: "sent" as const };
+            }}
+            onResend={async () => {
+              await pause();
+              return "recent" as const;
+            }}
+            onRevoke={pause}
+          />
+        </>,
+        "/admin/invites",
+      );
+    case "admin-people":
+      return adminPage(
+        <>
+          <PanelHeader note="People" title="Find a person" description="Any account, by the start of its email." />
+          <PeoplePanel query="nino" onQuery={() => undefined} people={samplePeople} universities={[gori, tsu]} onChange={pause} onRemove={pause} />
+        </>,
+        "/admin/people",
       );
     case "admin-uni":
-      return staffPage(
-        <AdminView isSuperAdmin={false} universities={[gori]} onCreateUniversity={pause} renderInvites={() => board} renderGroups={() => groupsBoard} />,
-      );
-    case "admin-empty":
-      return staffPage(
-        <AdminView
-          isSuperAdmin
-          universities={[]}
-          onCreateUniversity={pause}
-          invites={
-            <InviteCenter
-              universities={[]}
-              invites={[]}
-              onCreate={async () => ({ token: "x", email: "off" as const })}
-              onResend={async () => "off" as const}
-              onRevoke={pause}
-            />
-          }
-        />,
+      return adminPage(
+        <>
+          <PanelHeader note="People" title="Invites" description="Invite the lecturers of your university." />
+          {board}
+        </>,
+        "/admin/invites",
+        uniAdminMe,
       );
     case "emails":
       return <EmailPreviews />;
@@ -1099,6 +1066,6 @@ export function StaffGallery({ view }: { view?: string }) {
     case "gate-student":
       return asUser({ status: "ready", me: student }, <StaffGate>{null}</StaffGate>);
     default:
-      return <LoadingScreen />;
+      return renderAdminView(view) ?? <LoadingScreen />;
   }
 }

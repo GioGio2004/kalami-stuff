@@ -8,7 +8,7 @@ import { Mail } from "@/components/ui/icons";
 import { WritingDots } from "@/components/ui/StatusScreen";
 import type { api } from "@/convex/_generated/api";
 import { errorMessage } from "@/lib/errors";
-import type { AdminUniversity } from "./AdminView";
+import type { AdminUniversity } from "./types";
 import {
   CreatedInvite,
   emailedLine,

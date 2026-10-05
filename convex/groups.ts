@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { requireStaffActor } from "./lib/access";
 import { requireStudent } from "./lib/auth";
 import { enforceLimit } from "./lib/limits";
@@ -10,40 +11,70 @@ import {
   getGroupDetail,
   groupDetailValidator,
   groupPreviewValidator,
+  groupSearchResultValidator,
   groupsForCourse,
   groupSummaryValidator,
   inviteByEmail,
   invitePreviewValidator,
   inviteResultValidator,
+  joinAsLecturer as startTeaching,
   joinGroupByCode,
+  leaveAsLecturer as stopTeachingGroup,
   leaveGroup,
   linkCourse,
   listGroupsFor,
   listMyGroups,
   listMyInvites,
+  listUniversityGroups,
+  migrateGroupsPage,
   myGroupValidator,
   myInviteValidator,
   previewGroupByCode,
   previewInvite,
   regenerateInviteCode,
+  removeLecturer as takeLecturerOff,
   removeMember,
   resendInvite,
   revokeInvite,
+  searchGroups,
   setInviteEnabled,
+  universityGroupValidator,
   unlinkCourse,
   updateGroup,
 } from "./model/groups";
 
-// Groups: the staff app manages them, the student app joins them (model/groups.ts).
+// Groups: university admins make and run them, lecturers join them to teach,
+// independent teachers run their own; the student app joins them (model/groups.ts).
 
 // --- Staff ------------------------------------------------------------------------------
 
+/** The groups the signed-in lecturer teaches. */
 export const listMine = query({
   args: {},
   returns: v.array(groupSummaryValidator),
   handler: async (ctx) => {
     const actor = await requireStaffActor(ctx);
     return await listGroupsFor(ctx, actor);
+  },
+});
+
+/** Every group of a university, for the admin page. */
+export const forUniversity = query({
+  args: { universityId: v.id("universities") },
+  returns: v.array(universityGroupValidator),
+  handler: async (ctx, args) => {
+    const actor = await requireStaffActor(ctx);
+    return await listUniversityGroups(ctx, actor, args.universityId);
+  },
+});
+
+/** A lecturer looking for their group at their university. An empty query lists them all. */
+export const search = query({
+  args: { query: v.string() },
+  returns: v.array(groupSearchResultValidator),
+  handler: async (ctx, args) => {
+    const actor = await requireStaffActor(ctx);
+    return await searchGroups(ctx, actor, args.query);
   },
 });
 
@@ -56,13 +87,50 @@ export const get = query({
   },
 });
 
+/** With `universityId`: a university admin's group. Without: an independent teacher's private group. */
 export const create = mutation({
-  args: { name: v.string(), description: v.optional(v.string()) },
+  args: {
+    name: v.string(),
+    description: v.optional(v.string()),
+    universityId: v.optional(v.id("universities")),
+  },
   returns: v.id("groups"),
   handler: async (ctx, args) => {
     const actor = await requireStaffActor(ctx);
     await enforceLimit(ctx, "createGroup", actor.user._id);
     return await createGroup(ctx, actor, args);
+  },
+});
+
+/** A lecturer starts teaching one of their university's groups. */
+export const joinAsLecturer = mutation({
+  args: { groupId: v.id("groups") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireStaffActor(ctx);
+    await enforceLimit(ctx, "join", actor.user._id);
+    await startTeaching(ctx, actor, args.groupId);
+    return null;
+  },
+});
+
+/** A lecturer stops teaching a group; returns how many of their courses left it. */
+export const leaveAsLecturer = mutation({
+  args: { groupId: v.id("groups") },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    const actor = await requireStaffActor(ctx);
+    return await stopTeachingGroup(ctx, actor, args.groupId);
+  },
+});
+
+export const removeLecturer = mutation({
+  args: { groupId: v.id("groups"), userId: v.id("users") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireStaffActor(ctx);
+    await takeLecturerOff(ctx, actor, args.groupId, args.userId);
+    return null;
   },
 });
 
@@ -232,5 +300,28 @@ export const leave = mutation({
     const student = await requireStudent(ctx);
     await leaveGroup(ctx, student, args.groupId);
     return null;
+  },
+});
+
+// --- Migration --------------------------------------------------------------------------
+
+/**
+ * Moves groups made before admins ran them into their owner's university (see
+ * migrateGroupsPage). Run once per deployment after deploying:
+ * `npx convex run groups:migrateToUniversityGroups '{"cursor":null}'` (add --prod
+ * for production). Each page schedules the next; safe to run again.
+ */
+export const migrateToUniversityGroups = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  returns: v.object({ moved: v.number(), madePrivate: v.number(), nameClashes: v.number(), isDone: v.boolean() }),
+  handler: async (ctx, args) => {
+    const { continueCursor, ...result } = await migrateGroupsPage(ctx, args.cursor);
+    if (!result.isDone) {
+      await ctx.scheduler.runAfter(0, internal.groups.migrateToUniversityGroups, { cursor: continueCursor });
+    }
+    if (result.moved + result.madePrivate > 0) {
+      console.log(`groups migration: ${JSON.stringify(result)}`);
+    }
+    return result;
   },
 });

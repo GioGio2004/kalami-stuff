@@ -51,7 +51,10 @@ export type MoveTarget = { value: WeekId | null; label: string };
 const iconButton =
   "grid size-8 shrink-0 place-items-center rounded-full text-graphite transition hover:bg-panel hover:text-ink disabled:opacity-30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink";
 
-/** One week of the outline: its header (title, status, publish, menu) and, when open, lessons, materials and assessments. */
+/**
+ * One week of the outline: its header (title, status, publish, menu) and, when open, lessons, materials and assessments.
+ * Without onToggle it is always open and the header is not a button.
+ */
 export function WeekCard({
   week,
   index,
@@ -59,7 +62,7 @@ export function WeekCard({
   courseId,
   canEdit,
   driveUsable,
-  open,
+  open = true,
   onToggle,
   moveTargets,
   actions,
@@ -71,8 +74,8 @@ export function WeekCard({
   canEdit: boolean;
   /** The viewer may create a Drive folder for it. */
   driveUsable: boolean;
-  open: boolean;
-  onToggle: () => void;
+  open?: boolean;
+  onToggle?: () => void;
   /** Where its tasks and quizzes may go: the other weeks and Unplaced. */
   moveTargets: MoveTarget[];
   actions: WeekCardActions;
@@ -103,40 +106,51 @@ export function WeekCard({
     count(week.assessments.length, "task or quiz", "tasks and quizzes"),
   ].join(" · ");
 
+  const heading = (
+    <>
+      <span
+        className={`grid size-11 shrink-0 place-items-center rounded-full text-base font-semibold tabular-nums ${
+          published ? "bg-ink text-highlighter" : "bg-panel text-ink"
+        }`}
+      >
+        {index + 1}
+      </span>
+      <span className="min-w-0 flex-1 pt-0.5">
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="min-w-0 break-words text-lg font-medium leading-snug tracking-tight">{week.title}</span>
+          <Pill tone={published ? "lime" : "panel"}>{published ? "Published" : "Draft"}</Pill>
+        </span>
+        <span className="mt-1 block text-sm text-graphite">
+          <span className={published ? "text-ok" : ""}>
+            {published ? "Students see this week" : canEdit ? "Only you see this" : "Hidden from students"}
+          </span>
+          <span aria-hidden> · </span>
+          {summary}
+        </span>
+      </span>
+    </>
+  );
+  const headingClass = "flex min-w-0 flex-1 basis-60 items-start gap-3 rounded-2xl text-left";
+
   return (
     <article id={`week-${week._id}`} className="scroll-mt-28 rounded-[2rem] bg-card">
       <div className="flex flex-wrap items-start gap-x-3 gap-y-3 p-4 sm:p-5">
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={open ? bodyId : undefined}
-          onClick={onToggle}
-          className="flex min-w-0 flex-1 basis-60 items-start gap-3 rounded-2xl text-left focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
-        >
-          <span
-            className={`grid size-11 shrink-0 place-items-center rounded-full text-base font-semibold tabular-nums ${
-              published ? "bg-ink text-highlighter" : "bg-panel text-ink"
-            }`}
+        {onToggle ? (
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={open ? bodyId : undefined}
+            onClick={onToggle}
+            className={`${headingClass} focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink`}
           >
-            {index + 1}
-          </span>
-          <span className="min-w-0 flex-1 pt-0.5">
-            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="min-w-0 break-words text-lg font-medium leading-snug tracking-tight">{week.title}</span>
-              <Pill tone={published ? "lime" : "panel"}>{published ? "Published" : "Draft"}</Pill>
-            </span>
-            <span className="mt-1 block text-sm text-graphite">
-              <span className={published ? "text-ok" : ""}>
-                {published ? "Students see this week" : canEdit ? "Only you see this" : "Hidden from students"}
-              </span>
-              <span aria-hidden> · </span>
-              {summary}
-            </span>
-          </span>
-          <ChevronDown
-            className={`mt-3 size-5 shrink-0 text-graphite transition-transform duration-200 ${open ? "rotate-180" : ""}`}
-          />
-        </button>
+            {heading}
+            <ChevronDown
+              className={`mt-3 size-5 shrink-0 text-graphite transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+            />
+          </button>
+        ) : (
+          <div className={headingClass}>{heading}</div>
+        )}
         {canEdit && (
           <div className="ml-auto flex items-center gap-1.5">
             {published ? (

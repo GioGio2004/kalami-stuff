@@ -179,7 +179,15 @@ async function lecturersFor(ctx: QueryCtx, student: Student, courseId: Id<"cours
       .take(100);
     for (const member of memberships) {
       const group = await ctx.db.get("groups", member.groupId);
-      if (group !== null) await add(group.ownerId, group.name);
+      if (group === null) continue;
+      // The lecturers who teach the group, not the admin who made it.
+      const teachers = await ctx.db
+        .query("groupLecturers")
+        .withIndex("by_groupId_and_userId", (q) => q.eq("groupId", group._id))
+        .take(50);
+      for (const teacher of teachers) await add(teacher.userId, group.name);
+      // A group made before groups moved to admins still reaches its owner until it's migrated.
+      if (group.nameKey === undefined) await add(group.ownerId, group.name);
     }
   }
   return [...found.values()];

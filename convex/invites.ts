@@ -139,6 +139,59 @@ export const listForUniversity = query({
 });
 
 /**
+ * Every staff invite, newest first, with the university it's for (none for an
+ * independent teacher): the super admin's one list to keep track of who was
+ * invited where.
+ */
+export const listAll = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      _id: v.id("invites"),
+      _creationTime: v.number(),
+      email: v.string(),
+      role: inviteRoleValidator,
+      universityId: v.optional(v.id("universities")),
+      universityName: v.optional(localizedTextValidator),
+      // Only for pending invites, which can still be sent or withdrawn.
+      token: v.optional(v.string()),
+      expiresAt: v.number(),
+      acceptedAt: v.optional(v.number()),
+      revokedAt: v.optional(v.number()),
+    }),
+  ),
+  handler: async (ctx) => {
+    await requireSuperAdmin(ctx);
+    const invites = await ctx.db.query("invites").order("desc").take(500);
+    const names = new Map<Id<"universities">, { ka: string; en: string } | undefined>();
+    const out = [];
+    for (const invite of invites) {
+      let universityName: { ka: string; en: string } | undefined;
+      if (invite.universityId !== undefined) {
+        if (!names.has(invite.universityId)) {
+          names.set(invite.universityId, (await ctx.db.get("universities", invite.universityId))?.name);
+        }
+        universityName = names.get(invite.universityId);
+      }
+      const pending = invite.acceptedAt === undefined && invite.revokedAt === undefined;
+      out.push({
+        _id: invite._id,
+        _creationTime: invite._creationTime,
+        email: invite.email,
+        role: invite.role,
+        universityId: invite.universityId,
+        universityName,
+        token: pending ? invite.token : undefined,
+        expiresAt: invite.expiresAt,
+        acceptedAt: invite.acceptedAt,
+        revokedAt: invite.revokedAt,
+      });
+    }
+    return out;
+  },
+});
+
+/**
  * Deliberately public: the invitee opens the link before they have an account.
  * The unguessable token is the secret, and accepting still requires the invited email.
  * Expiry is left to the caller because queries must not read the clock.

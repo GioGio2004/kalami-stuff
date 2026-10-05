@@ -10,6 +10,7 @@ import { errorMessage } from "@/lib/errors";
 import { AssessmentRow } from "./AssessmentRow";
 import { canUseDrive, DriveStrip } from "./DriveStatus";
 import { MoveToSelect, WeekCard, type MoveTarget } from "./OutlineWeek";
+import { WEEK_PANEL_ID, WeekIndex, WeekPanel, WeekSteps } from "./WeekSlider";
 import {
   KIND_LABEL,
   type AssessmentId,
@@ -26,7 +27,8 @@ export type OutlineActions = {
   onConnectDrive: () => Promise<void>;
   /** The Drive owner is gone: new folders in the viewer's own Drive. */
   onMoveToMyDrive: () => Promise<void>;
-  onCreateWeek: (args: { title?: string; description?: string; driveFolder?: boolean }) => Promise<void>;
+  /** Resolves to the new week's id, so the outline can switch to it. */
+  onCreateWeek: (args: { title?: string; description?: string; driveFolder?: boolean }) => Promise<WeekId | void>;
   onUpdateWeek: (weekId: WeekId, patch: { title?: string; description?: string }) => Promise<void>;
   onMoveWeek: (weekId: WeekId, direction: "up" | "down") => Promise<void>;
   onPublishWeek: (weekId: WeekId) => Promise<void>;
@@ -84,8 +86,12 @@ export function CourseOutline({
   const [dialog, setDialog] = useState<Dialogs | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
-  const [openWeeks, setOpenWeeks] = useState<Record<string, boolean>>({});
+  // The week on show, once the person picks one, and which side it slides in from.
+  const [picked, setPicked] = useState<string | null>(null);
+  const [direction, setDirection] = useState(0);
   const hash = useLocationHash();
+  const storageKey = data ? `kalami:outline-week:${data.courseId}` : null;
+  const storedWeek = useSessionValue(storageKey);
   const scrolledTo = useRef<string | null>(null);
   const ready = data !== undefined;
 
@@ -103,10 +109,36 @@ export function CourseOutline({
   const { canEdit, weeks, exams, unplaced } = data;
   const courseId = data.courseId;
   const driveUsable = canUseDrive(data, connection);
-  const lastPublished = [...weeks].reverse().find((w) => w.status === "published")?._id;
-  const isOpen = (week: OutlineWeek) =>
-    openWeeks[week._id] ?? (week.status === "draft" || week._id === lastPublished || hash === `#week-${week._id}`);
-  const allOpen = weeks.every(isOpen);
+
+  // Which week shows: the one picked here, else the one in the link (#week-…), else the
+  // last one looked at in this tab (back from a quiz), else the first still in draft.
+  const findWeek = (id: string | null) => (id === null ? undefined : weeks.find((w) => w._id === id));
+  const selected =
+    findWeek(picked) ??
+    findWeek(hash.startsWith("#week-") ? hash.slice("#week-".length) : null) ??
+    findWeek(storedWeek) ??
+    weeks.find((w) => w.status === "draft") ??
+    weeks.at(-1);
+  const selectedIndex = selected ? weeks.indexOf(selected) : -1;
+  const prevWeek = weeks[selectedIndex - 1];
+  const nextWeek = weeks[selectedIndex + 1];
+
+  /** Shows a week; `reveal` scrolls back up to it when it starts above the screen (the steps sit under a long week). */
+  function select(id: WeekId, reveal = false) {
+    const to = weeks.findIndex((w) => w._id === id);
+    setDirection(to === -1 ? 1 : Math.sign(to - selectedIndex));
+    setPicked(id);
+    if (storageKey) writeSession(storageKey, id);
+    // In the address too, so a reload keeps it. The scroll effect above must not jump to it.
+    scrolledTo.current = `#week-${id}`;
+    window.history.replaceState(null, "", `#week-${id}`);
+    if (reveal) {
+      requestAnimationFrame(() => {
+        const panel = document.getElementById(WEEK_PANEL_ID);
+        if (panel && panel.getBoundingClientRect().top < 0) panel.scrollIntoView({ block: "start" });
+      });
+    }
+  }
 
   async function run(action: () => Promise<void>) {
     setError(null);
@@ -117,7 +149,24 @@ export function CourseOutline({
     }
   }
 
+  // A new week opens straight away; a removed one hands over to its neighbour.
+  const dialogActions: OutlineActions = {
+    ...actions,
+    onCreateWeek: async (args) => {
+      const weekId = await actions.onCreateWeek(args);
+      if (weekId) select(weekId);
+      return weekId;
+    },
+    onRemoveWeek: async (weekId) => {
+      const at = weeks.findIndex((w) => w._id === weekId);
+      const neighbour = weeks[at + 1] ?? weeks[at - 1];
+      await actions.onRemoveWeek(weekId);
+      if (neighbour) select(neighbour._id);
+    },
+  };
+
   const weekTargets = weeks.map<MoveTarget>((w) => ({ value: w._id, label: w.title }));
+  const publishedCount = weeks.filter((w) => w.status === "published").length;
 
   return (
     <div className="space-y-4">
@@ -166,57 +215,69 @@ export function CourseOutline({
             <FormError>{error}</FormError>
           </div>
         )}
-        {weeks.length > 1 && (
-          <div className="mt-3 flex justify-end">
-            <button
-              type="button"
-              onClick={() => setOpenWeeks(Object.fromEntries(weeks.map((w) => [w._id, !allOpen])))}
-              className="rounded-full px-2 py-1 text-sm text-graphite underline-offset-4 hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-ink"
-            >
-              {allOpen ? "Collapse all weeks" : "Expand all weeks"}
-            </button>
+        {selected && weeks.length > 1 && (
+          <div className="mt-5">
+            <WeekIndex weeks={weeks} selectedId={selected._id} onSelect={(id) => select(id)} />
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-1 text-xs text-graphite">
+              <span>
+                Week {selectedIndex + 1} of {weeks.length} · {publishedCount} published
+              </span>
+              <span className="flex items-center gap-3">
+                <span className="flex items-center gap-1.5">
+                  <span aria-hidden className="size-2.5 rounded-full bg-ink" />
+                  Published
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span aria-hidden className="size-2.5 rounded-full bg-panel-strong" />
+                  Draft
+                </span>
+              </span>
+            </div>
           </div>
         )}
       </section>
 
-      {weeks.length === 0 ? (
+      {weeks.length === 0 || !selected ? (
         <EmptyOutline canEdit={canEdit} onNewWeek={() => setDialog({ kind: "new-week" })} />
       ) : (
-        <ol className="space-y-3" aria-label="Weeks">
-          {weeks.map((week, index) => (
-            <li key={week._id}>
-              <WeekCard
-                week={week}
-                index={index}
-                total={weeks.length}
-                courseId={courseId}
-                canEdit={canEdit}
-                driveUsable={driveUsable}
-                open={isOpen(week)}
-                onToggle={() => setOpenWeeks((current) => ({ ...current, [week._id]: !isOpen(week) }))}
-                moveTargets={[...weekTargets.filter((t) => t.value !== week._id), { value: null, label: "Unplaced" }]}
-                actions={{
-                  onEdit: () => setDialog({ kind: "edit-week", week }),
-                  onRemove: () => setDialog({ kind: "remove-week", week }),
-                  onPublish: () => actions.onPublishWeek(week._id),
-                  onConfirmPublish: () => setDialog({ kind: "publish-week", week }),
-                  onUnpublish: () => actions.onUnpublishWeek(week._id),
-                  onMove: (direction) => actions.onMoveWeek(week._id, direction),
-                  onNewLesson: () => setDialog({ kind: "new-lesson", week }),
-                  onMoveLesson: actions.onMoveLesson,
-                  onAddLink: () => setDialog({ kind: "link", week }),
-                  onEditLink: (link) => setDialog({ kind: "link", week, link }),
-                  onRemoveLink: (linkId) => actions.onRemoveLink(week._id, linkId),
-                  onMoveLink: (linkId, direction) => actions.onMoveLink(week._id, linkId, direction),
-                  onAddFolder: () => actions.onAddFolder(week._id),
-                  onRetryDrive: () => actions.onRetryDrive(week._id),
-                  onNewAssessment: (assessmentKind) => setDialog({ kind: "new-assessment", assessmentKind, week }),
-                  onPlace: actions.onPlace,
-                }}
-              />
-            </li>
-          ))}
-        </ol>
+        <div className="space-y-3">
+          <WeekPanel
+            key={selected._id}
+            weekId={selected._id}
+            direction={direction}
+            onPrev={prevWeek && (() => select(prevWeek._id))}
+            onNext={nextWeek && (() => select(nextWeek._id))}
+          >
+            <WeekCard
+              week={selected}
+              index={selectedIndex}
+              total={weeks.length}
+              courseId={courseId}
+              canEdit={canEdit}
+              driveUsable={driveUsable}
+              moveTargets={[...weekTargets.filter((t) => t.value !== selected._id), { value: null, label: "Unplaced" }]}
+              actions={{
+                onEdit: () => setDialog({ kind: "edit-week", week: selected }),
+                onRemove: () => setDialog({ kind: "remove-week", week: selected }),
+                onPublish: () => actions.onPublishWeek(selected._id),
+                onConfirmPublish: () => setDialog({ kind: "publish-week", week: selected }),
+                onUnpublish: () => actions.onUnpublishWeek(selected._id),
+                onMove: (to) => actions.onMoveWeek(selected._id, to),
+                onNewLesson: () => setDialog({ kind: "new-lesson", week: selected }),
+                onMoveLesson: actions.onMoveLesson,
+                onAddLink: () => setDialog({ kind: "link", week: selected }),
+                onEditLink: (link) => setDialog({ kind: "link", week: selected, link }),
+                onRemoveLink: (linkId) => actions.onRemoveLink(selected._id, linkId),
+                onMoveLink: (linkId, to) => actions.onMoveLink(selected._id, linkId, to),
+                onAddFolder: () => actions.onAddFolder(selected._id),
+                onRetryDrive: () => actions.onRetryDrive(selected._id),
+                onNewAssessment: (assessmentKind) => setDialog({ kind: "new-assessment", assessmentKind, week: selected }),
+                onPlace: actions.onPlace,
+              }}
+            />
+          </WeekPanel>
+          {weeks.length > 1 && <WeekSteps prev={prevWeek} next={nextWeek} onSelect={(id) => select(id, true)} />}
+        </div>
       )}
 
       <section className="rounded-[2rem] bg-card p-5 sm:p-6">
@@ -299,7 +360,7 @@ export function CourseOutline({
             locale={locale}
             driveUsable={driveUsable}
             driveDefault={data.drive?.mine === true}
-            actions={actions}
+            actions={dialogActions}
             onDone={() => setDialog(null)}
           />
         )}
@@ -807,6 +868,34 @@ function PublishWeek({ week, onPublish, onCancel }: { week: OutlineWeek; onPubli
       </DialogFooter>
     </div>
   );
+}
+
+// --- Remembering the week on show, for this tab only ---------------------------------------
+
+const noSubscription = () => () => {};
+
+/** A sessionStorage value, read without effects; null on the server and while hydrating. */
+function useSessionValue(key: string | null): string | null {
+  return useSyncExternalStore(
+    noSubscription,
+    () => {
+      if (key === null) return null;
+      try {
+        return window.sessionStorage.getItem(key);
+      } catch {
+        return null;
+      }
+    },
+    () => null,
+  );
+}
+
+function writeSession(key: string, value: string) {
+  try {
+    window.sessionStorage.setItem(key, value);
+  } catch {
+    // Storage blocked: the week just isn't remembered.
+  }
 }
 
 // --- The URL's #hash, read without effects ------------------------------------------------

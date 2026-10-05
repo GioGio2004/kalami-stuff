@@ -326,16 +326,16 @@ describe("contact card: hardening", () => {
 
   test("a bounced address isn't emailed again, even without an account", async () => {
     vi.stubEnv("RESEND_API_KEY", "re_test");
-    const { t, nino } = await seed();
-    const groupId = await nino.mutation(api.groups.create, { name: "G" });
-    const first = await nino.mutation(api.groups.invite, { groupId, emails: ["nobody@example.com"] });
+    const { t, admin, universityId } = await seed();
+    const groupId = await admin.mutation(api.groups.create, { name: "G", universityId });
+    const first = await admin.mutation(api.groups.invite, { groupId, emails: ["nobody@example.com"] });
     expect(first.emailed).toBe(1);
     const emailId = await t.run(async (ctx) => (await ctx.db.query("emailLog").first())!.emailId);
     await t.run(async (ctx) => {
       const { recordEmailStatus } = await import("./email");
       await recordEmailStatus(ctx, emailId, "bounced");
     });
-    const group2 = await nino.mutation(api.groups.create, { name: "G2" });
-    expect((await nino.mutation(api.groups.invite, { groupId: group2, emails: ["nobody@example.com"] })).emailed).toBe(0);
+    const group2 = await admin.mutation(api.groups.create, { name: "G2", universityId });
+    expect((await admin.mutation(api.groups.invite, { groupId: group2, emails: ["nobody@example.com"] })).emailed).toBe(0);
   });
 });

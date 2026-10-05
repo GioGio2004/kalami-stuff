@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from "react";
-import { Block, LessonBlocks } from "@/components/lessons/LessonBlocks";
+import { Block } from "@/components/lessons/LessonBlocks";
+import { LessonSlides } from "@/components/lessons/LessonSlides";
 import type { LessonBlock, LessonBlockType } from "@/components/lessons/types";
 import type { LessonBlockInput, LessonDetail } from "@/components/studio/types";
 import { Button, buttonClass } from "@/components/ui/buttons";
@@ -32,9 +33,10 @@ type Mode = "edit" | "preview";
 
 /**
  * The lesson editor: a lesson is a list of blocks, edited here as a draft and
- * saved whole (Save, or Ctrl/Cmd+S). Wide screens show a live preview beside
- * the blocks, rendered by the same component students read lessons with;
- * phones switch between Edit and Preview.
+ * saved whole (Save, or Ctrl/Cmd+S). Students read a lesson as slides, one
+ * block per slide; wide screens show that slide beside the blocks, following
+ * the block being edited, with the same player students use. Phones switch
+ * between Edit and Preview.
  */
 export function LessonEditor({
   lesson,
@@ -59,9 +61,8 @@ export function LessonEditor({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [saveError, setSaveError] = useState<{ message: string; key?: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // The block being edited, by its draft key; the preview shows its slide.
   const [selected, setSelected] = useState<string | null>(null);
-  const [previewScope, setPreviewScope] = useState<"block" | "lesson">("lesson");
-  const previewBox = useRef<HTMLDivElement>(null);
   const [fresh, setFresh] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
@@ -194,17 +195,6 @@ export function LessonEditor({
     };
   }, [dirty]);
 
-  // The whole-lesson preview follows the block being edited.
-  useEffect(() => {
-    if (previewScope !== "lesson" || selected === null) return;
-    const box = previewBox.current;
-    const target = box?.querySelector<HTMLElement>(`[data-preview="${CSS.escape(selected)}"]`);
-    if (box && target) {
-      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      box.scrollTo({ top: target.offsetTop - 12, behavior: reduce ? "auto" : "smooth" });
-    }
-  }, [selected, previewScope]);
-
   // --- Editing the list ---
 
   function update(key: string, block: LessonBlock) {
@@ -245,7 +235,7 @@ export function LessonEditor({
   // Blocks keyed by the editor's keys, so previews keep their state while ids change on save.
   const previewItems = items.map((item) => ({ ...item.block, id: item.key }));
   const readyBlocks = previewItems.filter((block) => previewGap(block) === null);
-  const selectedItem = items.find((item) => item.key === selected);
+  const unfinished = previewItems.length - readyBlocks.length;
 
   return (
     <div className="rounded-[2.75rem] bg-panel px-4 pb-4 pt-8 sm:px-10 sm:pb-8 sm:pt-10 lg:px-12">
@@ -346,25 +336,32 @@ export function LessonEditor({
       </div>
 
       {mode === "preview" ? (
-        <article className="mx-auto mt-8 max-w-[720px] rounded-[2rem] bg-paper px-5 py-8 ring-1 ring-line sm:px-10 sm:py-12">
-          {dirty && <p className="mb-4 font-hand text-xl leading-none text-graphite">Previewing your unsaved changes</p>}
-          <p className="text-sm text-graphite">
-            {lesson.courseTitle} · {lesson.weekTitle}
-          </p>
-          <h2 className="mt-2 text-3xl font-medium leading-tight tracking-[-0.03em] sm:text-4xl">{lesson.title}</h2>
-          {readyBlocks.length === 0 ? (
-            <p className="mt-8 rounded-3xl border-2 border-dashed border-line px-5 py-8 text-center text-graphite">
-              Nothing to read yet.
+        <article className="mx-auto mt-8 max-w-[52rem] rounded-[2rem] bg-paper px-3 py-6 ring-1 ring-line sm:px-8 sm:py-10">
+          <div className="px-2 sm:px-0">
+            {dirty && <p className="mb-3 font-hand text-xl leading-none text-graphite">Previewing your unsaved changes</p>}
+            <p className="text-sm text-graphite">
+              {lesson.courseTitle} · {lesson.weekTitle}
             </p>
-          ) : (
-            <LessonBlocks blocks={readyBlocks} className="mt-8" />
-          )}
-          {readyBlocks.length < previewItems.length && (
-            <p className="mt-8 text-sm text-graphite">
-              {previewItems.length - readyBlocks.length} unfinished block
-              {previewItems.length - readyBlocks.length === 1 ? " isn't" : "s aren't"} shown.
-            </p>
-          )}
+            <h2 className="mt-1.5 text-2xl font-medium leading-tight tracking-[-0.03em] sm:text-3xl">{lesson.title}</h2>
+            {unfinished > 0 && (
+              <p className="mt-2 text-sm text-graphite">
+                {unfinished} unfinished block{unfinished === 1 ? " isn't" : "s aren't"} shown: {readyBlocks.length} slide
+                {readyBlocks.length === 1 ? "" : "s"} of {previewItems.length} blocks.
+              </p>
+            )}
+          </div>
+          <LessonSlides
+            blocks={readyBlocks}
+            followId={selected}
+            onNavigate={setSelected}
+            label={`${lesson.title}, preview`}
+            className="mt-6"
+            empty={
+              <p className="mt-6 rounded-3xl border-2 border-dashed border-line px-5 py-8 text-center text-graphite">
+                Nothing to read yet.
+              </p>
+            }
+          />
         </article>
       ) : (
         <div className="mt-8 grid gap-4 *:min-w-0 lg:grid-cols-12">
@@ -402,63 +399,38 @@ export function LessonEditor({
                 ))}
               </ol>
             )}
+            {/* In the blocks' column, so it floats over the forms and never over the preview. */}
+            {canEdit && (
+              <SaveBar dirty={dirty} state={saveState} failed={saveError !== null} floating onSave={() => void save()} />
+            )}
           </div>
 
           <aside aria-label="Live preview" className="hidden lg:col-span-5 lg:block">
-            <div className="sticky top-24 rounded-[2rem] bg-paper p-5 ring-1 ring-line">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="font-hand text-[1.35rem] leading-none text-graphite">As students see it</p>
-                <Segmented
-                  label="Preview"
-                  value={previewScope}
-                  options={[
-                    { value: "lesson", label: "Lesson" },
-                    { value: "block", label: "This block" },
-                  ]}
-                  onChange={setPreviewScope}
-                />
-              </div>
-              <div ref={previewBox} className="relative mt-4 max-h-[calc(100dvh-12rem)] overflow-y-auto overscroll-contain p-1">
-                {previewScope === "block" ? (
-                  selectedItem ? (
-                    <PreviewBlock block={{ ...selectedItem.block, id: selectedItem.key }} />
-                  ) : (
-                    <p className="rounded-3xl border-2 border-dashed border-line px-5 py-8 text-center text-sm text-graphite">
-                      Click into a block to see it here.
-                    </p>
-                  )
-                ) : previewItems.length === 0 ? (
-                  <p className="rounded-3xl border-2 border-dashed border-line px-5 py-8 text-center text-sm text-graphite">
+            <div className="sticky top-24 flex max-h-[calc(100dvh-8rem)] flex-col rounded-[2rem] bg-paper p-5 ring-1 ring-line">
+              <p className="font-hand text-[1.35rem] leading-none text-graphite">As students see it</p>
+              <p className="mt-1 text-xs text-graphite">One slide per block. Click into a block to see its slide.</p>
+              {/* Unfinished blocks stay in as notes, so the slides line up with the blocks. */}
+              <LessonSlides
+                blocks={previewItems}
+                followId={selected}
+                onNavigate={setSelected}
+                renderBlock={(block) => <PreviewBlock block={block} />}
+                compact
+                label="Live preview"
+                className="mt-4 flex-1"
+                empty={
+                  <p className="mt-4 rounded-3xl border-2 border-dashed border-line px-5 py-8 text-center text-sm text-graphite">
                     Nothing to read yet.
                   </p>
-                ) : (
-                  <div className="space-y-6">
-                    {previewItems.map((block) => (
-                      <div
-                        key={block.id}
-                        data-preview={block.id}
-                        className={`rounded-3xl transition ${
-                          block.id === selected ? "ring-2 ring-highlighter-deep ring-offset-4 ring-offset-paper" : ""
-                        }`}
-                      >
-                        <PreviewBlock block={block} />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                }
+              />
             </div>
           </aside>
         </div>
       )}
 
-      {canEdit && (
-        <SaveBar
-          dirty={dirty}
-          state={saveState}
-          failed={saveError !== null}
-          onSave={() => void save()}
-        />
+      {canEdit && mode === "preview" && (
+        <SaveBar dirty={dirty} state={saveState} failed={saveError !== null} floating={false} onSave={() => void save()} />
       )}
 
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} label="Delete lesson">
@@ -790,17 +762,20 @@ function SaveBar({
   dirty,
   state,
   failed,
+  floating,
   onSave,
 }: {
   dirty: boolean;
   state: "idle" | "saving" | "saved";
   failed: boolean;
+  /** Stays in view while scrolling; off in Preview, where the slide controls float instead. */
+  floating: boolean;
   onSave: () => void;
 }) {
   const text =
     state === "saving" ? "Saving…" : failed ? "Not saved: see the message above" : dirty ? "Unsaved changes" : "Saved";
   return (
-    <div className="pointer-events-none sticky bottom-3 z-20 mt-6 flex justify-center sm:bottom-5">
+    <div className={`pointer-events-none z-20 mt-6 flex justify-center ${floating ? "sticky bottom-3 sm:bottom-5" : ""}`}>
       <div
         className={`pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-full py-2 pl-5 pr-2 shadow-xl shadow-ink/15 ring-1 transition ${
           dirty ? "bg-ink text-paper ring-ink" : "bg-card text-ink ring-line"

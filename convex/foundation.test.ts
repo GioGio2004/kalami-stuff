@@ -456,4 +456,45 @@ describe("invites", () => {
       "FORBIDDEN",
     );
   });
+
+  test("the super admin invites lecturers to any university from one place and sees every invite there", async () => {
+    const { t, admin, universityId } = await setup();
+    const otherUniversityId = await admin.mutation(api.universities.create, {
+      nameKa: "სხვა უნივერსიტეტი",
+      nameEn: "Other University",
+      slug: "other-uni",
+    });
+    // Picked per invite: one university, another, and none (an independent teacher).
+    const first = await admin.mutation(api.invites.create, { universityId, email: "a@example.com", role: "lecturer" });
+    await admin.mutation(api.invites.create, { universityId: otherUniversityId, email: "b@example.com", role: "lecturer" });
+    await admin.mutation(api.invites.create, { email: "tutor@example.com", role: "lecturer" });
+
+    const all = await admin.query(api.invites.listAll, {});
+    expect(all.map((i) => [i.email, i.universityName?.en ?? null])).toEqual([
+      ["tutor@example.com", null],
+      ["b@example.com", "Other University"],
+      ["a@example.com", "Test University"],
+    ]);
+    expect(all.every((i) => typeof i.token === "string")).toBe(true);
+
+    // Accepting puts the lecturer in the university the invite was for.
+    expect(await t.withIdentity(person("b")).mutation(api.invites.accept, { token: all[1].token! })).toEqual({
+      universityId: otherUniversityId,
+      role: "lecturer",
+    });
+    await admin.mutation(api.invites.revoke, { inviteId: first.inviteId });
+    const after = await admin.query(api.invites.listAll, {});
+    const accepted = after.find((i) => i.email === "b@example.com")!;
+    const withdrawn = after.find((i) => i.email === "a@example.com")!;
+    expect(accepted.acceptedAt).toEqual(expect.any(Number));
+    expect(withdrawn.revokedAt).toEqual(expect.any(Number));
+    // Only pending invites carry their link.
+    expect([accepted.token, withdrawn.token]).toEqual([undefined, undefined]);
+
+    // Only the super admin gets the list across universities.
+    const { token } = await admin.mutation(api.invites.create, { universityId, email: "dean@example.com", role: "uni_admin" });
+    const dean = t.withIdentity(person("dean"));
+    await dean.mutation(api.invites.accept, { token });
+    await expectAppError(dean.query(api.invites.listAll, {}), "FORBIDDEN");
+  });
 });

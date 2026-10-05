@@ -212,12 +212,23 @@ export default defineSchema({
   // Groups
   // -------------------------------------------------------------------------
 
-  // A class of students a lecturer teaches: "CS-101 A", "Saturday tutoring".
-  // Students join through the group's link or a personal email invite; every
-  // course shared with the group reaches all of its members.
+  // A class of students: "ICT-24-1", "Saturday tutoring". A university's groups
+  // are made by its admins and shared by every lecturer who teaches them, so a
+  // class exists once however many lecturers it has. Students join through the
+  // group's link or a personal email invite; every course shared with the group
+  // reaches all of its members.
   groups: defineTable({
+    // Who made it: a university admin, or an independent teacher for their own group.
     ownerId: v.id("users"),
+    // The university it belongs to: its admins manage it, its lecturers find and
+    // join it. Absent for an independent teacher's private group, which only its
+    // owner manages and nobody else can find. Also absent on rows made before
+    // groups moved to admins, until groups.migrateToUniversityGroups runs.
+    universityId: v.optional(v.id("universities")),
     name: v.string(),
+    // The name lowercased with spaces squeezed (groupNameKey): a university
+    // can't have two groups whose names differ only in case or spacing.
+    nameKey: v.optional(v.string()),
     description: v.optional(v.string()),
     // The secret in the group's shared link (app.kalami.space/join/<code>).
     inviteCode: v.string(),
@@ -231,7 +242,19 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_ownerId", ["ownerId"])
-    .index("by_inviteCode", ["inviteCode"]),
+    .index("by_inviteCode", ["inviteCode"])
+    .index("by_universityId_and_nameKey", ["universityId", "nameKey"]),
+
+  // The lecturers teaching a group: they joined it (a university's group) or
+  // made it (an independent teacher's own). They share their own courses with
+  // it; they don't manage its students.
+  groupLecturers: defineTable({
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+    joinedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_groupId_and_userId", ["groupId", "userId"]),
 
   groupMembers: defineTable({
     groupId: v.id("groups"),

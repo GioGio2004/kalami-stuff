@@ -2,6 +2,8 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { AdminView } from "@/components/admin/AdminView";
+import { SuperAdminInvites } from "@/components/admin/SuperAdminInvites";
+import { UniversityGroups } from "@/components/admin/UniversityGroups";
 import { UniversityInvites } from "@/components/admin/UniversityInvites";
 import { useCurrentUser } from "@/components/CurrentUserProvider";
 import { ButtonLink } from "@/components/ui/buttons";
@@ -34,10 +36,15 @@ export default function AdminPage() {
       isSuperAdmin={me.isSuperAdmin}
       universities={universities}
       onCreateUniversity={createUniversity}
-      renderInvites={(university) => (
-        <UniversityInvites universityId={university._id} canInviteAdmins={me.isSuperAdmin} />
-      )}
-      independent={me.isSuperAdmin ? <UniversityInvites canInviteAdmins={false} /> : undefined}
+      // The super admin invites everyone from one place, picking the university per invite;
+      // a university admin invites inside their university.
+      invites={me.isSuperAdmin ? <SuperAdminInvites universities={universities} /> : undefined}
+      renderInvites={
+        me.isSuperAdmin
+          ? undefined
+          : (university) => <UniversityInvites universityId={university._id} canInviteAdmins={false} />
+      }
+      renderGroups={(university) => <UniversityGroups universityId={university._id} />}
     />
   );
 }

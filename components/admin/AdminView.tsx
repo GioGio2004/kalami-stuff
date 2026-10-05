@@ -36,12 +36,19 @@ export function AdminView({
   universities,
   onCreateUniversity,
   renderInvites,
+  renderGroups,
+  invites,
   independent,
 }: {
   isSuperAdmin: boolean;
   universities: AdminUniversity[] | undefined;
   onCreateUniversity: (args: { nameKa: string; nameEn: string; slug: string }) => Promise<unknown>;
-  renderInvites: (university: AdminUniversity) => ReactNode;
+  /** A university admin's invites, inside each university. */
+  renderInvites?: (university: AdminUniversity) => ReactNode;
+  /** The super admin's invites for every university in one place (InviteCenter), above the universities. */
+  invites?: ReactNode;
+  /** The university's groups: admins make them, lecturers join them. */
+  renderGroups?: (university: AdminUniversity) => ReactNode;
   /** Super admin: invites for teachers outside any university (schools, private lessons). */
   independent?: ReactNode;
 }) {
@@ -61,8 +68,8 @@ export function AdminView({
           </AnimatedHeading>
           <Enter as="p" delay={0.6} className="mt-5 max-w-md text-lg leading-relaxed text-graphite">
             {isSuperAdmin
-              ? "Add universities, appoint their admins and invite lecturers."
-              : "Invite the lecturers of your university."}
+              ? "Add universities, appoint their admins, invite lecturers and make each university's groups."
+              : "Invite the lecturers of your university and make its groups, one per class."}
           </Enter>
           {universities && (
             <div className="mt-7 flex flex-wrap gap-2 text-sm">
@@ -81,6 +88,24 @@ export function AdminView({
           </Enter>
         )}
       </Enter>
+
+      {invites && (
+        <section className="rounded-[2.5rem] bg-panel p-3 sm:p-6 lg:p-8">
+          <header className="flex flex-wrap items-center gap-4 px-2 pb-6 pt-2">
+            <span className="grid size-14 shrink-0 place-items-center rounded-full bg-ink text-highlighter">
+              <Building className="size-6" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-2xl font-medium tracking-tight">Invites</h2>
+              <p className="text-sm text-graphite">
+                Lecturers and university admins for every university, and independent teachers: invite them and keep
+                track here.
+              </p>
+            </div>
+          </header>
+          {invites}
+        </section>
+      )}
 
       {independent && (
         <Reveal as="section" kind="up" amount={0.1} className="rounded-[2.5rem] bg-panel p-3 sm:p-6 lg:p-8">
@@ -130,7 +155,8 @@ export function AdminView({
                 </span>
               </div>
             </header>
-            {renderInvites(university)}
+            {renderInvites?.(university)}
+            {renderGroups && <div className={renderInvites ? "mt-4" : ""}>{renderGroups(university)}</div>}
           </Reveal>
         ))
       )}

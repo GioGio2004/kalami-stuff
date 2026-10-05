@@ -2,31 +2,42 @@ import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { sendGroupInviteEmail } from "../email";
-import { courseAccess, requireCourseEditor, type Actor } from "../lib/access";
-import { getCurrentUser, isSuperAdmin, requireIdentity } from "../lib/auth";
+import { courseAccess, creatorUniversityIds, requireCourseEditor, type Actor } from "../lib/access";
+import { getCurrentUser, getMemberships, isStaffRole, isSuperAdmin, requireIdentity } from "../lib/auth";
 import { appError } from "../lib/errors";
 import { normalizeEmail, optionalText, requireText } from "../lib/input";
 import { enforceLimit } from "../lib/limits";
 import { generateLinkToken } from "../lib/tokens";
-import { courseStatusValidator, groupJoinViaValidator } from "../lib/validators";
+import { courseStatusValidator, groupJoinViaValidator, localizedTextValidator } from "../lib/validators";
 import { displayName, lecturerName, logAudit } from "./audit";
 import { enrollThroughGroup, unenrollFromGroup } from "./enrollments";
 import type { Student } from "./learn";
 
 /**
- * Groups: a lecturer's class of students. Students join through the group's
- * shared link or a personal email invite, and every course shared with the
- * group reaches all its members (as enrollment rows, see model/enrollments.ts).
+ * Groups: a class of students. A university's groups are made and run by its
+ * admins; its lecturers find them and join to teach them, each sharing their
+ * own courses, so a class exists once however many lecturers it has. A teacher
+ * outside any university (a school, private lessons) makes and runs private
+ * groups of their own. Students join through the group's shared link or a
+ * personal email invite, and every course shared with the group reaches all
+ * its members (as enrollment rows, see model/enrollments.ts).
  *
  * The caps keep every change inside one mutation: sharing a course touches
  * each member once, and a new member touches each shared course once.
  */
 export const MAX_MEMBERS = 500;
 export const MAX_COURSES_PER_GROUP = 50;
+const MAX_LECTURERS = 50;
 const MAX_PENDING_INVITES = 500;
 const MAX_EMAILS_PER_CALL = 100;
 const INVITE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const RESEND_AFTER_MS = 10 * 60 * 1000;
+// Read when a lecturer searches their university's groups or an admin lists them.
+const MAX_GROUPS_PER_UNIVERSITY = 1000;
+const MAX_SEARCH_RESULTS = 50;
+// Leaving a group takes the lecturer's courses out of it in the same mutation:
+// at most this many (course, student) enrollments are updated at once.
+const MAX_UNSHARE_WORK = 4000;
 
 // --- Validators -------------------------------------------------------------------------
 
@@ -45,14 +56,28 @@ export const groupSummaryValidator = v.object({
   archived: v.boolean(),
   members: v.number(),
   pendingInvites: v.number(),
+  // The courses shared with the group that the viewer may see: all of them for
+  // whoever runs the group, a lecturer's own for a lecturer who teaches it.
   courses: v.array(groupCourseValidator),
+  // Shared by other lecturers, for a lecturer who only teaches the group.
+  otherCourses: v.number(),
+  lecturers: v.number(),
+  universityName: v.optional(localizedTextValidator),
+  // An independent teacher's own group, outside any university.
+  isPrivate: v.boolean(),
+  // The viewer runs the group: its university's admin, the super admin, or the owner of a private group.
+  manages: v.boolean(),
+  // The viewer teaches it: they joined it (or own it, for a private group).
+  teaches: v.boolean(),
   updatedAt: v.number(),
 });
 
 export const groupDetailValidator = v.object({
   ...groupSummaryValidator.fields,
+  // The link a lecturer who teaches the group may share; only those who run it change it.
   inviteCode: v.string(),
   ownerName: v.string(),
+  // The lists below are for whoever runs the group; empty for a lecturer who only teaches it.
   memberList: v.array(
     v.object({
       userId: v.id("users"),
@@ -73,6 +98,36 @@ export const groupDetailValidator = v.object({
       emailedAt: v.optional(v.number()),
     }),
   ),
+  lecturerList: v.array(
+    v.object({
+      userId: v.id("users"),
+      name: v.string(),
+      joinedAt: v.number(),
+    }),
+  ),
+});
+
+/** One row of a university's group list on the admin page. */
+export const universityGroupValidator = v.object({
+  _id: v.id("groups"),
+  name: v.string(),
+  description: v.optional(v.string()),
+  archived: v.boolean(),
+  inviteEnabled: v.boolean(),
+  members: v.number(),
+  lecturers: v.number(),
+  courses: v.number(),
+});
+
+/** A group a lecturer can find (and join) at their university. */
+export const groupSearchResultValidator = v.object({
+  _id: v.id("groups"),
+  name: v.string(),
+  description: v.optional(v.string()),
+  universityName: localizedTextValidator,
+  members: v.number(),
+  lecturers: v.number(),
+  joined: v.boolean(),
 });
 
 export const inviteResultValidator = v.object({
@@ -86,12 +141,13 @@ export const inviteResultValidator = v.object({
 
 export const courseGroupsValidator = v.object({
   shared: v.array(v.object({ _id: v.id("groups"), name: v.string(), members: v.number(), archived: v.boolean() })),
-  // The actor's own active groups the course isn't shared with yet.
+  // Active groups the actor teaches that the course isn't shared with yet.
   available: v.array(v.object({ _id: v.id("groups"), name: v.string(), members: v.number() })),
 });
 
 export const groupPreviewValidator = v.object({
   groupName: v.string(),
+  // Who students see the group as coming from: the university, or the teacher of a private group.
   teacher: v.string(),
   courseCount: v.number(),
   // Whether the signed-in person (if any) is already in the group.
@@ -108,6 +164,7 @@ export const invitePreviewValidator = v.object({
 export const myInviteValidator = v.object({
   token: v.string(),
   groupName: v.string(),
+  // Who sent the invite.
   teacher: v.string(),
   expiresAt: v.number(),
 });
@@ -121,13 +178,78 @@ export const myGroupValidator = v.object({
 
 // --- Shared helpers ---------------------------------------------------------------------
 
-/** The group, if the actor owns it (or is the super admin). Everyone else gets NOT_FOUND. */
+/** A group name as a uniqueness key: case and spacing don't make a different group. */
+export function groupNameKey(name: string): string {
+  return name.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * Who runs a group: the super admin, an admin of its university or, for a
+ * private group, its owner. (A group made before groups moved to admins has no
+ * university yet, so its owner still runs it until it's migrated.)
+ */
+function managesGroup(actor: Actor, group: Doc<"groups">): boolean {
+  if (isSuperAdmin(actor.memberships)) return true;
+  if (group.universityId === undefined) return group.ownerId === actor.user._id;
+  return actor.memberships.some((m) => m.role === "uni_admin" && m.universityId === group.universityId);
+}
+
+function administersUniversity(actor: Actor, universityId: Id<"universities">): boolean {
+  return (
+    isSuperAdmin(actor.memberships) ||
+    actor.memberships.some((m) => m.role === "uni_admin" && m.universityId === universityId)
+  );
+}
+
+/** A teacher outside any university (a school, private lessons): they run groups of their own. */
+function isIndependentTeacher(actor: Actor): boolean {
+  return creatorUniversityIds(actor).length === 0 && actor.memberships.some((m) => m.role === "lecturer");
+}
+
+/** The group, if the actor runs it. Everyone else gets NOT_FOUND. */
 async function requireGroupManager(ctx: QueryCtx, actor: Actor, groupId: Id<"groups">) {
   const group = await ctx.db.get("groups", groupId);
-  if (group === null || (group.ownerId !== actor.user._id && !isSuperAdmin(actor.memberships))) {
+  if (group === null || !managesGroup(actor, group)) {
     throw appError("NOT_FOUND", "Group not found.");
   }
   return group;
+}
+
+/** The group, if the actor runs it or teaches it. Everyone else gets NOT_FOUND. */
+async function requireGroupAccess(ctx: QueryCtx, actor: Actor, groupId: Id<"groups">) {
+  const group = await ctx.db.get("groups", groupId);
+  if (group === null) {
+    throw appError("NOT_FOUND", "Group not found.");
+  }
+  const manages = managesGroup(actor, group);
+  const teaches = (await lecturerRow(ctx, groupId, actor.user._id)) !== null;
+  if (!manages && !teaches) {
+    throw appError("NOT_FOUND", "Group not found.");
+  }
+  return { group, manages, teaches };
+}
+
+/** A university's group names are unique, so the same class can't be made twice. */
+async function requireFreeName(
+  ctx: QueryCtx,
+  universityId: Id<"universities">,
+  name: string,
+  except?: Id<"groups">,
+) {
+  const clash = (
+    await ctx.db
+      .query("groups")
+      .withIndex("by_universityId_and_nameKey", (q) => q.eq("universityId", universityId).eq("nameKey", groupNameKey(name)))
+      .take(5)
+  ).find((group) => group._id !== except);
+  if (clash !== undefined) {
+    throw appError(
+      "CONFLICT",
+      clash.archivedAt === undefined
+        ? `There's already a group called “${clash.name}” at this university.`
+        : `There's already a group called “${clash.name}” at this university. It's archived: restore it instead.`,
+    );
+  }
 }
 
 async function membersOf(ctx: QueryCtx, groupId: Id<"groups">) {
@@ -135,6 +257,20 @@ async function membersOf(ctx: QueryCtx, groupId: Id<"groups">) {
     .query("groupMembers")
     .withIndex("by_groupId", (q) => q.eq("groupId", groupId))
     .take(MAX_MEMBERS + 1);
+}
+
+async function lecturersOf(ctx: QueryCtx, groupId: Id<"groups">) {
+  return await ctx.db
+    .query("groupLecturers")
+    .withIndex("by_groupId_and_userId", (q) => q.eq("groupId", groupId))
+    .take(MAX_LECTURERS + 1);
+}
+
+async function lecturerRow(ctx: QueryCtx, groupId: Id<"groups">, userId: Id<"users">) {
+  return await ctx.db
+    .query("groupLecturers")
+    .withIndex("by_groupId_and_userId", (q) => q.eq("groupId", groupId).eq("userId", userId))
+    .unique();
 }
 
 async function linksOf(ctx: QueryCtx, groupId: Id<"groups">) {
@@ -187,19 +323,52 @@ async function uniqueInviteCode(ctx: QueryCtx): Promise<string> {
   throw new Error("Could not find a free invite code");
 }
 
-async function toSummary(ctx: QueryCtx, group: Doc<"groups">) {
-  const [members, links, pending] = await Promise.all([
+/** Whether the actor may see a course: the super admin, its university's admin, or its staff. */
+async function seesCourse(ctx: QueryCtx, actor: Actor, course: Doc<"courses">): Promise<boolean> {
+  if (isSuperAdmin(actor.memberships)) return true;
+  if (
+    course.universityId !== undefined &&
+    actor.memberships.some((m) => m.role === "uni_admin" && m.universityId === course.universityId)
+  ) {
+    return true;
+  }
+  const staff = await ctx.db
+    .query("courseStaff")
+    .withIndex("by_courseId_and_userId", (q) => q.eq("courseId", course._id).eq("userId", actor.user._id))
+    .unique();
+  return staff !== null;
+}
+
+async function ownsCourse(ctx: QueryCtx, courseId: Id<"courses">, userId: Id<"users">): Promise<boolean> {
+  const staff = await ctx.db
+    .query("courseStaff")
+    .withIndex("by_courseId_and_userId", (q) => q.eq("courseId", courseId).eq("userId", userId))
+    .unique();
+  return staff?.role === "owner";
+}
+
+async function toSummary(ctx: QueryCtx, group: Doc<"groups">, actor: Actor) {
+  const manages = managesGroup(actor, group);
+  const [members, links, pending, lecturers, mine] = await Promise.all([
     memberCountOf(ctx, group),
     linksOf(ctx, group._id),
     pendingCountOf(ctx, group),
+    lecturersOf(ctx, group._id),
+    lecturerRow(ctx, group._id, actor.user._id),
   ]);
   const courses = [];
+  let otherCourses = 0;
   for (const link of links) {
     const course = await ctx.db.get("courses", link.courseId);
-    if (course !== null) {
+    if (course === null) continue;
+    // A lecturer who teaches the group sees their own courses in it, not their colleagues'.
+    if (manages || (await seesCourse(ctx, actor, course))) {
       courses.push({ _id: course._id, title: course.title, status: course.status });
+    } else {
+      otherCourses++;
     }
   }
+  const university = group.universityId === undefined ? null : await ctx.db.get("universities", group.universityId);
   return {
     _id: group._id,
     _creationTime: group._creationTime,
@@ -210,6 +379,12 @@ async function toSummary(ctx: QueryCtx, group: Doc<"groups">) {
     members,
     pendingInvites: pending,
     courses,
+    otherCourses,
+    lecturers: lecturers.length,
+    universityName: university?.name,
+    isPrivate: group.universityId === undefined,
+    manages,
+    teaches: mine !== null,
     updatedAt: group.updatedAt,
   };
 }
@@ -236,71 +411,201 @@ async function addMember(
   return true;
 }
 
+/** Who students see a group as coming from: its university, or the teacher of a private group. */
+async function groupHost(ctx: QueryCtx, group: Doc<"groups">, locale: "ka" | "en"): Promise<string> {
+  if (group.universityId !== undefined) {
+    const university = await ctx.db.get("universities", group.universityId);
+    if (university !== null) return university.name[locale];
+  }
+  return lecturerName(await ctx.db.get("users", group.ownerId));
+}
+
 // --- Staff ------------------------------------------------------------------------------
 
-/** The actor's own groups, newest change first. */
+/** The groups the actor teaches (joined, or their own private ones), newest change first. */
 export async function listGroupsFor(ctx: QueryCtx, actor: Actor) {
-  const groups = await ctx.db
+  const seen = new Set<Id<"groups">>();
+  const out = [];
+  const rows = await ctx.db
+    .query("groupLecturers")
+    .withIndex("by_userId", (q) => q.eq("userId", actor.user._id))
+    .take(200);
+  for (const row of rows) {
+    const group = await ctx.db.get("groups", row.groupId);
+    if (group === null || seen.has(group._id)) continue;
+    seen.add(group._id);
+    out.push(await toSummary(ctx, group, actor));
+  }
+  // Groups made before groups moved to admins still show for their owner until migrated.
+  const owned = await ctx.db
     .query("groups")
     .withIndex("by_ownerId", (q) => q.eq("ownerId", actor.user._id))
     .take(200);
-  const out = [];
-  for (const group of groups) {
-    out.push(await toSummary(ctx, group));
+  for (const group of owned) {
+    if (group.nameKey !== undefined || seen.has(group._id)) continue;
+    seen.add(group._id);
+    out.push(await toSummary(ctx, group, actor));
   }
   out.sort((a, b) => b.updatedAt - a.updatedAt);
   return out;
 }
 
-export async function getGroupDetail(ctx: QueryCtx, actor: Actor, groupId: Id<"groups">) {
-  const group = await requireGroupManager(ctx, actor, groupId);
-  const summary = await toSummary(ctx, group);
-  const memberList = [];
-  for (const member of await membersOf(ctx, groupId)) {
-    const user = await ctx.db.get("users", member.userId);
-    memberList.push({
-      userId: member.userId,
-      name: displayName(user),
-      email: user === null || user.deletedAt !== undefined ? "" : user.email,
-      via: member.via,
-      joinedAt: member.joinedAt,
+/** Every group of a university, archived ones too, by name: for its admins. */
+export async function listUniversityGroups(ctx: QueryCtx, actor: Actor, universityId: Id<"universities">) {
+  if (!administersUniversity(actor, universityId)) {
+    throw appError("FORBIDDEN", "Only the university's admins can see all of its groups.");
+  }
+  const groups = await ctx.db
+    .query("groups")
+    .withIndex("by_universityId_and_nameKey", (q) => q.eq("universityId", universityId))
+    .take(MAX_GROUPS_PER_UNIVERSITY);
+  const out = [];
+  for (const group of groups) {
+    out.push({
+      _id: group._id,
+      name: group.name,
+      description: group.description,
+      archived: group.archivedAt !== undefined,
+      inviteEnabled: group.inviteEnabled,
+      members: await memberCountOf(ctx, group),
+      lecturers: (await lecturersOf(ctx, group._id)).length,
+      courses: (await linksOf(ctx, group._id)).length,
     });
   }
-  memberList.sort((a, b) => a.name.localeCompare(b.name));
-  const inviteList = (await pendingInvitesOf(ctx, groupId)).map((invite) => ({
-    _id: invite._id,
-    email: invite.email,
-    createdAt: invite._creationTime,
-    expiresAt: invite.expiresAt,
-    emailedAt: invite.emailedAt,
-  }));
+  return out;
+}
+
+/**
+ * The groups a lecturer can find: the active groups of the universities they
+ * teach at, whose names contain the query (all of them for an empty query),
+ * by name. Other universities' groups and private groups never show up.
+ */
+export async function searchGroups(ctx: QueryCtx, actor: Actor, rawQuery: string) {
+  const needle = groupNameKey(rawQuery.slice(0, 80));
+  const out = [];
+  for (const universityId of creatorUniversityIds(actor)) {
+    const university = await ctx.db.get("universities", universityId);
+    if (university === null) continue;
+    const groups = await ctx.db
+      .query("groups")
+      .withIndex("by_universityId_and_nameKey", (q) => q.eq("universityId", universityId))
+      .take(MAX_GROUPS_PER_UNIVERSITY);
+    for (const group of groups) {
+      if (out.length >= MAX_SEARCH_RESULTS) break;
+      if (group.archivedAt !== undefined) continue;
+      if (needle !== "" && !(group.nameKey ?? groupNameKey(group.name)).includes(needle)) continue;
+      out.push({
+        _id: group._id,
+        name: group.name,
+        description: group.description,
+        universityName: university.name,
+        members: await memberCountOf(ctx, group),
+        lecturers: (await lecturersOf(ctx, group._id)).length,
+        joined: (await lecturerRow(ctx, group._id, actor.user._id)) !== null,
+      });
+    }
+  }
+  return out;
+}
+
+export async function getGroupDetail(ctx: QueryCtx, actor: Actor, groupId: Id<"groups">) {
+  const { group, manages } = await requireGroupAccess(ctx, actor, groupId);
+  const summary = await toSummary(ctx, group, actor);
+  const memberList = [];
+  const lecturerList = [];
+  let inviteList: {
+    _id: Id<"groupInvites">;
+    email: string;
+    createdAt: number;
+    expiresAt: number;
+    emailedAt?: number;
+  }[] = [];
+  // Students' names and addresses are for whoever runs the group; a lecturer
+  // who teaches it meets them in their own course.
+  if (manages) {
+    for (const member of await membersOf(ctx, groupId)) {
+      const user = await ctx.db.get("users", member.userId);
+      memberList.push({
+        userId: member.userId,
+        name: displayName(user),
+        email: user === null || user.deletedAt !== undefined ? "" : user.email,
+        via: member.via,
+        joinedAt: member.joinedAt,
+      });
+    }
+    memberList.sort((a, b) => a.name.localeCompare(b.name));
+    inviteList = (await pendingInvitesOf(ctx, groupId)).map((invite) => ({
+      _id: invite._id,
+      email: invite.email,
+      createdAt: invite._creationTime,
+      expiresAt: invite.expiresAt,
+      emailedAt: invite.emailedAt,
+    }));
+    for (const row of await lecturersOf(ctx, groupId)) {
+      lecturerList.push({
+        userId: row.userId,
+        name: displayName(await ctx.db.get("users", row.userId)),
+        joinedAt: row.joinedAt,
+      });
+    }
+    lecturerList.sort((a, b) => a.name.localeCompare(b.name));
+  }
   return {
     ...summary,
     inviteCode: group.inviteCode,
     ownerName: displayName(await ctx.db.get("users", group.ownerId)),
     memberList,
     inviteList,
+    lecturerList,
   };
 }
 
+/**
+ * A university's groups are made by its admins (or the super admin), with
+ * unique names; its lecturers can't make them and join them instead. A
+ * teacher outside any university makes private groups of their own, and
+ * teaches them.
+ */
 export async function createGroup(
   ctx: MutationCtx,
   actor: Actor,
-  args: { name: string; description?: string },
+  args: { name: string; description?: string; universityId?: Id<"universities"> },
 ): Promise<Id<"groups">> {
   const name = requireText(args.name, "Name", 80);
   const description = optionalText(args.description, "Description", 500);
+  const { universityId } = args;
+  if (universityId !== undefined) {
+    if ((await ctx.db.get("universities", universityId)) === null) {
+      throw appError("NOT_FOUND", "University not found.");
+    }
+    if (!administersUniversity(actor, universityId)) {
+      throw appError("FORBIDDEN", "Only the university's admins can make its groups.");
+    }
+    await requireFreeName(ctx, universityId, name);
+  } else if (!isSuperAdmin(actor.memberships) && !isIndependentTeacher(actor)) {
+    throw appError(
+      "FORBIDDEN",
+      "Your university's admins make the groups, so each class exists once. Find yours under Groups and join it.",
+    );
+  }
+  const now = Date.now();
   const groupId = await ctx.db.insert("groups", {
     ownerId: actor.user._id,
+    universityId,
     name,
+    nameKey: groupNameKey(name),
     description,
     inviteCode: await uniqueInviteCode(ctx),
     inviteEnabled: true,
     memberCount: 0,
     pendingInvites: 0,
     createdVia: actor.via,
-    updatedAt: Date.now(),
+    updatedAt: now,
   });
+  if (universityId === undefined) {
+    // A private group's teacher is its owner.
+    await ctx.db.insert("groupLecturers", { groupId, userId: actor.user._id, joinedAt: now });
+  }
   await logAudit(ctx, actor, {
     action: "group.create",
     targetTable: "groups",
@@ -318,7 +623,13 @@ export async function updateGroup(
 ): Promise<void> {
   const group = await requireGroupManager(ctx, actor, groupId);
   const changes: Partial<Doc<"groups">> = {};
-  if (patch.name !== undefined) changes.name = requireText(patch.name, "Name", 80);
+  if (patch.name !== undefined) {
+    changes.name = requireText(patch.name, "Name", 80);
+    changes.nameKey = groupNameKey(changes.name);
+    if (group.universityId !== undefined) {
+      await requireFreeName(ctx, group.universityId, changes.name, groupId);
+    }
+  }
   if (patch.description !== undefined) {
     changes.description = optionalText(patch.description, "Description", 500);
   }
@@ -333,6 +644,98 @@ export async function updateGroup(
     targetId: groupId,
     summary: `Updated ${Object.keys(changes).join(", ") || "nothing"} on group "${changes.name ?? group.name}"`,
   });
+}
+
+/** A lecturer starts teaching one of their university's groups. Joining twice is fine. */
+export async function joinAsLecturer(ctx: MutationCtx, actor: Actor, groupId: Id<"groups">): Promise<void> {
+  const group = await ctx.db.get("groups", groupId);
+  if (group === null || group.universityId === undefined || !creatorUniversityIds(actor).includes(group.universityId)) {
+    throw appError("NOT_FOUND", "Group not found.");
+  }
+  if ((await lecturerRow(ctx, groupId, actor.user._id)) !== null) {
+    return;
+  }
+  if (group.archivedAt !== undefined) {
+    throw appError("CONFLICT", "This group is archived. Ask your university admin about it.");
+  }
+  if ((await lecturersOf(ctx, groupId)).length >= MAX_LECTURERS) {
+    throw appError("CONFLICT", `This group already has ${MAX_LECTURERS} lecturers.`);
+  }
+  const now = Date.now();
+  await ctx.db.insert("groupLecturers", { groupId, userId: actor.user._id, joinedAt: now });
+  await ctx.db.patch("groups", groupId, { updatedAt: now });
+  await logAudit(ctx, actor, {
+    action: "group.join",
+    targetTable: "groups",
+    targetId: groupId,
+    summary: `Started teaching group "${group.name}"`,
+  });
+}
+
+/**
+ * The lecturer stops teaching the group, and their courses leave it: its
+ * students keep such a course only if they joined it another way. Returns how
+ * many courses were unshared.
+ */
+export async function leaveAsLecturer(ctx: MutationCtx, actor: Actor, groupId: Id<"groups">): Promise<number> {
+  const group = await ctx.db.get("groups", groupId);
+  const row = group === null ? null : await lecturerRow(ctx, groupId, actor.user._id);
+  if (group === null || row === null) {
+    return 0;
+  }
+  if (group.universityId === undefined && group.ownerId === actor.user._id) {
+    throw appError("CONFLICT", "This is your own group. Archive it instead.");
+  }
+  const unshared = await stopTeaching(ctx, group, row);
+  await logAudit(ctx, actor, {
+    action: "group.leave",
+    targetTable: "groups",
+    targetId: groupId,
+    summary: `Stopped teaching group "${group.name}"${unshared > 0 ? ` (${unshared} course${unshared === 1 ? "" : "s"} unshared)` : ""}`,
+  });
+  return unshared;
+}
+
+/** An admin takes a lecturer off a group; their courses leave it, as when they leave themselves. */
+export async function removeLecturer(ctx: MutationCtx, actor: Actor, groupId: Id<"groups">, userId: Id<"users">) {
+  const group = await requireGroupManager(ctx, actor, groupId);
+  const row = await lecturerRow(ctx, groupId, userId);
+  if (row === null) {
+    return;
+  }
+  if (group.universityId === undefined && group.ownerId === userId) {
+    throw appError("CONFLICT", "A private group's owner can't be removed from it.");
+  }
+  await stopTeaching(ctx, group, row);
+  await logAudit(ctx, actor, {
+    action: "group.removeLecturer",
+    targetTable: "groups",
+    targetId: groupId,
+    summary: `Took ${displayName(await ctx.db.get("users", userId))} off group "${group.name}"`,
+  });
+}
+
+/** Takes a lecturer off a group, with the courses they own or shared there. */
+async function stopTeaching(ctx: MutationCtx, group: Doc<"groups">, row: Doc<"groupLecturers">): Promise<number> {
+  const theirs = [];
+  for (const link of await linksOf(ctx, group._id)) {
+    if (link.addedBy === row.userId || (await ownsCourse(ctx, link.courseId, row.userId))) {
+      theirs.push(link);
+    }
+  }
+  const members = await membersOf(ctx, group._id);
+  if (theirs.length * members.length > MAX_UNSHARE_WORK) {
+    throw appError("CONFLICT", "Too many courses to take out at once. Unshare some of them from the group first.");
+  }
+  for (const link of theirs) {
+    await ctx.db.delete("courseGroups", link._id);
+    for (const member of members) {
+      await unenrollFromGroup(ctx, link.courseId, member.userId, group._id);
+    }
+  }
+  await ctx.db.delete("groupLecturers", row._id);
+  await ctx.db.patch("groups", group._id, { updatedAt: Date.now() });
+  return theirs.length;
 }
 
 /** A new link; the old one stops working at once. */
@@ -525,9 +928,12 @@ async function leave(ctx: MutationCtx, group: Doc<"groups">, row: Doc<"groupMemb
   }
 }
 
-/** Shares a course with a group: every member gets it, and so will everyone who joins later. */
+/**
+ * Shares a course with a group: every member gets it, and so will everyone who
+ * joins later. The actor must edit the course and run or teach the group.
+ */
 export async function linkCourse(ctx: MutationCtx, actor: Actor, groupId: Id<"groups">, courseId: Id<"courses">) {
-  const group = await requireGroupManager(ctx, actor, groupId);
+  const { group } = await requireGroupAccess(ctx, actor, groupId);
   const { course } = await requireCourseEditor(ctx, actor, courseId);
   const existing = await ctx.db
     .query("courseGroups")
@@ -535,6 +941,9 @@ export async function linkCourse(ctx: MutationCtx, actor: Actor, groupId: Id<"gr
     .unique();
   if (existing !== null) {
     return;
+  }
+  if (group.archivedAt !== undefined) {
+    throw appError("CONFLICT", "This group is archived.");
   }
   if ((await linksOf(ctx, groupId)).length >= MAX_COURSES_PER_GROUP) {
     throw appError("CONFLICT", `A group can have at most ${MAX_COURSES_PER_GROUP} courses.`);
@@ -555,14 +964,13 @@ export async function linkCourse(ctx: MutationCtx, actor: Actor, groupId: Id<"gr
 
 /**
  * Stops sharing; members keep the course only if they joined it another way.
- * Either side may do it, the group's manager or the course's editor: it only
+ * Either side may do it, whoever runs the group or the course's editor: it only
  * ever narrows who sees the course.
  */
 export async function unlinkCourse(ctx: MutationCtx, actor: Actor, groupId: Id<"groups">, courseId: Id<"courses">) {
   const group = await ctx.db.get("groups", groupId);
   const access = await courseAccess(ctx, actor, courseId);
-  const managesGroup = group !== null && (group.ownerId === actor.user._id || isSuperAdmin(actor.memberships));
-  if (group === null || (!managesGroup && !access.canEdit)) {
+  if (group === null || (!managesGroup(actor, group) && !access.canEdit)) {
     throw appError("NOT_FOUND", "Group not found.");
   }
   const { course } = access;
@@ -606,15 +1014,12 @@ export async function groupsForCourse(ctx: QueryCtx, actor: Actor, courseId: Id<
       });
     }
   }
-  const own = await ctx.db
-    .query("groups")
-    .withIndex("by_ownerId", (q) => q.eq("ownerId", actor.user._id))
-    .take(200);
   const available = [];
-  for (const group of own) {
-    if (group.archivedAt !== undefined || shared.some((s) => s._id === group._id)) continue;
-    available.push({ _id: group._id, name: group.name, members: await memberCountOf(ctx, group) });
+  for (const group of await listGroupsFor(ctx, actor)) {
+    if (group.archived || shared.some((s) => s._id === group._id)) continue;
+    available.push({ _id: group._id, name: group.name, members: group.members });
   }
+  available.sort((a, b) => a.name.localeCompare(b.name));
   return { shared, available };
 }
 
@@ -639,7 +1044,7 @@ async function preview(ctx: QueryCtx, group: Doc<"groups">) {
   const viewer = await getCurrentUser(ctx);
   return {
     groupName: group.name,
-    teacher: lecturerName(await ctx.db.get("users", group.ownerId)),
+    teacher: await groupHost(ctx, group, viewer?.locale ?? "en"),
     courseCount: (await linksOf(ctx, group._id)).length,
     alreadyMember: viewer !== null && (await membership(ctx, group._id, viewer._id)) !== null,
   };
@@ -683,6 +1088,8 @@ export async function previewInvite(ctx: QueryCtx, token: string) {
   }
   return {
     ...(await preview(ctx, group)),
+    // A personal invite comes from the person who sent it.
+    teacher: lecturerName(await ctx.db.get("users", invite.invitedBy)),
     email: invite.email,
     status:
       invite.revokedAt !== undefined || group.archivedAt !== undefined
@@ -746,7 +1153,7 @@ export async function listMyInvites(ctx: QueryCtx, student: Student) {
     out.push({
       token: invite.token,
       groupName: group.name,
-      teacher: lecturerName(await ctx.db.get("users", group.ownerId)),
+      teacher: lecturerName(await ctx.db.get("users", invite.invitedBy)),
       expiresAt: invite.expiresAt,
     });
   }
@@ -765,7 +1172,7 @@ export async function listMyGroups(ctx: QueryCtx, student: Student) {
     out.push({
       _id: group._id,
       name: group.name,
-      teacher: lecturerName(await ctx.db.get("users", group.ownerId)),
+      teacher: await groupHost(ctx, group, student.user.locale),
       joinedAt: row.joinedAt,
     });
   }
@@ -781,10 +1188,13 @@ export async function leaveGroup(ctx: MutationCtx, student: Student, groupId: Id
   await leave(ctx, group, row);
 }
 
+// --- Deleted accounts -------------------------------------------------------------------
+
 /**
- * A teacher's account was deleted: their groups stop taking anyone new (the
- * link closes, open invites are withdrawn) but keep their members, so the
- * courses others still run on them keep working.
+ * A teacher's account was deleted: their private groups (and groups not yet
+ * moved to a university) stop taking anyone new (the link closes, open invites
+ * are withdrawn) but keep their members, so the courses others still run on
+ * them keep working. A university's groups carry on: its admins run them.
  */
 export async function closeGroupsOf(ctx: MutationCtx, ownerId: Id<"users">) {
   const now = Date.now();
@@ -793,6 +1203,7 @@ export async function closeGroupsOf(ctx: MutationCtx, ownerId: Id<"users">) {
     .withIndex("by_ownerId", (q) => q.eq("ownerId", ownerId))
     .take(200);
   for (const group of owned) {
+    if (group.universityId !== undefined) continue;
     for (const invite of await pendingInvitesOf(ctx, group._id)) {
       await ctx.db.patch("groupInvites", invite._id, { revokedAt: now });
     }
@@ -802,6 +1213,17 @@ export async function closeGroupsOf(ctx: MutationCtx, ownerId: Id<"users">) {
       pendingInvites: 0,
       updatedAt: now,
     });
+  }
+}
+
+/** A deleted lecturer stops teaching every group; the courses they shared stay with the students. */
+export async function stopTeachingAll(ctx: MutationCtx, userId: Id<"users">) {
+  const rows = await ctx.db
+    .query("groupLecturers")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .take(200);
+  for (const row of rows) {
+    await ctx.db.delete("groupLecturers", row._id);
   }
 }
 
@@ -819,4 +1241,42 @@ export async function leaveAllGroups(ctx: MutationCtx, userId: Id<"users">) {
       await ctx.db.patch("groups", group._id, { memberCount: Math.max(0, count - 1) });
     }
   }
+}
+
+// --- Migration --------------------------------------------------------------------------
+
+/**
+ * One page of moving groups made before admins ran them: each goes to its
+ * owner's university, and the owner keeps teaching it (a groupLecturers row),
+ * with its students and courses untouched. A group whose owner has no
+ * university becomes that teacher's private group. Groups already moved (they
+ * have a nameKey) are skipped, so it can run again safely. Names that now clash
+ * within a university are counted, for an admin to rename.
+ */
+export async function migrateGroupsPage(ctx: MutationCtx, cursor: string | null) {
+  const page = await ctx.db.query("groups").paginate({ cursor, numItems: 100 });
+  let moved = 0;
+  let madePrivate = 0;
+  let nameClashes = 0;
+  for (const group of page.page) {
+    if (group.nameKey !== undefined) continue;
+    const memberships = await getMemberships(ctx, group.ownerId);
+    const universityId = memberships.find((m) => isStaffRole(m.role) && m.universityId !== undefined)?.universityId;
+    const nameKey = groupNameKey(group.name);
+    await ctx.db.patch("groups", group._id, { universityId, nameKey });
+    if ((await lecturerRow(ctx, group._id, group.ownerId)) === null) {
+      await ctx.db.insert("groupLecturers", { groupId: group._id, userId: group.ownerId, joinedAt: group._creationTime });
+    }
+    if (universityId === undefined) {
+      madePrivate++;
+      continue;
+    }
+    moved++;
+    const sameName = await ctx.db
+      .query("groups")
+      .withIndex("by_universityId_and_nameKey", (q) => q.eq("universityId", universityId).eq("nameKey", nameKey))
+      .take(2);
+    if (sameName.length > 1) nameClashes++;
+  }
+  return { moved, madePrivate, nameClashes, isDone: page.isDone, continueCursor: page.continueCursor };
 }

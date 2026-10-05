@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { AdminView, type AdminUniversity } from "@/components/admin/AdminView";
+import { InviteCenter, type AnyInvite } from "@/components/admin/InviteCenter";
 import { InvitesBoard, type Invite } from "@/components/admin/InvitesBoard";
 import { AgentsView } from "@/components/agents/AgentsView";
 import { InviteScreen } from "@/components/AcceptInvite";
@@ -12,7 +13,14 @@ import type { InboxItem, Thread } from "@/components/inbox/types";
 import { CurrentUserContext, type CurrentUser, type Me } from "@/components/CurrentUserProvider";
 import { GroupsDashboard } from "@/components/groups/GroupsDashboard";
 import { GroupView, type GroupActions } from "@/components/groups/GroupView";
-import type { CourseGroups as CourseGroupsData, GroupDetail, GroupSummary } from "@/components/groups/types";
+import type {
+  CourseGroups as CourseGroupsData,
+  GroupDetail,
+  GroupSearchResult,
+  GroupSummary,
+  UniversityGroup,
+} from "@/components/groups/types";
+import { GroupsBoard } from "@/components/admin/GroupsBoard";
 import { StaffGate } from "@/components/StaffGate";
 import { StaffNav } from "@/components/StaffNav";
 import { AssessmentBuilder } from "@/components/studio/AssessmentBuilder";
@@ -24,7 +32,6 @@ import { StudioDashboard } from "@/components/studio/StudioDashboard";
 import type {
   Assessment,
   AssessmentDetail,
-  AuditEntry,
   CourseDetail,
   CourseOutline as CourseOutlineData,
   CourseSummary,
@@ -83,6 +90,26 @@ const invite = (fields: Partial<Invite> & Pick<Invite, "email">): Invite => ({
   revokedAt: undefined,
   ...fields,
 });
+
+const tsu: AdminUniversity = {
+  _id: "sample_tsu" as AdminUniversity["_id"],
+  name: { ka: "თბილისის სახელმწიფო უნივერსიტეტი", en: "Tbilisi State University" },
+  slug: "tsu",
+  status: "active",
+};
+
+/** The super admin's list across universities. */
+const allInvites: AnyInvite[] = [
+  { ...invite({ email: "levan@tsu.ge", token: "sample-token-2" }), universityId: tsu._id, universityName: tsu.name },
+  { ...invite({ email: "tutor@gmail.com", token: "sample-token-3" }), universityId: undefined, universityName: undefined },
+  { ...invite({ email: "nino@gsu.edu.ge", token: "sample-token-1" }), universityId: gori._id, universityName: gori.name },
+  {
+    ...invite({ email: "dean@gsu.edu.ge", role: "uni_admin", acceptedAt: NOW - 2 * DAY }),
+    universityId: gori._id,
+    universityName: gori.name,
+  },
+  { ...invite({ email: "late@tsu.ge", expiresAt: NOW - DAY }), universityId: tsu._id, universityName: tsu.name },
+];
 
 const invites: Invite[] = [
   invite({ email: "nino@gsu.edu.ge", token: "sample-token-1" }),
@@ -145,57 +172,6 @@ const courses: CourseSummary[] = [
     role: "admin",
     counts: { tasks: 0, quizzes: 6, midterms: 1, finals: 1, drafts: 0, published: 8 },
     updatedAt: NOW - 90 * DAY,
-  },
-];
-
-const activity: AuditEntry[] = [
-  {
-    _id: "a1" as AuditEntry["_id"],
-    via: "mcp",
-    action: "question.add",
-    targetTable: "assessments",
-    targetId: "x",
-    courseId: webBasics._id,
-    summary: 'Added 10 questions to "CSS selectors"',
-    at: NOW - 2 * 60 * 1000,
-    actorName: "Giorgi",
-    mine: true,
-  },
-  {
-    _id: "a2" as AuditEntry["_id"],
-    via: "mcp",
-    action: "assessment.create",
-    targetTable: "assessments",
-    targetId: "x",
-    courseId: webBasics._id,
-    summary: 'Created quiz "CSS selectors" as a draft',
-    at: NOW - 3 * 60 * 1000,
-    actorName: "Giorgi",
-    mine: true,
-  },
-  {
-    _id: "a3" as AuditEntry["_id"],
-    via: "web",
-    action: "assessment.published",
-    targetTable: "assessments",
-    targetId: "x",
-    courseId: webBasics._id,
-    summary: 'Published "HTML basics"',
-    at: NOW - DAY,
-    actorName: "Giorgi",
-    mine: true,
-  },
-  {
-    _id: "a4" as AuditEntry["_id"],
-    via: "web",
-    action: "course.create",
-    targetTable: "courses",
-    targetId: "x",
-    courseId: webBasics._id,
-    summary: 'Created course "Web basics"',
-    at: NOW - 20 * DAY,
-    actorName: "Giorgi",
-    mine: true,
   },
 ];
 
@@ -318,16 +294,23 @@ async function pause(): Promise<void> {
 
 // --- Groups and materials samples ----------------------------------------------
 
+// A university group the signed-in lecturer teaches (made by the university's admin).
 const groupA: GroupSummary = {
   _id: "sample_group_a" as GroupSummary["_id"],
   _creationTime: NOW - 10 * DAY,
-  name: "CS-101 A",
-  description: "Mondays and Thursdays, room 204",
+  name: "ICT-24-1",
+  description: "Informatics, first year, Mondays and Thursdays",
   inviteEnabled: true,
   archived: false,
   members: 3,
   pendingInvites: 2,
   courses: [{ _id: webBasics._id, title: webBasics.title, status: "published" }],
+  otherCourses: 2,
+  lecturers: 3,
+  universityName: gori.name,
+  isPrivate: false,
+  manages: false,
+  teaches: true,
   updatedAt: NOW - DAY,
 };
 
@@ -335,24 +318,72 @@ const groups: GroupSummary[] = [
   groupA,
   {
     ...groupA,
-    _id: "sample_group_tutor" as GroupSummary["_id"],
-    name: "Saturday tutoring",
+    _id: "sample_group_b" as GroupSummary["_id"],
+    name: "ICT-24-2",
     description: undefined,
     members: 0,
     pendingInvites: 0,
     courses: [],
+    otherCourses: 0,
+    lecturers: 1,
     inviteEnabled: false,
   },
-  { ...groupA, _id: "sample_group_old" as GroupSummary["_id"], name: "CS-101 A (2025)", archived: true, pendingInvites: 0 },
+  { ...groupA, _id: "sample_group_old" as GroupSummary["_id"], name: "ICT-21-1", archived: true, pendingInvites: 0 },
+];
+
+// An independent teacher's own groups.
+const privateGroups: GroupSummary[] = [
+  {
+    ...groupA,
+    _id: "sample_group_tutor" as GroupSummary["_id"],
+    name: "Saturday tutoring",
+    description: "Grade 11, at home",
+    universityName: undefined,
+    isPrivate: true,
+    manages: true,
+    teaches: true,
+    otherCourses: 0,
+    lecturers: 1,
+  },
+];
+
+const groupSearchResults: GroupSearchResult[] = [
+  { _id: groupA._id, name: "ICT-24-1", description: groupA.description, universityName: gori.name, members: 3, lecturers: 3, joined: true },
+  { _id: "sample_group_c" as GroupSearchResult["_id"], name: "ICT-24-3", description: "Informatics, first year, evening", universityName: gori.name, members: 41, lecturers: 4, joined: false },
+  { _id: "sample_group_d" as GroupSearchResult["_id"], name: "ICT-24-4", description: undefined, universityName: gori.name, members: 0, lecturers: 0, joined: false },
+];
+
+const universityGroups: UniversityGroup[] = [
+  { _id: groupA._id, name: "ICT-24-1", description: groupA.description, archived: false, inviteEnabled: true, members: 38, lecturers: 3, courses: 3 },
+  { _id: "sample_group_c" as UniversityGroup["_id"], name: "ICT-24-3", description: "Informatics, first year, evening", archived: false, inviteEnabled: false, members: 41, lecturers: 4, courses: 5 },
+  { _id: "sample_group_d" as UniversityGroup["_id"], name: "ICT-24-4", description: undefined, archived: false, inviteEnabled: true, members: 0, lecturers: 0, courses: 0 },
+  { _id: "sample_group_old" as UniversityGroup["_id"], name: "ICT-21-1", description: undefined, archived: true, inviteEnabled: false, members: 35, lecturers: 2, courses: 4 },
 ];
 
 type MemberId = GroupDetail["memberList"][number]["userId"];
 type GroupInviteId = GroupDetail["inviteList"][number]["_id"];
 
+/** The group as a lecturer who teaches it sees it: the link to share, their own courses, no student list. */
 const groupDetail: GroupDetail = {
   ...groupA,
   inviteCode: "q3Xk9-mPz2LtV8wRbN4c",
-  ownerName: "Nino Beridze",
+  ownerName: "Tea Todua",
+  memberList: [],
+  inviteList: [],
+  lecturerList: [],
+};
+
+/** The same group as its university's admin sees it. */
+const groupDetailAdmin: GroupDetail = {
+  ...groupDetail,
+  manages: true,
+  teaches: false,
+  courses: [
+    ...groupA.courses,
+    { _id: "sample_course_db" as GroupDetail["courses"][number]["_id"], title: "Databases", status: "published" },
+    { _id: "sample_course_net" as GroupDetail["courses"][number]["_id"], title: "Networks", status: "draft" },
+  ],
+  otherCourses: 0,
   memberList: [
     { userId: "sample_u1" as MemberId, name: "Ana Kapanadze", email: "ana.k@gmail.com", via: "link", joinedAt: NOW - 6 * DAY },
     { userId: "sample_u2" as MemberId, name: "Giorgi Lomidze", email: "giorgi@school.ge", via: "email", joinedAt: NOW - 5 * DAY },
@@ -361,6 +392,11 @@ const groupDetail: GroupDetail = {
   inviteList: [
     { _id: "sample_gi1" as GroupInviteId, email: "luka@gmail.com", createdAt: NOW - 2 * DAY, expiresAt: NOW + 28 * DAY, emailedAt: NOW - 2 * DAY },
     { _id: "sample_gi2" as GroupInviteId, email: "old.address@mail.ru", createdAt: NOW - 40 * DAY, expiresAt: NOW - 10 * DAY, emailedAt: undefined },
+  ],
+  lecturerList: [
+    { userId: "sample_l1" as MemberId, name: "Giorgi Khvichia", joinedAt: NOW - 9 * DAY },
+    { userId: "sample_l2" as MemberId, name: "Levan Abashidze", joinedAt: NOW - 8 * DAY },
+    { userId: "sample_l3" as MemberId, name: "Nino Beridze", joinedAt: NOW - 3 * DAY },
   ],
 };
 
@@ -386,6 +422,8 @@ const groupActions: GroupActions = {
   onRemoveStudent: pause,
   onShareCourse: pause,
   onUnshareCourse: pause,
+  onLeave: pause,
+  onRemoveLecturer: pause,
 };
 
 const courseGroups: CourseGroupsData = {
@@ -693,7 +731,6 @@ function coursePage(outline: CourseOutlineData, connection: DriveConnection, cou
   return (
     <CourseView
       course={course}
-      history={activity}
       onUpdateCourse={pause}
       onExport={course.canEdit ? pause : undefined}
       onNewJoinCode={pause}
@@ -774,12 +811,16 @@ const views: Record<string, string> = {
   "inbox-empty": "Inbox · nothing yet",
   thread: "Inbox · one conversation",
   "thread-team": "Inbox · a Kalami team conversation",
-  groups: "Groups · list",
-  "groups-empty": "Groups · none yet",
-  group: "Groups · one group",
+  groups: "Groups · a university lecturer: my groups and find your group",
+  "groups-empty": "Groups · a university lecturer with no groups yet",
+  "groups-independent": "Groups · an independent teacher's own groups",
+  "groups-admin": "Groups · the super admin (groups live on the admin page)",
+  group: "Groups · one group, as a lecturer who teaches it",
+  "group-admin": "Groups · one group, as its university admin",
   builder: "Studio · assessment builder",
   agents: "Agents · connect an MCP client",
-  admin: "Admin · super admin",
+  admin: "Admin · super admin (one invite list, university picker)",
+  "admin-uni": "Admin · university admin",
   "admin-empty": "Admin · no universities yet",
   "invite-signed-out": "Invite · signed out",
   "invite-ready": "Invite · signed in with the invited email",
@@ -820,11 +861,20 @@ export function StaffGallery({ view }: { view?: string }) {
     />
   );
 
+  const groupsBoard = (
+    <GroupsBoard
+      groups={universityGroups}
+      onCreate={async () => {
+        await pause();
+        return "sample_group_new";
+      }}
+    />
+  );
+
   const dashboard = (introOpen: boolean, list: CourseSummary[]) => (
     <StudioDashboard
       me={superAdmin}
       courses={list}
-      activity={list.length === 0 ? [] : activity}
       universities={[{ _id: gori._id, name: gori.name }]}
       introOpenInitially={introOpen}
       onCreateCourse={pause}
@@ -895,11 +945,31 @@ export function StaffGallery({ view }: { view?: string }) {
         />,
       );
     case "groups":
-      return staffPage(<GroupsDashboard groups={groups} onCreate={pause} />);
+      return staffPage(
+        <GroupsDashboard
+          groups={groups}
+          mode="university"
+          isAdmin={false}
+          search={{ query: "", onQuery: () => undefined, results: groupSearchResults, onJoin: pause }}
+        />,
+      );
     case "groups-empty":
-      return staffPage(<GroupsDashboard groups={[]} onCreate={pause} />);
+      return staffPage(
+        <GroupsDashboard
+          groups={[]}
+          mode="university"
+          isAdmin={false}
+          search={{ query: "ICT-99", onQuery: () => undefined, results: [], onJoin: pause }}
+        />,
+      );
+    case "groups-independent":
+      return staffPage(<GroupsDashboard groups={privateGroups} mode="independent" isAdmin={false} onCreate={pause} />);
+    case "groups-admin":
+      return staffPage(<GroupsDashboard groups={[]} mode="admin" isAdmin />);
     case "group":
       return staffPage(<GroupView group={groupDetail} courses={courses} now={NOW} actions={groupActions} />);
+    case "group-admin":
+      return staffPage(<GroupView group={groupDetailAdmin} courses={courses} now={NOW} actions={groupActions} />);
     case "builder":
       return staffPage(
         <AssessmentBuilder
@@ -919,14 +989,28 @@ export function StaffGallery({ view }: { view?: string }) {
       return staffPage(
         <AdminView
           isSuperAdmin
-          universities={[gori]}
+          universities={[gori, tsu]}
           onCreateUniversity={pause}
-          renderInvites={() => board}
-          independent={board}
+          invites={
+            <InviteCenter
+              universities={[gori, tsu]}
+              invites={allInvites}
+              onCreate={async () => {
+                await pause();
+                return { token: "sample-token-new" };
+              }}
+              onRevoke={pause}
+            />
+          }
+          renderGroups={() => groupsBoard}
         />,
       );
+    case "admin-uni":
+      return staffPage(
+        <AdminView isSuperAdmin={false} universities={[gori]} onCreateUniversity={pause} renderInvites={() => board} renderGroups={() => groupsBoard} />,
+      );
     case "admin-empty":
-      return staffPage(<AdminView isSuperAdmin universities={[]} onCreateUniversity={pause} renderInvites={() => null} />);
+      return staffPage(<AdminView isSuperAdmin universities={[]} onCreateUniversity={pause} invites={<InviteCenter universities={[]} invites={[]} onCreate={async () => ({ token: "x" })} onRevoke={pause} />} />);
     case "invite-signed-out":
       return <InviteScreen invite={inviteInfo} current={{ status: "signed-out" }} returnTo="/" onAccept={pause} />;
     case "invite-ready":

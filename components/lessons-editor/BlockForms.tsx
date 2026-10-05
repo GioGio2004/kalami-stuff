@@ -303,7 +303,6 @@ function VideoForm({ block, uid, onChange }: FormProps<"video">) {
             title={block.caption || "Video preview"}
             loading="lazy"
             allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-            allowFullScreen
             referrerPolicy="strict-origin-when-cross-origin"
             className="absolute inset-0 size-full"
           />

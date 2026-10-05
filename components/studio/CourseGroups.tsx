@@ -46,7 +46,7 @@ export function CourseGroups({
       </span>
       <h2 className="mt-5 text-xl font-medium tracking-tight">Groups</h2>
       <p className="mt-1.5 text-sm leading-relaxed text-graphite">
-        Share the course with your groups and every student in them gets it, including those who join later.
+        Share the course with the groups you teach and every student in them gets it, including those who join later.
       </p>
       {groups === undefined ? (
         <p className="mt-4 text-sm text-graphite">Loading…</p>
@@ -100,9 +100,9 @@ export function CourseGroups({
           {canEdit && groups.available.length === 0 && (
             <p className="mt-4 text-sm text-graphite">
               <Link href="/groups" className="font-medium text-ink underline underline-offset-4">
-                {groups.shared.length === 0 ? "Make a group" : "Make another group"}
+                {groups.shared.length === 0 ? "Find your group" : "Find another group"}
               </Link>{" "}
-              and invite your students to it.
+              under Groups and join it, then share this course with it.
             </p>
           )}
         </>

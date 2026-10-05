@@ -18,26 +18,29 @@ const DAY = 24 * 60 * 60 * 1000;
 
 const noopSubscribe = () => () => {};
 /** The page's origin, without touching `window` during server rendering. */
-function useOrigin() {
+export function useOrigin() {
   return useSyncExternalStore(noopSubscribe, () => window.location.origin, () => "");
 }
 
-type Status = "pending" | "accepted" | "expired" | "withdrawn";
+export type InviteStatus = "pending" | "accepted" | "expired" | "withdrawn";
 
-function statusOf(invite: Invite, now: number): Status {
+export function statusOf(
+  invite: { revokedAt?: number; acceptedAt?: number; expiresAt: number },
+  now: number,
+): InviteStatus {
   if (invite.revokedAt !== undefined) return "withdrawn";
   if (invite.acceptedAt !== undefined) return "accepted";
   return invite.expiresAt < now ? "expired" : "pending";
 }
 
-const statusStyles: Record<Status, string> = {
+export const statusStyles: Record<InviteStatus, string> = {
   pending: "bg-highlighter text-ink",
   accepted: "bg-ok/15 text-ink",
   expired: "bg-panel text-graphite",
   withdrawn: "bg-red-pen/10 text-red-pen",
 };
 
-const roleLabel: Record<InviteRole, string> = { lecturer: "Lecturer", uni_admin: "University admin" };
+export const roleLabel: Record<InviteRole, string> = { lecturer: "Lecturer", uni_admin: "University admin" };
 
 /** Invite form + invite list for one university. */
 export function InvitesBoard({

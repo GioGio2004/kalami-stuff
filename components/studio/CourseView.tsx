@@ -10,13 +10,11 @@ import { ArrowLeft, ArrowRight, Robot } from "@/components/ui/icons";
 import { Pill, statusLabel, statusTone } from "@/components/ui/Pill";
 import { errorMessage } from "@/lib/errors";
 import { KalamiFileIcon } from "@/components/kalami/KalamiFile";
-import { ActivityList } from "./ActivityList";
 import { CourseForm } from "./CourseForm";
-import type { AuditEntry, CourseDetail, UpdateCourseArgs } from "./types";
+import type { CourseDetail, UpdateCourseArgs } from "./types";
 
 export function CourseView({
   course,
-  history,
   onUpdateCourse,
   onNewJoinCode,
   onSetJoining,
@@ -25,13 +23,12 @@ export function CourseView({
   onExport,
 }: {
   course: CourseDetail;
-  history: AuditEntry[] | undefined;
   onUpdateCourse: (args: UpdateCourseArgs) => Promise<void>;
   onNewJoinCode: () => Promise<void>;
   onSetJoining: (enabled: boolean) => Promise<void>;
   /** The main column: the course outline (CourseOutline), weeks, exams and unplaced work. */
   outline?: ReactNode;
-  /** The groups card (CourseGroups), at the top of the side column. */
+  /** The groups card (CourseGroups), first in the footer row. */
   groups?: ReactNode;
   /** Downloads the course as a .kalami file. */
   onExport?: () => Promise<void>;
@@ -134,74 +131,66 @@ export function CourseView({
         </div>
       )}
 
-      <div className="mt-8 grid gap-4 *:min-w-0 lg:grid-cols-12">
-        <div className="lg:col-span-8">{outline}</div>
+      <div className="mt-8">{outline}</div>
 
-        <div className="space-y-4 lg:col-span-4">
-          {groups}
-          <section className="notch-sides rounded-[2rem] bg-ink p-6 text-paper [--notch-y:38%]">
-            <p className="text-xs uppercase tracking-[0.18em] text-paper/55">Join code</p>
-            <p className={`mt-2 font-mono text-4xl font-semibold tracking-[0.16em] ${course.joinEnabled ? "" : "text-paper/40 line-through"}`}>
-              {course.joinCode}
-            </p>
-            <p className={`mt-3 text-sm font-medium ${course.students === 0 ? "text-highlighter" : "text-paper"}`}>
-              {course.students === 0
-                ? "No students yet. Share the course with a group, or give students this code."
-                : `${course.students} student${course.students === 1 ? "" : "s"} joined`}
-            </p>
-            <p className="mt-2 text-sm leading-relaxed text-paper/65">
-              A backup to groups: students can also type this code on their dashboard.{" "}
-              {course.joinEnabled
-                ? "Switch it off once everyone is in; New code replaces this one and the old code stops working."
-                : "Joining is switched off: nobody new can join with it."}
-            </p>
-            {course.canEdit && (
-              <div className="mt-5 flex flex-wrap gap-2">
-                <CopyButton value={course.joinCode} variant="lime" />
-                <Button size="sm" variant="outline" className="border-paper/25 text-paper hover:bg-paper/10" onClick={() => joinAction(onNewJoinCode)}>
-                  New code
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="border-paper/25 text-paper hover:bg-paper/10"
-                  onClick={() => joinAction(() => onSetJoining(!course.joinEnabled))}
-                >
-                  {course.joinEnabled ? "Switch off" : "Switch on"}
-                </Button>
-              </div>
-            )}
-            {joinError && <p className="mt-3 text-sm text-red-pen">{joinError}</p>}
-          </section>
-
-          <section className="rounded-[2rem] bg-highlighter p-6">
-            <span className="grid size-11 place-items-center rounded-full bg-ink text-highlighter">
-              <Robot className="size-5" />
-            </span>
-            <h2 className="mt-5 text-xl font-medium tracking-tight">Ask your agent</h2>
-            <p className="mt-1.5 text-sm leading-relaxed text-ink/75">
-              With the connector set up, it drafts weeks, lessons, quizzes and exams for you to check. Try:
-            </p>
-            <p className="mt-3 -rotate-1 rounded-2xl bg-paper px-4 py-3 font-hand text-[1.25rem] leading-tight text-ink">
-              “Turn my syllabus into weeks for ‘{course.title}’, with a lesson and a quiz each.”
-            </p>
-            <p className="mt-2 rotate-1 rounded-2xl bg-paper/70 px-4 py-3 font-hand text-[1.15rem] leading-tight text-ink">
-              “Write a lesson on CSS selectors for Week 3, with examples and a quick check.”
-            </p>
-            <Link href="/agents" className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium underline-offset-4 hover:underline">
-              Set up the connector
-              <ArrowRight className="size-4" />
-            </Link>
-          </section>
-
-          <section className="rounded-[2rem] bg-card p-6">
-            <h2 className="text-xl font-medium tracking-tight">History</h2>
-            <div className="mt-4">
-              <ActivityList entries={history} emptyText="No changes yet." />
+      {/* Sharing and the agent sit below the outline, so the weeks get the full width. */}
+      <footer className="mt-8 grid gap-4 *:min-w-0 md:grid-cols-2 xl:grid-cols-3">
+        {groups}
+        <section className="notch-sides rounded-[2rem] bg-ink p-6 text-paper [--notch-y:38%]">
+          <p className="text-xs uppercase tracking-[0.18em] text-paper/55">Join code</p>
+          <p className={`mt-2 font-mono text-4xl font-semibold tracking-[0.16em] ${course.joinEnabled ? "" : "text-paper/40 line-through"}`}>
+            {course.joinCode}
+          </p>
+          <p className={`mt-3 text-sm font-medium ${course.students === 0 ? "text-highlighter" : "text-paper"}`}>
+            {course.students === 0
+              ? "No students yet. Share the course with a group, or give students this code."
+              : `${course.students} student${course.students === 1 ? "" : "s"} joined`}
+          </p>
+          <p className="mt-2 text-sm leading-relaxed text-paper/65">
+            A backup to groups: students can also type this code on their dashboard.{" "}
+            {course.joinEnabled
+              ? "Switch it off once everyone is in; New code replaces this one and the old code stops working."
+              : "Joining is switched off: nobody new can join with it."}
+          </p>
+          {course.canEdit && (
+            <div className="mt-5 flex flex-wrap gap-2">
+              <CopyButton value={course.joinCode} variant="lime" />
+              <Button size="sm" variant="outline" className="border-paper/25 text-paper hover:bg-paper/10" onClick={() => joinAction(onNewJoinCode)}>
+                New code
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-paper/25 text-paper hover:bg-paper/10"
+                onClick={() => joinAction(() => onSetJoining(!course.joinEnabled))}
+              >
+                {course.joinEnabled ? "Switch off" : "Switch on"}
+              </Button>
             </div>
-          </section>
-        </div>
-      </div>
+          )}
+          {joinError && <p className="mt-3 text-sm text-red-pen">{joinError}</p>}
+        </section>
+
+        <section className="rounded-[2rem] bg-highlighter p-6 md:col-span-2 xl:col-span-1">
+          <span className="grid size-11 place-items-center rounded-full bg-ink text-highlighter">
+            <Robot className="size-5" />
+          </span>
+          <h2 className="mt-5 text-xl font-medium tracking-tight">Ask your agent</h2>
+          <p className="mt-1.5 text-sm leading-relaxed text-ink/75">
+            With the connector set up, it drafts weeks, lessons, quizzes and exams for you to check. Try:
+          </p>
+          <p className="mt-3 -rotate-1 rounded-2xl bg-paper px-4 py-3 font-hand text-[1.25rem] leading-tight text-ink">
+            “Turn my syllabus into weeks for ‘{course.title}’, with a lesson and a quiz each.”
+          </p>
+          <p className="mt-2 rotate-1 rounded-2xl bg-paper/70 px-4 py-3 font-hand text-[1.15rem] leading-tight text-ink">
+            “Write a lesson on CSS selectors for Week 3, with examples and a quick check.”
+          </p>
+          <Link href="/agents" className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium underline-offset-4 hover:underline">
+            Set up the connector
+            <ArrowRight className="size-4" />
+          </Link>
+        </section>
+      </footer>
 
       <Dialog open={editing} onClose={() => setEditing(false)} label="Edit course">
         <div className="p-6 sm:p-10">

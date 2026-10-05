@@ -15,7 +15,6 @@ export default function CoursesPage() {
   const router = useRouter();
   const ready = current.status === "ready";
   const courses = useQuery(api.courses.listMine, ready ? {} : "skip");
-  const activity = useQuery(api.audit.recentForMe, ready ? {} : "skip");
   const universities = useQuery(api.courses.universitiesForNewCourse, ready ? {} : "skip");
   const convex = useConvex();
   const createCourse = useMutation(api.courses.create);
@@ -34,7 +33,6 @@ export default function CoursesPage() {
       <StudioDashboard
         me={current.me}
         courses={courses}
-        activity={activity}
         universities={universities}
         introOpenInitially={current.me.studioIntroSeenAt === undefined}
         onCreateCourse={async (args) => {

@@ -1,50 +1,22 @@
 "use client";
 
 import { motion, useReducedMotion } from "motion/react";
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { Markdown } from "@/components/sandbox/Markdown";
 import { Preview } from "@/components/sandbox/Preview";
 import { videoEmbedUrl, type CalloutTone, type LessonBlock, type LessonCheck } from "./types";
 
 /**
- * A lesson as students read it, block by block. The same component renders the
- * staff editor's preview, so lecturers see exactly what students get. Each
- * block slides in as it scrolls into view (not with reduced motion); steps
- * reveal one at a time; checks answer on the spot. Text is Markdown rendered as
- * React text, code is shown as text, and HTML/CSS previews run in the same
- * sandboxed iframe as code tasks (no scripts).
+ * One lesson block as students see it; LessonSlides shows a lesson with one
+ * block per slide. The staff editor previews with the same components, so
+ * lecturers see exactly what students get. Steps reveal one at a time; checks
+ * answer on the spot. Text is Markdown rendered as React text, code is shown as
+ * text, and HTML/CSS previews run in the same sandboxed iframe as code tasks (no
+ * scripts). Layouts follow the width the block has, not the window's, so a
+ * block fits the editor's narrow preview too.
  *
  * This folder is copied into the student app by scripts/sync-student.mjs; edit it here.
  */
-export function LessonBlocks({ blocks, className = "" }: { blocks: LessonBlock[]; className?: string }) {
-  return (
-    <div className={`space-y-6 ${className}`}>
-      {blocks.map((block) => (
-        <Appear key={block.id}>
-          <Block block={block} />
-        </Appear>
-      ))}
-    </div>
-  );
-}
-
-function Appear({ children }: { children: ReactNode }) {
-  const reduce = useReducedMotion();
-  if (reduce) {
-    return <div>{children}</div>;
-  }
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 18 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, amount: 0.15 }}
-      transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-    >
-      {children}
-    </motion.div>
-  );
-}
-
 export function Block({ block }: { block: LessonBlock }) {
   switch (block.type) {
     case "text":
@@ -58,7 +30,7 @@ export function Block({ block }: { block: LessonBlock }) {
         <figure>
           {/* Lecturers' images come from anywhere; next/image would need every host allowed in advance. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={block.url} alt={block.alt} loading="lazy" className="w-full rounded-3xl bg-panel object-contain" />
+          <img src={block.url} alt={block.alt} loading="lazy" className="max-h-[70dvh] w-full rounded-3xl bg-panel object-contain" />
           {block.caption && <figcaption className="mt-2 text-center text-sm text-graphite">{block.caption}</figcaption>}
         </figure>
       );
@@ -116,8 +88,9 @@ function CodeBlock({ language, code, caption, preview }: { language: string; cod
   }, [preview, language, code]);
 
   return (
-    <figure>
-      <div className={files ? "grid overflow-hidden rounded-3xl bg-charcoal lg:grid-cols-2" : "overflow-hidden rounded-3xl bg-charcoal"}>
+    // Code and its output sit side by side once the block is wide enough, whatever the window.
+    <figure className="@container min-w-0">
+      <div className={files ? "grid overflow-hidden rounded-3xl bg-charcoal @2xl:grid-cols-2" : "overflow-hidden rounded-3xl bg-charcoal"}>
         <div className="min-w-0">
           <div className="flex items-center justify-between px-4 pt-3 text-xs">
             <span className="font-mono uppercase tracking-[0.14em] text-paper/55">{language}</span>
@@ -142,7 +115,7 @@ function CodeBlock({ language, code, caption, preview }: { language: string; cod
           </pre>
         </div>
         {files && (
-          <div className="min-h-56 border-t border-paper/10 bg-white lg:border-l lg:border-t-0">
+          <div className="min-h-56 border-t border-paper/10 bg-white @2xl:border-l @2xl:border-t-0">
             <Preview files={files} assets={[]} />
           </div>
         )}
@@ -164,8 +137,8 @@ function Video({ url, caption }: { url: string; caption?: string }) {
             src={embed}
             title={caption ?? "Video"}
             loading="lazy"
+            // `fullscreen` here is what allows it; the older allowFullScreen attribute would only add a console warning.
             allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-            allowFullScreen
             referrerPolicy="strict-origin-when-cross-origin"
             className="absolute inset-0 size-full"
           />

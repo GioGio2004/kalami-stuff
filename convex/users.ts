@@ -22,7 +22,7 @@ import { normalizeEmail, optionalText, requireText } from "./lib/input";
 import { localeValidator, localizedTextValidator, roleValidator } from "./lib/validators";
 import type { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { closeGroupsOf, leaveAllGroups } from "./model/groups";
+import { closeGroupsOf, leaveAllGroups, stopTeachingAll } from "./model/groups";
 
 /** Both apps call this right after sign-in to create or refresh the user's row. */
 export const store = mutation({
@@ -139,6 +139,7 @@ export const deleteFromClerk = internalMutation({
     // Their conversations can be long; they go in batches of their own.
     await ctx.scheduler.runAfter(0, internal.messages.deleteForStudent, { studentId: user._id });
     await leaveAllGroups(ctx, user._id);
+    await stopTeachingAll(ctx, user._id);
     await closeGroupsOf(ctx, user._id);
     for (const enrollment of await ctx.db
       .query("enrollments")

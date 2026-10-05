@@ -13,7 +13,6 @@ export type QuestionType = QuestionInput["type"];
 export type AssessmentSettings = Assessment["settings"];
 export type AssessmentKind = Assessment["kind"];
 export type AssessmentStatus = Assessment["status"];
-export type AuditEntry = FunctionReturnType<typeof api.audit.recentForMe>[number];
 export type UniversityOption = FunctionReturnType<typeof api.courses.universitiesForNewCourse>[number];
 
 // The course outline: weeks with lessons, materials and placed tasks and quizzes.

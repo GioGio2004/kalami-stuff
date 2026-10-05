@@ -132,6 +132,14 @@ from crons.ts, so a deploy needs nothing by hand; to run it at once:
 `npx convex run migrations:materialsToWeeks --prod`. Once it returns 0 on every
 deployment, remove the cron, the function and the `materials` table.
 
+`groups:migrateToUniversityGroups` (2026-10-05): groups lecturers made before
+university admins ran them move to their owner's university, and the owner keeps
+teaching them. Run it once after deploying the change, per deployment:
+`npx convex run groups:migrateToUniversityGroups '{"cursor":null}' --prod`. It pages
+through all groups by itself and reports `nameClashes` (two groups with the same name
+at one university) for an admin to rename. Dev (`glad-mockingbird-933`) had no groups
+and is done.
+
 ## Deploying
 
 * Never deploy while an exam runs. `scripts/predeploy.mjs` asks production whether a timed attempt is in progress or work closes within two hours with students still on it, and exits non-zero if so. Vercel build command for the staff project:

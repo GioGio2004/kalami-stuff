@@ -7,21 +7,16 @@ import { ArrowLink, Button, ButtonLink } from "@/components/ui/buttons";
 import { Dialog } from "@/components/ui/Dialog";
 import { Layers, Plus, Robot, Trash } from "@/components/ui/icons";
 import { Pill, statusLabel, statusTone } from "@/components/ui/Pill";
-import { ActivityList } from "./ActivityList";
 import { CourseForm } from "./CourseForm";
 import { DeleteCourse } from "./DeleteCourse";
 import { KalamiFileIcon } from "@/components/kalami/KalamiFile";
 import { StudioIntro } from "./StudioIntro";
-import type { AuditEntry, CourseSummary, NewCourseArgs, UniversityOption } from "./types";
+import type { CourseSummary, NewCourseArgs, UniversityOption } from "./types";
 
-/**
- * The studio home: every course the person can work on, what they or their
- * agent did lately, and the intro card on the first visit.
- */
+/** The studio home: every course the person can work on, and the intro card on the first visit. */
 export function StudioDashboard({
   me,
   courses,
-  activity,
   universities,
   introOpenInitially,
   onCreateCourse,
@@ -32,7 +27,6 @@ export function StudioDashboard({
 }: {
   me: Me;
   courses: CourseSummary[] | undefined;
-  activity: AuditEntry[] | undefined;
   universities: UniversityOption[] | undefined;
   introOpenInitially: boolean;
   onCreateCourse: (args: NewCourseArgs) => Promise<void>;
@@ -83,38 +77,23 @@ export function StudioDashboard({
         </div>
       </div>
 
-      <div className="mt-10 grid gap-4 *:min-w-0 lg:grid-cols-12">
-        <div className="lg:col-span-8">
-          {courses === undefined ? (
-            <div className="rounded-[2rem] bg-card p-8 text-graphite">Loading your courses…</div>
-          ) : courses.length === 0 ? (
-            <EmptyState onCreate={() => setCreating(true)} onHow={() => setIntroOpen(true)} />
-          ) : (
-            <ul className="grid gap-4 sm:grid-cols-2">
-              {courses.map((course) => (
-                <li key={course._id}>
-                  <CourseCard
-                    course={course}
-                    onDelete={onDeleteCourse && course.canEdit ? () => setDeleting(course) : undefined}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <section className="flex flex-col rounded-[2rem] bg-charcoal p-6 text-paper sm:p-8 lg:col-span-4">
-          <span className="grid size-12 place-items-center rounded-full bg-charcoal-soft text-paper">
-            <Robot className="size-5" />
-          </span>
-          <h2 className="mt-8 text-2xl font-medium tracking-tight">Recent activity</h2>
-          <p className="mt-2 text-[15px] leading-relaxed text-paper/65">
-            Everything you and your agents change, as it happens.
-          </p>
-          <div className="mt-6">
-            <ActivityList entries={activity} dark emptyText="Nothing yet. Create a course or connect an agent." />
-          </div>
-        </section>
+      <div className="mt-10">
+        {courses === undefined ? (
+          <div className="rounded-[2rem] bg-card p-8 text-graphite">Loading your courses…</div>
+        ) : courses.length === 0 ? (
+          <EmptyState onCreate={() => setCreating(true)} onHow={() => setIntroOpen(true)} />
+        ) : (
+          <ul className="grid gap-4 *:min-w-0 sm:grid-cols-2 xl:grid-cols-3">
+            {courses.map((course) => (
+              <li key={course._id}>
+                <CourseCard
+                  course={course}
+                  onDelete={onDeleteCourse && course.canEdit ? () => setDeleting(course) : undefined}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <Dialog open={creating} onClose={() => setCreating(false)} label="New course">

@@ -22,7 +22,6 @@ export default function CoursePage() {
   const router = useRouter();
   const convex = useConvex();
   const course = useQuery(api.courses.get, { courseId: id });
-  const history = useQuery(api.audit.recentForCourse, { courseId: id });
   const updateCourse = useMutation(api.courses.update);
   const newJoinCode = useMutation(api.courses.newJoinCode);
   const setJoining = useMutation(api.courses.setJoining);
@@ -84,7 +83,6 @@ export default function CoursePage() {
   return (
     <CourseView
       course={course}
-      history={history}
       onExport={
         course.canEdit
           ? async () => {
@@ -138,9 +136,7 @@ export default function CoursePage() {
             onMoveToMyDrive: async () => {
               await moveToMyDrive({ courseId: id });
             },
-            onCreateWeek: async (args) => {
-              await createWeek({ courseId: id, ...args });
-            },
+            onCreateWeek: async (args) => await createWeek({ courseId: id, ...args }),
             onUpdateWeek: async (weekId, patch) => {
               await updateWeek({ weekId, ...patch });
             },

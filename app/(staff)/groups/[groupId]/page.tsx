@@ -1,15 +1,15 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { GroupView } from "@/components/groups/GroupView";
 import { LoadingScreen } from "@/components/ui/StatusScreen";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 
-// A group that doesn't exist, or isn't ours, makes the query throw; the
-// (staff) error boundary turns that into a "not found" screen.
+// A group that doesn't exist, or that we neither run nor teach, makes the query
+// throw; the (staff) error boundary turns that into a "not found" screen.
 export default function GroupPage() {
   const { groupId } = useParams<{ groupId: string }>();
   const id = groupId as Id<"groups">;
@@ -24,6 +24,9 @@ export default function GroupPage() {
   const removeStudent = useMutation(api.groups.removeStudent);
   const shareCourse = useMutation(api.groups.shareCourse);
   const unshareCourse = useMutation(api.groups.unshareCourse);
+  const leaveGroup = useMutation(api.groups.leaveAsLecturer);
+  const removeLecturer = useMutation(api.groups.removeLecturer);
+  const router = useRouter();
   // Invite expiry is judged here: queries don't read the clock.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -63,6 +66,13 @@ export default function GroupPage() {
         },
         onUnshareCourse: async (courseId) => {
           await unshareCourse({ groupId: id, courseId });
+        },
+        onLeave: async () => {
+          await leaveGroup({ groupId: id });
+          router.push("/groups");
+        },
+        onRemoveLecturer: async (userId) => {
+          await removeLecturer({ groupId: id, userId });
         },
       }}
     />

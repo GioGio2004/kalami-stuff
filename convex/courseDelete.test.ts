@@ -8,7 +8,7 @@ import { expectAppError, seed, settle, type TestBackend } from "./test.setup";
 /** A course with a bit of everything: a week with a lesson, a quiz a student answered, a group share. */
 async function busyCourse() {
   const s = await seed();
-  const { nino, ana, courseId, quiz } = s;
+  const { admin, nino, ana, courseId, quiz, universityId } = s;
   const weekId = await nino.mutation(api.weeks.create, { courseId, title: "Week 1" });
   await nino.mutation(api.lessons.create, { weekId, title: "Intro", blocks: [{ type: "text", md: "Hello" }] });
   const { assessmentId, questionId } = await quiz("Quiz 1");
@@ -19,7 +19,8 @@ async function busyCourse() {
     answer: { type: "short", text: "Cascading Style Sheets" },
   });
   await ana.mutation(api.learn.submit, { assessmentId });
-  const groupId = await nino.mutation(api.groups.create, { name: "CS-101 A" });
+  const groupId = await admin.mutation(api.groups.create, { name: "CS-101 A", universityId });
+  await nino.mutation(api.groups.joinAsLecturer, { groupId });
   await nino.mutation(api.groups.shareCourse, { groupId, courseId });
   await settle(s.t);
   return { ...s, groupId, assessmentId };

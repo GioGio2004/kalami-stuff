@@ -573,12 +573,32 @@ export default defineSchema({
     // The email that carried it (the Resend component's id), once one was queued.
     emailId: v.optional(v.string()),
     emailedAt: v.optional(v.number()),
+    // When it went out as a push to the student's devices (push.ts), so a retried batch never pushes twice.
+    pushedAt: v.optional(v.number()),
   })
     .index("by_userId", ["userId"])
     .index("by_userId_and_readAt", ["userId", "readAt"])
     .index("by_emailId", ["emailId"])
     // Clearing out a deleted course.
     .index("by_courseId", ["courseId"]),
+
+  // A device (browser) a student turned push notifications on in. The endpoint
+  // is the push service's URL for that device; the keys encrypt the payload to
+  // it. Gone when the student turns push off, or when the push service says
+  // the device is gone (404/410).
+  pushSubscriptions: defineTable({
+    userId: v.id("users"),
+    endpoint: v.string(),
+    keys: v.object({ p256dh: v.string(), auth: v.string() }),
+    // What the browser said about itself, so a student can tell their devices apart.
+    userAgent: v.optional(v.string()),
+    // Last subscribe or successful push.
+    lastUsedAt: v.number(),
+    // Pushes that failed in a row for other reasons; the row goes after too many.
+    failures: v.optional(v.number()),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_endpoint", ["endpoint"]),
 
   // One row per (assessment, kind) once its notifications went out, so a cron
   // run or a second publish never sends them twice.

@@ -23,6 +23,7 @@ Values are never in the repos. Names only:
 | Convex | `RESEND_TEST_MODE` | `true` to only allow Resend's test addresses (dev) |
 | Convex | `CLERK_SECRET_KEY` | The Clerk secret key of the same Clerk instance (dev key on dev, live key on prod). Only for Google Drive materials: Convex asks Clerk for the lecturer's Google token. Without it Drive weeks are refused and links still work. |
 | Convex | `CODE_ASSET_URL_PREFIX` | The Kalami ImageKit endpoint, with a trailing slash, e.g. `https://ik.imagekit.io/kalami/`. Without it any ImageKit account passes. |
+| Convex | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Push notifications to the student app (see below). Without them nothing is pushed and nothing fails. Generate a pair with `npx web-push generate-vapid-keys`; the subject is `mailto:` an address you read. **Different pairs on dev and prod**, and never rotate the prod pair casually: every device would have to turn push on again. |
 | Vercel (both apps) | `NEXT_PUBLIC_CODE_ASSET_URL_PREFIX` | Same value as above: the preview's CSP allows images from it |
 | Vercel staff | `MCP_OAUTH_AUDIENCE` | Optional: `https://staff.kalami.space/api/mcp` once confirmed that Clerk binds OAuth tokens to it |
 | Vercel (both) | `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` | As before |
@@ -65,6 +66,21 @@ Deliverability checklist, all in place or one setting away:
 5. Bounces and spam complaints stop further emails to that address (`users.emailStatus`). For that to work, create a webhook in Resend at `https://<prod deployment>.convex.site/resend-webhook` for all `email.*` events and set `RESEND_WEBHOOK_SECRET`.
 6. Volume: Resend's free plan is 100 emails a day. A 300-student course publishing one quiz exceeds it; the component queues the rest for the next day, so nothing is lost, but reminders arrive late. Resend Pro ($20/month) is the fix.
 7. Unsubscribe page: `https://<deployment>.convex.site/email/unsubscribe` (served by the backend, signed links, nothing to configure).
+
+## Push notifications (the installed student app)
+
+The same notification rows that fill the bell and go out by email are pushed to
+every device a student turned on under the bell ("Notify this device"). Web
+Push, no third-party service: `convex/push.ts` keeps the devices
+(`pushSubscriptions`), `convex/pushDelivery.ts` (Node, `web-push`) sends, the
+student app's `public/sw.js` shows the notification and opens the page on tap.
+
+1. Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` on the deployment (table above). The student app fetches the public key from the backend (`push.vapidPublicKey`), so Vercel needs nothing.
+2. The student app must be served over HTTPS (Vercel is; for a phone against a dev server use a tunnel). Chrome on Android and desktop work from the browser; **iPhone/iPad only from the Home Screen app** (iOS 16.4+): the dashboard's install card explains the three taps, and the switch under the bell says so until then.
+3. Check a deployment: turn push on in the app on a phone, then `npx convex run pushDelivery:sendTestByEmail '{"email":"student@example.com"}'` (add `--prod`), or tap "Send a test notification" under the bell. The answer says how many devices got it.
+4. Devices the push service reports gone (404/410) are removed at once; other failures count a strike and a device is dropped after five in a row. A student can have eight devices; the oldest goes when a ninth comes.
+5. Payloads are small (title, one line, the page to open, a tag so a resend replaces instead of stacks) and kept by the push service for a day for devices that are off.
+6. Development: `/sw.js?mode=dev` is registered, which caches nothing (hot reloading keeps working) but still receives pushes. The dev deployment has its own key pair.
 
 ## Messages (the contact card)
 

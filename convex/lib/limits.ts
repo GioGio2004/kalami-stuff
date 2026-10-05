@@ -21,6 +21,9 @@ export const LIMITS = {
   startConversation: { kind: "token bucket", rate: 6, period: HOUR, capacity: 4 },
   sendMessage: { kind: "token bucket", rate: 30, period: 10 * MINUTE, capacity: 10 },
   emailPreference: { kind: "token bucket", rate: 10, period: MINUTE, capacity: 5 },
+  // Push notifications: turning a device on, and the "send me a test" button.
+  pushSubscribe: { kind: "token bucket", rate: 20, period: HOUR, capacity: 10 },
+  pushTest: { kind: "token bucket", rate: 6, period: HOUR, capacity: 3 },
   // Staff
   createCourse: { kind: "token bucket", rate: 10, period: HOUR, capacity: 10 },
   createAssessment: { kind: "token bucket", rate: 30, period: HOUR, capacity: 20 },

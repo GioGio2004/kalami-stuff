@@ -65,10 +65,15 @@ export function Markdown({ source, className = "" }: { source: string; className
     }
     const heading = /^(#{1,3})\s+(.*)$/.exec(line);
     if (heading !== null) {
+      // Real headings, sized relative to the text around them so they fit a task step and a lesson slide alike.
+      const Heading = heading[1].length <= 2 ? "h3" : "h4";
       blocks.push(
-        <p key={key} className="font-medium text-ink">
+        <Heading
+          key={key}
+          className={`font-medium leading-snug tracking-tight text-ink not-first:pt-2 ${heading[1].length <= 2 ? "text-[1.3em]" : "text-[1.1em]"}`}
+        >
           {inline(heading[2], key)}
-        </p>,
+        </Heading>,
       );
       i++;
       continue;

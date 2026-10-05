@@ -336,7 +336,7 @@ export function LessonEditor({
       </div>
 
       {mode === "preview" ? (
-        <article className="mx-auto mt-8 max-w-[52rem] rounded-[2rem] bg-paper px-3 py-6 ring-1 ring-line sm:px-8 sm:py-10">
+        <article className="mx-auto mt-8 max-w-[64rem] rounded-[2rem] bg-paper px-3 py-6 ring-1 ring-line sm:px-8 sm:py-10">
           <div className="px-2 sm:px-0">
             {dirty && <p className="mb-3 font-hand text-xl leading-none text-graphite">Previewing your unsaved changes</p>}
             <p className="text-sm text-graphite">
@@ -355,6 +355,7 @@ export function LessonEditor({
             followId={selected}
             onNavigate={setSelected}
             label={`${lesson.title}, preview`}
+            title={lesson.title}
             className="mt-6"
             empty={
               <p className="mt-6 rounded-3xl border-2 border-dashed border-line px-5 py-8 text-center text-graphite">

@@ -218,6 +218,8 @@ export async function fanOut(
   }
   if (written.length > 0) {
     await ctx.scheduler.runAfter(0, internal.email.deliver, { notificationIds: written });
+    // The same rows to every device that turned push on (nothing happens without VAPID settings).
+    await ctx.scheduler.runAfter(0, internal.pushDelivery.deliver, { notificationIds: written });
   }
   if (!page.isDone) {
     await ctx.scheduler.runAfter(0, internal.notifications.fanOut, { ...args, cursor: page.continueCursor });

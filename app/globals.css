@@ -24,6 +24,21 @@
 
   --background: var(--paper);
   --foreground: var(--ink);
+
+  /* Code windows in lessons (on charcoal): the highlighter for tags and keywords, a few quiet hues for the rest. */
+  --code-text: #f1f0ea;
+  --code-tag: #dcf35a;
+  --code-keyword: #dcf35a;
+  --code-attr: #9cd0ff;
+  --code-property: #9cd0ff;
+  --code-string: #f6c87a;
+  --code-value: #f6c87a;
+  --code-number: #ffb3a1;
+  --code-selector: #cdbcff;
+  --code-function: #9cd0ff;
+  --code-comment: #8f8e86;
+  --code-punct: #b7b6ae;
+  --code-line: #6b6a63;
 }
 
 @theme inline {
@@ -43,6 +58,19 @@
   --color-warn: var(--warn);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-code-text: var(--code-text);
+  --color-code-tag: var(--code-tag);
+  --color-code-keyword: var(--code-keyword);
+  --color-code-attr: var(--code-attr);
+  --color-code-property: var(--code-property);
+  --color-code-string: var(--code-string);
+  --color-code-value: var(--code-value);
+  --color-code-number: var(--code-number);
+  --color-code-selector: var(--code-selector);
+  --color-code-function: var(--code-function);
+  --color-code-comment: var(--code-comment);
+  --color-code-punct: var(--code-punct);
+  --color-code-line: var(--code-line);
 
   /* Latin fonts first; Georgian letters fall through to Noto Sans Georgian. */
   --font-sans: var(--font-geist-sans), var(--font-georgian), ui-sans-serif, system-ui, sans-serif;

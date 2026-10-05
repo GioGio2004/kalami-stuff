@@ -15,12 +15,14 @@ export function UniversityInvites({
 }) {
   const invites = useQuery(api.invites.listForUniversity, { universityId });
   const createInvite = useMutation(api.invites.create);
+  const resendInvite = useMutation(api.invites.resendEmail);
   const revokeInvite = useMutation(api.invites.revoke);
   return (
     <InvitesBoard
       invites={invites}
       canInviteAdmins={canInviteAdmins}
       onCreate={(args) => createInvite({ universityId, ...args })}
+      onResend={(inviteId) => resendInvite({ inviteId })}
       onRevoke={(inviteId) => revokeInvite({ inviteId })}
     />
   );

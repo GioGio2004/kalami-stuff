@@ -1,7 +1,8 @@
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
-import type { QueryCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+import { sendStaffInviteEmail } from "./email";
 import {
   ensureUser,
   getMemberships,
@@ -16,6 +17,23 @@ import { enforceLimit } from "./lib/limits";
 import { inviteRoleValidator, localizedTextValidator } from "./lib/validators";
 
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+// Asking for the same invite again sends the email again, but not sooner than this.
+const RESEND_AFTER_MS = 10 * 60 * 1000;
+
+/** What happened to the invitation email: sent, already sent minutes ago, or email isn't available. */
+const emailOutcomeValidator = v.union(v.literal("sent"), v.literal("recent"), v.literal("off"));
+type EmailOutcome = "sent" | "recent" | "off";
+
+/**
+ * Emails the invite unless it went out a few minutes ago. "off": sending isn't
+ * configured here, or the address bounced or complained before.
+ */
+async function emailInvite(ctx: MutationCtx, invite: Doc<"invites">, inviter: Doc<"users">): Promise<EmailOutcome> {
+  if (invite.emailedAt !== undefined && Date.now() - invite.emailedAt < RESEND_AFTER_MS) {
+    return "recent";
+  }
+  return (await sendStaffInviteEmail(ctx, invite, inviter)) ? "sent" : "off";
+}
 
 /** 192 random bits. Mutation randomness comes from a per-execution seed clients can't see. */
 function generateToken(): string {
@@ -45,6 +63,8 @@ async function requireInviteAdmin(ctx: QueryCtx, universityId: Id<"universities"
 /**
  * University admins invite lecturers; only the super admin can invite university
  * admins, and independent teachers (no university: a school, private lessons).
+ * The invitation is emailed through Resend with its personal link; the link is
+ * also returned, for copying when email isn't available.
  */
 export const create = mutation({
   args: {
@@ -52,7 +72,7 @@ export const create = mutation({
     email: v.string(),
     role: inviteRoleValidator,
   },
-  returns: v.object({ inviteId: v.id("invites"), token: v.string() }),
+  returns: v.object({ inviteId: v.id("invites"), token: v.string(), email: emailOutcomeValidator }),
   handler: async (ctx, args) => {
     const { user, isSuperAdmin } = await requireInviteAdmin(ctx, args.universityId);
     if (args.role === "uni_admin" && !isSuperAdmin) {
@@ -83,7 +103,8 @@ export const create = mutation({
         invite.expiresAt > Date.now(),
     );
     if (open !== undefined) {
-      return { inviteId: open._id, token: open.token };
+      // Inviting the same person again sends the same link again.
+      return { inviteId: open._id, token: open.token, email: await emailInvite(ctx, open, user) };
     }
     const token = generateToken();
     const inviteId = await ctx.db.insert("invites", {
@@ -94,7 +115,37 @@ export const create = mutation({
       invitedBy: user._id,
       expiresAt: Date.now() + INVITE_TTL_MS,
     });
-    return { inviteId, token };
+    const invite = (await ctx.db.get("invites", inviteId))!;
+    return { inviteId, token, email: await emailInvite(ctx, invite, user) };
+  },
+});
+
+/**
+ * Sends a pending invitation's email again. An expired one gets a fresh
+ * fortnight first, so the link in the new email works.
+ */
+export const resendEmail = mutation({
+  args: { inviteId: v.id("invites") },
+  returns: emailOutcomeValidator,
+  handler: async (ctx, args) => {
+    const invite = await ctx.db.get("invites", args.inviteId);
+    if (invite === null) {
+      throw appError("NOT_FOUND", "Invite not found.");
+    }
+    const { user, isSuperAdmin } = await requireInviteAdmin(ctx, invite.universityId);
+    if (invite.role === "uni_admin" && !isSuperAdmin) {
+      throw appError("FORBIDDEN", "Only the platform admin can resend admin invites.");
+    }
+    if (invite.acceptedAt !== undefined || invite.revokedAt !== undefined) {
+      throw appError("CONFLICT", "This invite is no longer open.");
+    }
+    await enforceLimit(ctx, "invite", user._id);
+    let current = invite;
+    if (invite.expiresAt < Date.now()) {
+      await ctx.db.patch("invites", invite._id, { expiresAt: Date.now() + INVITE_TTL_MS });
+      current = (await ctx.db.get("invites", invite._id))!;
+    }
+    return await emailInvite(ctx, current, user);
   },
 });
 
@@ -112,6 +163,7 @@ export const listForUniversity = query({
       expiresAt: v.number(),
       acceptedAt: v.optional(v.number()),
       revokedAt: v.optional(v.number()),
+      emailedAt: v.optional(v.number()),
     }),
   ),
   handler: async (ctx, args) => {
@@ -133,6 +185,7 @@ export const listForUniversity = query({
         expiresAt: invite.expiresAt,
         acceptedAt: invite.acceptedAt,
         revokedAt: invite.revokedAt,
+        emailedAt: invite.emailedAt,
       };
     });
   },
@@ -158,6 +211,7 @@ export const listAll = query({
       expiresAt: v.number(),
       acceptedAt: v.optional(v.number()),
       revokedAt: v.optional(v.number()),
+      emailedAt: v.optional(v.number()),
     }),
   ),
   handler: async (ctx) => {
@@ -185,6 +239,7 @@ export const listAll = query({
         expiresAt: invite.expiresAt,
         acceptedAt: invite.acceptedAt,
         revokedAt: invite.revokedAt,
+        emailedAt: invite.emailedAt,
       });
     }
     return out;

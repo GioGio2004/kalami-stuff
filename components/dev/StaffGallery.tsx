@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { AdminView, type AdminUniversity } from "@/components/admin/AdminView";
 import { InviteCenter, type AnyInvite } from "@/components/admin/InviteCenter";
+import { EmailPreviews } from "@/components/dev/EmailPreviews";
 import { InvitesBoard, type Invite } from "@/components/admin/InvitesBoard";
 import { AgentsView } from "@/components/agents/AgentsView";
 import { InviteScreen } from "@/components/AcceptInvite";
@@ -88,6 +89,7 @@ const invite = (fields: Partial<Invite> & Pick<Invite, "email">): Invite => ({
   expiresAt: NOW + 12 * DAY,
   acceptedAt: undefined,
   revokedAt: undefined,
+  emailedAt: NOW - DAY,
   ...fields,
 });
 
@@ -101,7 +103,7 @@ const tsu: AdminUniversity = {
 /** The super admin's list across universities. */
 const allInvites: AnyInvite[] = [
   { ...invite({ email: "levan@tsu.ge", token: "sample-token-2" }), universityId: tsu._id, universityName: tsu.name },
-  { ...invite({ email: "tutor@gmail.com", token: "sample-token-3" }), universityId: undefined, universityName: undefined },
+  { ...invite({ email: "tutor@gmail.com", token: "sample-token-3", emailedAt: undefined }), universityId: undefined, universityName: undefined },
   { ...invite({ email: "nino@gsu.edu.ge", token: "sample-token-1" }), universityId: gori._id, universityName: gori.name },
   {
     ...invite({ email: "dean@gsu.edu.ge", role: "uni_admin", acceptedAt: NOW - 2 * DAY }),
@@ -821,6 +823,7 @@ const views: Record<string, string> = {
   agents: "Agents · connect an MCP client",
   admin: "Admin · super admin (one invite list, university picker)",
   "admin-uni": "Admin · university admin",
+  emails: "Emails · every email Kalami sends (sample data)",
   "admin-empty": "Admin · no universities yet",
   "invite-signed-out": "Invite · signed out",
   "invite-ready": "Invite · signed in with the invited email",
@@ -855,7 +858,11 @@ export function StaffGallery({ view }: { view?: string }) {
       canInviteAdmins
       onCreate={async () => {
         await pause();
-        return { token: "sample-new-token" };
+        return { token: "sample-new-token", email: "sent" as const };
+      }}
+      onResend={async () => {
+        await pause();
+        return "sent" as const;
       }}
       onRevoke={pause}
     />
@@ -997,7 +1004,11 @@ export function StaffGallery({ view }: { view?: string }) {
               invites={allInvites}
               onCreate={async () => {
                 await pause();
-                return { token: "sample-token-new" };
+                return { token: "sample-token-new", email: "sent" as const };
+              }}
+              onResend={async () => {
+                await pause();
+                return "recent" as const;
               }}
               onRevoke={pause}
             />
@@ -1010,7 +1021,24 @@ export function StaffGallery({ view }: { view?: string }) {
         <AdminView isSuperAdmin={false} universities={[gori]} onCreateUniversity={pause} renderInvites={() => board} renderGroups={() => groupsBoard} />,
       );
     case "admin-empty":
-      return staffPage(<AdminView isSuperAdmin universities={[]} onCreateUniversity={pause} invites={<InviteCenter universities={[]} invites={[]} onCreate={async () => ({ token: "x" })} onRevoke={pause} />} />);
+      return staffPage(
+        <AdminView
+          isSuperAdmin
+          universities={[]}
+          onCreateUniversity={pause}
+          invites={
+            <InviteCenter
+              universities={[]}
+              invites={[]}
+              onCreate={async () => ({ token: "x", email: "off" as const })}
+              onResend={async () => "off" as const}
+              onRevoke={pause}
+            />
+          }
+        />,
+      );
+    case "emails":
+      return <EmailPreviews />;
     case "invite-signed-out":
       return <InviteScreen invite={inviteInfo} current={{ status: "signed-out" }} returnTo="/" onAccept={pause} />;
     case "invite-ready":

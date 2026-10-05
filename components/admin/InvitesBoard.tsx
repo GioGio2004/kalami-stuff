@@ -10,9 +10,12 @@ import { Check, Copy, Mail } from "@/components/ui/icons";
 import { WritingDots } from "@/components/ui/StatusScreen";
 import { api } from "@/convex/_generated/api";
 import { errorMessage } from "@/lib/errors";
+import { formatDate } from "@/lib/format";
 
 export type Invite = FunctionReturnType<typeof api.invites.listForUniversity>[number];
 type InviteRole = Invite["role"];
+/** What happened to an invitation email: sent, already sent a few minutes ago, or email isn't available. */
+export type EmailOutcome = FunctionReturnType<typeof api.invites.resendEmail>;
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -42,16 +45,123 @@ export const statusStyles: Record<InviteStatus, string> = {
 
 export const roleLabel: Record<InviteRole, string> = { lecturer: "Lecturer", uni_admin: "University admin" };
 
+const OUTCOME_TEXT: Record<EmailOutcome, string> = {
+  sent: "Invitation emailed",
+  recent: "Already emailed a few minutes ago, so not sent again",
+  off: "Not emailed: email isn't set up on this server, or this address can't receive email. Send the link yourself",
+};
+
+/** "Emailed 5 Oct 2026", or that it hasn't been. */
+export function emailedLine(invite: { emailedAt?: number }): string {
+  return invite.emailedAt === undefined ? "not emailed" : `emailed ${formatDate(invite.emailedAt)}`;
+}
+
+/** Shown after creating an invite: whether it was emailed, and the link to copy either way. */
+export function CreatedInvite({
+  created,
+  link,
+  copied,
+  onCopy,
+}: {
+  created: { email: string; where?: string; outcome: EmailOutcome };
+  link: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  const sent = created.outcome === "sent";
+  return (
+    <div className="notch-sides rounded-[1.4rem] bg-charcoal p-4 pl-5 text-paper [--notch-y:50%]" role="status">
+      <p className="flex items-start gap-2 text-sm font-medium">
+        {sent ? (
+          <Check className="mt-0.5 size-4 shrink-0 text-highlighter" />
+        ) : (
+          <Mail className="mt-0.5 size-4 shrink-0 text-paper/60" />
+        )}
+        <span>
+          {OUTCOME_TEXT[created.outcome]}
+          {sent ? ` to ${created.email}` : ""}
+          {created.where ? ` · ${created.where}` : ""}.
+        </span>
+      </p>
+      <div className="mt-3 flex items-center gap-3">
+        <p className="min-w-0 flex-1 truncate font-mono text-xs text-paper/75">{link}</p>
+        <button
+          type="button"
+          onClick={onCopy}
+          className="flex shrink-0 items-center gap-1.5 rounded-full bg-highlighter px-3 py-1.5 text-xs font-semibold text-ink"
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+          {copied ? "Copied" : "Copy link"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Copy, resend and withdraw for an open invite, with what happened on the last resend. */
+export function InviteRowActions({
+  email,
+  token,
+  copied,
+  onCopy,
+  onResend,
+  onRevoke,
+}: {
+  email: string;
+  token: string;
+  copied: boolean;
+  onCopy: (token: string) => void;
+  onResend: () => Promise<EmailOutcome>;
+  onRevoke: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-1">
+      {message && <span className="mr-1 text-xs text-graphite">{message}</span>}
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setMessage(null);
+          try {
+            const outcome = await onResend();
+            setMessage(outcome === "sent" ? "Sent again" : outcome === "recent" ? "Sent minutes ago" : "Email off: copy the link");
+          } catch (caught) {
+            setMessage(errorMessage(caught));
+          } finally {
+            setBusy(false);
+          }
+        }}
+        aria-label={`Email the invitation to ${email} again`}
+      >
+        <Mail className="size-4" />
+        Resend
+      </Button>
+      <Button size="sm" variant="outline" onClick={() => onCopy(token)} aria-label={`Copy invite link for ${email}`}>
+        {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+      </Button>
+      <Button size="sm" variant="ghost" onClick={onRevoke}>
+        Withdraw
+      </Button>
+    </div>
+  );
+}
+
 /** Invite form + invite list for one university. */
 export function InvitesBoard({
   invites,
   canInviteAdmins,
   onCreate,
+  onResend,
   onRevoke,
 }: {
   invites: Invite[] | undefined;
   canInviteAdmins: boolean;
-  onCreate: (args: { email: string; role: InviteRole }) => Promise<{ token: string }>;
+  onCreate: (args: { email: string; role: InviteRole }) => Promise<{ token: string; email: EmailOutcome }>;
+  onResend: (inviteId: Invite["_id"]) => Promise<EmailOutcome>;
   onRevoke: (inviteId: Invite["_id"]) => Promise<unknown>;
 }) {
   const origin = useOrigin();
@@ -60,7 +170,7 @@ export function InvitesBoard({
   const [role, setRole] = useState<InviteRole>("lecturer");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<{ email: string; token: string } | null>(null);
+  const [created, setCreated] = useState<{ email: string; token: string; outcome: EmailOutcome } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   // The admin page can show one board per university, so ids must be unique.
   const emailId = useId();
@@ -81,8 +191,8 @@ export function InvitesBoard({
     setPending(true);
     setError(null);
     try {
-      const { token } = await onCreate({ email, role });
-      setCreated({ email: email.trim().toLowerCase(), token });
+      const result = await onCreate({ email, role });
+      setCreated({ email: email.trim().toLowerCase(), token: result.token, outcome: result.email });
       setEmail("");
     } catch (e) {
       setError(errorMessage(e));
@@ -110,7 +220,7 @@ export function InvitesBoard({
         <div>
           <h3 className="text-2xl font-medium tracking-tight">Invite someone</h3>
           <p className="mt-1 text-sm leading-relaxed text-graphite">
-            They get a personal link that only works for their email, for 14 days.
+            Kalami emails them a personal invitation. The link works only for their email, for 14 days.
           </p>
         </div>
         <Field
@@ -151,7 +261,7 @@ export function InvitesBoard({
         )}
         {error && <FormError>{error}</FormError>}
         <ArrowButton type="submit" disabled={pending} className="self-start">
-          {pending ? "Creating…" : "Create invite link"}
+          {pending ? "Sending…" : "Send invitation"}
         </ArrowButton>
 
         <AnimatePresence>
@@ -161,23 +271,13 @@ export function InvitesBoard({
             initial={{ opacity: 0, y: 18, scale: 0.94 }}
             animate={{ opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 260, damping: 18 } }}
             exit={{ opacity: 0, scale: 0.96 }}
-            className="notch-sides rounded-[1.4rem] bg-charcoal p-4 pl-5 text-paper [--notch-y:50%]"
           >
-            <p className="text-xs text-paper/55">Link ready for {created.email}</p>
-            <div className="mt-2 flex items-center gap-3">
-              <p className="min-w-0 flex-1 truncate font-mono text-xs text-paper/85">{linkFor(created.token)}</p>
-              <button
-                type="button"
-                onClick={() => copy(created.token)}
-                className="flex shrink-0 items-center gap-1.5 rounded-full bg-highlighter px-3 py-1.5 text-xs font-semibold text-ink"
-              >
-                {copied === created.token ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-                {copied === created.token ? "Copied" : "Copy"}
-              </button>
-            </div>
-            <p className="mt-3 font-hand text-lg leading-tight text-highlighter">
-              Send it yourself for now; invite emails come later.
-            </p>
+            <CreatedInvite
+              created={created}
+              link={linkFor(created.token)}
+              copied={copied === created.token}
+              onCopy={() => copy(created.token)}
+            />
           </motion.div>
         )}
         </AnimatePresence>
@@ -204,8 +304,8 @@ export function InvitesBoard({
             <AnimatePresence initial={false}>
             {invites.map((invite) => {
               const status = statusOf(invite, now);
-              // Only pending invites the caller can manage come with a token.
-              const token = status === "pending" ? invite.token : undefined;
+              // Only open invites the caller can manage come with a token; expired ones can be resent.
+              const token = status === "pending" || status === "expired" ? invite.token : undefined;
               const daysLeft = Math.max(0, Math.ceil((invite.expiresAt - now) / DAY));
               return (
                 <motion.li
@@ -220,25 +320,26 @@ export function InvitesBoard({
                   <span className="grid size-10 shrink-0 place-items-center rounded-full bg-panel text-sm font-semibold uppercase">
                     {invite.email[0]}
                   </span>
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 basis-40">
                     <p className="truncate font-medium">{invite.email}</p>
                     <p className="text-xs text-graphite">
                       {roleLabel[invite.role]}
                       {status === "pending" && ` · expires in ${daysLeft} day${daysLeft === 1 ? "" : "s"}`}
+                      {(status === "pending" || status === "expired") && ` · ${emailedLine(invite)}`}
                     </p>
                   </div>
                   <span className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${statusStyles[status]}`}>
                     {status}
                   </span>
                   {token !== undefined && (
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="outline" onClick={() => copy(token)} aria-label={`Copy invite link for ${invite.email}`}>
-                        {copied === token ? <Check className="size-4" /> : <Copy className="size-4" />}
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => revoke(invite._id)}>
-                        Withdraw
-                      </Button>
-                    </div>
+                    <InviteRowActions
+                      email={invite.email}
+                      token={token}
+                      copied={copied === token}
+                      onCopy={copy}
+                      onResend={() => onResend(invite._id)}
+                      onRevoke={() => revoke(invite._id)}
+                    />
                   )}
                 </motion.li>
               );

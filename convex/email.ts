@@ -6,6 +6,7 @@ import { internalMutation, type MutationCtx } from "./_generated/server";
 import {
   renderGroupInviteEmail,
   renderNotificationEmail,
+  renderStaffInviteEmail,
   renderStaffMessageEmail,
   renderStudentReplyEmail,
 } from "./lib/email/templates";
@@ -14,7 +15,8 @@ import { getMemberships, isStaffRole } from "./lib/auth";
 import { unsubscribeToken } from "./lib/tokens";
 
 /**
- * Notification emails through Resend. The component queues, batches, retries
+ * Kalami's emails through Resend: notifications, message notices, group
+ * invites and staff invitations. The component queues, batches, retries
  * and deduplicates; this file decides who gets what. A notification row is the
  * source of truth (see model/notifications.ts): the bell shows it, and if the
  * person hasn't switched emails off and their address is in good standing,
@@ -24,7 +26,7 @@ import { unsubscribeToken } from "./lib/tokens";
  * RESEND_WEBHOOK_SECRET (delivery events, optional), EMAIL_FROM (defaults to
  * Kalami <notifications@kalami.space>), EMAIL_REPLY_TO (optional),
  * STUDENT_APP_URL (links; defaults to https://app.kalami.space),
- * STAFF_APP_URL (links in message emails to staff; defaults to https://staff.kalami.space),
+ * STAFF_APP_URL (links in message emails and staff invitations; defaults to https://staff.kalami.space),
  * RESEND_TEST_MODE=true to only allow Resend's test addresses.
  */
 
@@ -209,6 +211,49 @@ export async function sendGroupInviteEmail(
 /** Where a personal group invite opens in the student app. */
 export function groupInviteUrl(token: string): string {
   return `${studentAppUrl()}/join/invite/${token}`;
+}
+
+/** Where a staff invite (lecturer, university admin) opens in the staff app. */
+export function staffInviteUrl(token: string): string {
+  return `${staffAppUrl()}/invite/${token}`;
+}
+
+/**
+ * Emails one staff invitation with its personal link. Returns false (and sends
+ * nothing) when sending isn't configured or the address is known to bounce or
+ * complain; the admin can still copy the link. Replies go to the person who
+ * invited them, so questions reach someone who knows about the invite.
+ */
+export async function sendStaffInviteEmail(
+  ctx: MutationCtx,
+  invite: Doc<"invites">,
+  inviter: Doc<"users">,
+): Promise<boolean> {
+  if (!canSendTo(invite.email) || (await isSuppressed(ctx, invite.email))) {
+    return false;
+  }
+  const university = invite.universityId === undefined ? null : await ctx.db.get("universities", invite.universityId);
+  const rendered = renderStaffInviteEmail({
+    inviterName: nameOf(inviter, "Kalami"),
+    role: invite.role,
+    universityName: university?.name,
+    email: invite.email,
+    url: staffInviteUrl(invite.token),
+    expiresAt: invite.expiresAt,
+  });
+  const now = Date.now();
+  const emailId = await sendLogged(ctx, {
+    from: from(),
+    to: invite.email,
+    subject: rendered.subject,
+    html: rendered.html,
+    text: rendered.text,
+    replyTo: inviter.deletedAt === undefined && inviter.email.includes("@") ? [inviter.email] : undefined,
+    // A resend is a new email on purpose; a retried mutation within the same minute isn't.
+    idempotencyKey: `staff-invite:${invite._id}:${Math.floor(now / 60_000)}`,
+  });
+  await ctx.db.patch("invites", invite._id, { emailId, emailedAt: now });
+  return true;
 }
 
 /** A person's name; never their email, which the other side shouldn't learn from Kalami. */

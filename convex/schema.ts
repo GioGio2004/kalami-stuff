@@ -98,6 +98,9 @@ export default defineSchema({
     acceptedAt: v.optional(v.number()),
     acceptedBy: v.optional(v.id("users")),
     revokedAt: v.optional(v.number()),
+    // The Resend component's id of the last invitation email, and when it was queued.
+    emailId: v.optional(v.string()),
+    emailedAt: v.optional(v.number()),
   })
     .index("by_token", ["token"])
     .index("by_email", ["email"])

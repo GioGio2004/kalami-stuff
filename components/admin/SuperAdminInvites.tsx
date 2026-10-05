@@ -9,12 +9,14 @@ import { api } from "@/convex/_generated/api";
 export function SuperAdminInvites({ universities }: { universities: AdminUniversity[] | undefined }) {
   const invites = useQuery(api.invites.listAll, {});
   const createInvite = useMutation(api.invites.create);
+  const resendInvite = useMutation(api.invites.resendEmail);
   const revokeInvite = useMutation(api.invites.revoke);
   return (
     <InviteCenter
       universities={universities}
       invites={invites}
       onCreate={(args) => createInvite(args)}
+      onResend={(inviteId) => resendInvite({ inviteId })}
       onRevoke={(inviteId) => revokeInvite({ inviteId })}
     />
   );

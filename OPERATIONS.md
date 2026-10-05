@@ -38,6 +38,24 @@ they joined, 24 hours before it closes and 1 hour before, unless they switched
 emails off under the bell or clicked the link in an email. One email per
 notification row, never twice (`notification:<id>` idempotency key).
 
+Invitations are emailed too: a staff invite (lecturer, university admin,
+independent teacher) from the Admin page, with its personal link to
+`STAFF_APP_URL/invite/<token>`, in Georgian then English, replies going to the
+admin who sent it; and a group invite to a student. The Admin page shows
+whether each invite went out ("emailed …" / "not emailed") and has Resend;
+asking again within 10 minutes doesn't send a second copy. Every email uses one
+layout (`convex/lib/email/templates.ts`); see them all in the staff dev gallery
+at `/dev/ui?view=emails`.
+
+For emails from a deployment, set on it: `RESEND_API_KEY` (and
+`EMAIL_FROM` if not `Kalami <notifications@kalami.space>`), plus the app links
+`STAFF_APP_URL` and `STUDENT_APP_URL` when they differ from
+`https://staff.kalami.space` / `https://app.kalami.space`. For local testing on
+the dev deployment: `npx convex env set STAFF_APP_URL http://localhost:3101`
+and `npx convex env set STUDENT_APP_URL http://localhost:3100`. Without
+`RESEND_API_KEY` nothing is sent and the Admin page says so; links still work
+by copying.
+
 Deliverability checklist, all in place or one setting away:
 
 1. Domain verified in Resend: SPF (the `send` subdomain) and DKIM (`resend._domainkey`) — done.

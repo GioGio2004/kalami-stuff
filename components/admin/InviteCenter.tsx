@@ -2,14 +2,23 @@
 
 import type { FunctionReturnType } from "convex/server";
 import { useId, useState, type FormEvent } from "react";
-import { ArrowButton, Button } from "@/components/ui/buttons";
+import { ArrowButton } from "@/components/ui/buttons";
 import { Field, FormError, Segmented, SelectInput, TextInput } from "@/components/ui/form";
-import { Check, Copy, Mail } from "@/components/ui/icons";
+import { Mail } from "@/components/ui/icons";
 import { WritingDots } from "@/components/ui/StatusScreen";
 import type { api } from "@/convex/_generated/api";
 import { errorMessage } from "@/lib/errors";
 import type { AdminUniversity } from "./AdminView";
-import { roleLabel, statusOf, statusStyles, useOrigin } from "./InvitesBoard";
+import {
+  CreatedInvite,
+  emailedLine,
+  InviteRowActions,
+  roleLabel,
+  statusOf,
+  statusStyles,
+  useOrigin,
+  type EmailOutcome,
+} from "./InvitesBoard";
 
 export type AnyInvite = FunctionReturnType<typeof api.invites.listAll>[number];
 type InviteRole = AnyInvite["role"];
@@ -22,18 +31,24 @@ const ALL = "all";
 
 /**
  * The super admin's invites in one place: invite a lecturer (or a university
- * admin) and pick their university as you do, then keep track of every invite,
- * with the university it's for, in one list.
+ * admin) and pick their university as you do; Kalami emails the invitation.
+ * Then keep track of every invite, with the university it's for, in one list.
  */
 export function InviteCenter({
   universities,
   invites,
   onCreate,
+  onResend,
   onRevoke,
 }: {
   universities: AdminUniversity[] | undefined;
   invites: AnyInvite[] | undefined;
-  onCreate: (args: { universityId?: UniversityId; email: string; role: InviteRole }) => Promise<{ token: string }>;
+  onCreate: (args: {
+    universityId?: UniversityId;
+    email: string;
+    role: InviteRole;
+  }) => Promise<{ token: string; email: EmailOutcome }>;
+  onResend: (inviteId: AnyInvite["_id"]) => Promise<EmailOutcome>;
   onRevoke: (inviteId: AnyInvite["_id"]) => Promise<unknown>;
 }) {
   const origin = useOrigin();
@@ -47,7 +62,9 @@ export function InviteCenter({
   const [role, setRole] = useState<InviteRole>("lecturer");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<{ email: string; where: string; token: string } | null>(null);
+  const [created, setCreated] = useState<{ email: string; where: string; token: string; outcome: EmailOutcome } | null>(
+    null,
+  );
   const [copied, setCopied] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>(ALL);
 
@@ -77,9 +94,9 @@ export function InviteCenter({
     setError(null);
     try {
       const universityId = independent ? undefined : (university as UniversityId);
-      const { token } = await onCreate({ universityId, email, role: shownRole });
-      const where = independent ? "an independent teacher" : (active.find((u) => u._id === university)?.name.en ?? "");
-      setCreated({ email: email.trim().toLowerCase(), where, token });
+      const result = await onCreate({ universityId, email, role: shownRole });
+      const where = independent ? "Independent teacher" : (active.find((u) => u._id === university)?.name.en ?? "");
+      setCreated({ email: email.trim().toLowerCase(), where, token: result.token, outcome: result.email });
       setEmail("");
     } catch (caught) {
       setError(errorMessage(caught));
@@ -110,8 +127,8 @@ export function InviteCenter({
         <div>
           <h3 className="text-2xl font-medium tracking-tight">Invite someone</h3>
           <p className="mt-1 text-sm leading-relaxed text-graphite">
-            Pick where they teach: accepting the invite puts them in that university. The personal link works only for
-            their email, for 14 days.
+            Pick where they teach and Kalami emails them a personal invitation; accepting it puts them in that
+            university. The link works only for their email, for 14 days.
           </p>
         </div>
         <Field label="University" htmlFor={universityFieldId}>
@@ -173,26 +190,15 @@ export function InviteCenter({
         )}
         {error && <FormError>{error}</FormError>}
         <ArrowButton type="submit" disabled={pending} className="self-start">
-          {pending ? "Creating…" : "Create invite link"}
+          {pending ? "Sending…" : "Send invitation"}
         </ArrowButton>
         {created && (
-          <div className="notch-sides rounded-[1.4rem] bg-charcoal p-4 pl-5 text-paper [--notch-y:50%]" role="status">
-            <p className="text-xs text-paper/55">
-              Link ready for {created.email}, {created.where}
-            </p>
-            <div className="mt-2 flex items-center gap-3">
-              <p className="min-w-0 flex-1 truncate font-mono text-xs text-paper/85">{linkFor(created.token)}</p>
-              <button
-                type="button"
-                onClick={() => copy(created.token)}
-                className="flex shrink-0 items-center gap-1.5 rounded-full bg-highlighter px-3 py-1.5 text-xs font-semibold text-ink"
-              >
-                {copied === created.token ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-                {copied === created.token ? "Copied" : "Copy"}
-              </button>
-            </div>
-            <p className="mt-3 font-hand text-lg leading-tight text-highlighter">Send it yourself for now; invite emails come later.</p>
-          </div>
+          <CreatedInvite
+            created={created}
+            link={linkFor(created.token)}
+            copied={copied === created.token}
+            onCopy={() => copy(created.token)}
+          />
         )}
       </form>
 
@@ -229,7 +235,8 @@ export function InviteCenter({
           <ul className="mt-4 divide-y divide-line">
             {shown.map((invite) => {
               const status = statusOf(invite, now);
-              const token = status === "pending" ? invite.token : undefined;
+              // Open invites (expired ones too: resending renews them) can be copied, resent and withdrawn.
+              const token = status === "pending" || status === "expired" ? invite.token : undefined;
               const daysLeft = Math.max(0, Math.ceil((invite.expiresAt - now) / DAY));
               return (
                 <li key={invite._id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3.5">
@@ -241,20 +248,21 @@ export function InviteCenter({
                     <p className="text-xs text-graphite">
                       {roleLabel[invite.role]} · {whereLabel(invite)}
                       {status === "pending" && ` · expires in ${daysLeft} day${daysLeft === 1 ? "" : "s"}`}
+                      {token !== undefined && ` · ${emailedLine(invite)}`}
                     </p>
                   </div>
                   <span className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${statusStyles[status]}`}>
                     {status}
                   </span>
                   {token !== undefined && (
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="outline" onClick={() => copy(token)} aria-label={`Copy invite link for ${invite.email}`}>
-                        {copied === token ? <Check className="size-4" /> : <Copy className="size-4" />}
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => revoke(invite._id)}>
-                        Withdraw
-                      </Button>
-                    </div>
+                    <InviteRowActions
+                      email={invite.email}
+                      token={token}
+                      copied={copied === token}
+                      onCopy={copy}
+                      onResend={() => onResend(invite._id)}
+                      onRevoke={() => revoke(invite._id)}
+                    />
                   )}
                 </li>
               );

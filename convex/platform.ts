@@ -286,6 +286,8 @@ export const sendBroadcast = mutation({
     audience: broadcastAudienceValidator,
     channels: broadcastChannelsValidator,
     emailEveryone: v.boolean(),
+    /** Make the message a personal invitation to this group (email addresses or picked people). */
+    groupId: v.optional(v.id("groups")),
   },
   returns: v.id("broadcasts"),
   handler: async (ctx, args) => {

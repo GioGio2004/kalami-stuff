@@ -1610,7 +1610,7 @@ export const systemValidator = v.object({
       v.object({
         _id: v.id("emailSuppressions"),
         email: v.string(),
-        status: v.union(v.literal("bounced"), v.literal("complained")),
+        status: v.union(v.literal("bounced"), v.literal("complained"), v.literal("unsubscribed")),
         at: v.number(),
         /** The account with that address, if there is one. */
         userId: v.optional(v.id("users")),

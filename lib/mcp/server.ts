@@ -143,6 +143,7 @@ Writing lessons (in the course's language):
 - callout "definition" for each key term (title = the term), "tip" for practical advice, "warning" for a common mistake.
 - code blocks for every example; for HTML and CSS set preview: true so students see the result.
 - steps for procedures students follow in order.
+- A scene block (type "scene") for anything that is better watched than read: a process, a diagram that builds up, a comparison, a code walkthrough. Elements on a 1200 × 675 stage plus steps of named animations (enter, exit, emphasize, focus, move, camera); get_kalami_format has the full vocabulary and an example. One idea per step, big short text, three to six steps. A lesson made only of scenes is a presentation.
 - A check every few blocks (single, multiple or short) so students test themselves; add an explanation.
 - Images only from https URLs you are sure of, always with alt text. YouTube or Vimeo links play inside the lesson.
 - Never invent facts about the lecturer's own course (dates, grading rules); ask.
@@ -150,7 +151,7 @@ Writing lessons (in the course's language):
 Rules:
 - You can only change DRAFT assessments, draft weeks, draft lessons and draft courses. Only the lecturer can publish, in the Kalami dashboard. If something is already published, ask the lecturer to move it back to draft before you edit it. You may add a new draft lesson to a published week; students see it only once the lecturer publishes it. When reordering, published weeks and lessons must keep their order (move only drafts around them).
 - You can't delete courses, and you can only delete drafts nobody has worked on.
-- You can't create Google Drive folders (the lecturer adds a week's folder in the dashboard); add links instead.
+- For Drive readings: the lecturer connects Google once in the staff app. Call prepare_week_drive if the draft week has no folder, then get_course_outline until its drive has a url and syncing is absent (report drive.error if it fails). Use create_reading_document to write or revise a Google Doc there and attach it to the materials. Use the same documentKey for retries and revisions; revisions replace the entire document, including edits made in Google Docs. Never switch keys just to retry an error. Only the course's Drive owner may use these tools. Publish remains a human action.
 - You cannot see students, attempts or grades. Never ask for student data.
 - Pass a requestId (any unique string you make up) to create_course, create_assessment, add_questions, create_week, create_lesson, add_lesson_blocks and import_kalami_file. If such a call times out, retry it with the same requestId instead of calling it again without one.
 - Write questions in the course's language (ka = Georgian, en = English) unless told otherwise.
@@ -557,6 +558,48 @@ const handler = createMcpHandler(
     );
 
     server.registerTool(
+      "list_reading_documents",
+      {
+        title: "List managed reading documents",
+        description: "Lists a week's reading documentKeys and Google Doc links, including unfinished saves. Check this before creating or revising readings so you can reuse the correct key. linked=false means the save has not completed or the link was removed.",
+        inputSchema: z.object({ weekId }),
+      },
+      async (args, ctx) => run(() => convex.query(api.readingDocuments.listForAgent, { ...auth(ctx), weekId: args.weekId as Id<"weeks"> })),
+    );
+
+    server.registerTool(
+      "prepare_week_drive",
+      {
+        title: "Prepare a draft week's Google Drive folder",
+        description: "Starts creating a private folder in the connected lecturer's Google Drive. Safe to call again after completion. Only the course's Drive owner may prepare it; the first caller becomes the owner if none exists. Google must already be connected in the staff app. Check get_course_outline for a Drive url, no syncing operation and no error before creating readings. Does not publish or share anything.",
+        inputSchema: z.object({ weekId }),
+      },
+      async (args, ctx) => run(async () => {
+        await convex.mutation(api.mcp.prepareWeekDriveAsAgent, { ...auth(ctx), weekId: args.weekId as Id<"weeks"> });
+        return { ok: true, next: "Check get_course_outline; wait until the folder is ready before calling create_reading_document." };
+      }),
+    );
+
+    server.registerTool(
+      "create_reading_document",
+      {
+        title: "Create or update a reading document",
+        description: "Creates a native Google Doc in a draft week's existing Drive folder and attaches it to the week's materials. Requires the course's Drive owner with Google connected. Reuse documentKey to update the SAME document (replaces its full content), or to retry after a timeout. Use a new key only for a different reading. Never publishes. Supports plain text, Markdown headings, bullet lists and fenced code; other Markdown is kept as literal text.",
+        inputSchema: z.object({
+          weekId,
+          documentKey: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).describe("Stable name, e.g. html-reading. Keep this key for retries and revisions."),
+          title: z.string().trim().min(1).max(200),
+          content: z.string().trim().min(1).max(100_000),
+        }),
+      },
+      async (args, ctx) => run(async () => ({
+        ...await convex.action(api.readingDocuments.saveAsAgent, { ...auth(ctx), ...args, weekId: args.weekId as Id<"weeks"> }),
+        reviewUrl: dashboardUrl(ctx, "/courses"),
+        next: "Review the reading and publish its week in the staff dashboard when ready.",
+      })),
+    );
+
+    server.registerTool(
       "add_week_links",
       {
         title: "Add week links",
@@ -913,7 +956,7 @@ const handler = createMcpHandler(
     );
   },
   {
-    serverInfo: { name: "kalami", version: "0.6.0" },
+    serverInfo: { name: "kalami", version: "0.7.0" },
     instructions: INSTRUCTIONS,
   },
 );

@@ -337,6 +337,8 @@ export const broadcastAudienceValidator = v.union(
   v.object({ kind: v.literal("group"), groupId: v.id("groups") }),
   v.object({ kind: v.literal("course"), courseId: v.id("courses") }),
   v.object({ kind: v.literal("people"), userIds: v.array(v.id("users")) }),
+  // Pasted addresses: accounts get the usual, the rest the email only.
+  v.object({ kind: v.literal("emails"), emails: v.array(v.string()) }),
 );
 export type BroadcastAudience = Infer<typeof broadcastAudienceValidator>;
 
@@ -396,6 +398,171 @@ export const weekLinkValidator = v.object({
 });
 export type WeekLink = Infer<typeof weekLinkValidator>;
 
+// --- Animated scenes (lib/scene/index.ts has the rules and limits; keep in step) -------
+
+const sceneColorValidator = v.union(
+  v.literal("ink"),
+  v.literal("paper"),
+  v.literal("graphite"),
+  v.literal("panel"),
+  v.literal("card"),
+  v.literal("charcoal"),
+  v.literal("highlighter"),
+  v.literal("highlighter-deep"),
+  v.literal("red-pen"),
+  v.literal("ok"),
+  v.literal("warn"),
+);
+const sceneSizeValidator = v.union(v.literal("sm"), v.literal("md"), v.literal("lg"), v.literal("xl"));
+const sceneAlignValidator = v.union(v.literal("left"), v.literal("center"), v.literal("right"));
+const sceneBox = { x: v.number(), y: v.number(), w: v.optional(v.number()), h: v.optional(v.number()) };
+
+export const sceneElementValidator = v.union(
+  v.object({
+    id: v.string(),
+    kind: v.literal("heading"),
+    text: v.string(),
+    size: v.optional(sceneSizeValidator),
+    align: v.optional(sceneAlignValidator),
+    color: v.optional(sceneColorValidator),
+    ...sceneBox,
+  }),
+  v.object({
+    id: v.string(),
+    kind: v.literal("text"),
+    md: v.string(),
+    size: v.optional(sceneSizeValidator),
+    align: v.optional(sceneAlignValidator),
+    color: v.optional(sceneColorValidator),
+    ...sceneBox,
+  }),
+  v.object({
+    id: v.string(),
+    kind: v.literal("list"),
+    items: v.array(v.string()),
+    ordered: v.optional(v.boolean()),
+    size: v.optional(sceneSizeValidator),
+    color: v.optional(sceneColorValidator),
+    ...sceneBox,
+  }),
+  v.object({ id: v.string(), kind: v.literal("code"), language: v.string(), code: v.string(), size: v.optional(sceneSizeValidator), ...sceneBox }),
+  v.object({
+    id: v.string(),
+    kind: v.literal("image"),
+    url: v.string(),
+    alt: v.string(),
+    fit: v.optional(v.union(v.literal("cover"), v.literal("contain"))),
+    ...sceneBox,
+  }),
+  v.object({
+    id: v.string(),
+    kind: v.literal("shape"),
+    shape: v.union(v.literal("rect"), v.literal("circle"), v.literal("pill"), v.literal("diamond")),
+    fill: v.optional(sceneColorValidator),
+    stroke: v.optional(sceneColorValidator),
+    label: v.optional(v.string()),
+    color: v.optional(sceneColorValidator),
+    ...sceneBox,
+  }),
+  v.object({
+    id: v.string(),
+    kind: v.literal("arrow"),
+    from: v.string(),
+    to: v.string(),
+    label: v.optional(v.string()),
+    color: v.optional(sceneColorValidator),
+    curve: v.optional(v.number()),
+  }),
+  v.object({
+    id: v.string(),
+    kind: v.literal("number"),
+    value: v.number(),
+    label: v.optional(v.string()),
+    prefix: v.optional(v.string()),
+    suffix: v.optional(v.string()),
+    decimals: v.optional(v.number()),
+    size: v.optional(sceneSizeValidator),
+    color: v.optional(sceneColorValidator),
+    ...sceneBox,
+  }),
+  v.object({
+    id: v.string(),
+    kind: v.literal("note"),
+    tone: v.union(v.literal("tip"), v.literal("definition"), v.literal("warning"), v.literal("note")),
+    md: v.string(),
+    ...sceneBox,
+  }),
+);
+
+const sceneTiming = { at: v.optional(v.number()), duration: v.optional(v.number()) };
+const targets = v.array(v.string());
+
+export const sceneActionValidator = v.union(
+  v.object({
+    do: v.literal("enter"),
+    targets,
+    effect: v.optional(
+      v.union(
+        v.literal("fade"),
+        v.literal("rise"),
+        v.literal("drop"),
+        v.literal("slide-left"),
+        v.literal("slide-right"),
+        v.literal("pop"),
+        v.literal("cascade"),
+        v.literal("wipe"),
+        v.literal("draw"),
+        v.literal("count"),
+        v.literal("type"),
+      ),
+    ),
+    stagger: v.optional(v.number()),
+    ...sceneTiming,
+  }),
+  v.object({
+    do: v.literal("exit"),
+    targets,
+    effect: v.optional(
+      v.union(v.literal("fade"), v.literal("sink"), v.literal("shrink"), v.literal("slide-left"), v.literal("slide-right")),
+    ),
+    stagger: v.optional(v.number()),
+    ...sceneTiming,
+  }),
+  v.object({
+    do: v.literal("emphasize"),
+    targets,
+    effect: v.optional(v.union(v.literal("pulse"), v.literal("shake"), v.literal("glow"), v.literal("flash"), v.literal("bounce"))),
+    ...sceneTiming,
+  }),
+  v.object({ do: v.literal("focus"), targets, ...sceneTiming }),
+  v.object({
+    do: v.literal("move"),
+    target: v.string(),
+    x: v.optional(v.number()),
+    y: v.optional(v.number()),
+    w: v.optional(v.number()),
+    h: v.optional(v.number()),
+    ...sceneTiming,
+  }),
+  v.object({
+    do: v.literal("camera"),
+    target: v.optional(v.string()),
+    x: v.optional(v.number()),
+    y: v.optional(v.number()),
+    scale: v.optional(v.number()),
+    ...sceneTiming,
+  }),
+);
+
+/** An animated scene: elements on a 1200 × 675 stage and the steps that animate them (lib/scene). */
+export const sceneValidator = v.object({
+  title: v.optional(v.string()),
+  theme: v.optional(v.union(v.literal("paper"), v.literal("ink"))),
+  elements: v.array(sceneElementValidator),
+  steps: v.array(v.object({ note: v.optional(v.string()), actions: v.array(sceneActionValidator) })),
+});
+export type SceneDoc = Infer<typeof sceneValidator>;
+
 /** A quick self-check inside a lesson. Ungraded, so the answer travels with it. */
 export const lessonCheckValidator = v.object({
   kind: v.union(v.literal("single"), v.literal("multiple"), v.literal("short")),
@@ -438,6 +605,7 @@ export const lessonBlockValidator = v.union(
     steps: v.array(v.object({ title: v.optional(v.string()), md: v.string() })),
   }),
   v.object({ id: v.string(), type: v.literal("check"), check: lessonCheckValidator }),
+  v.object({ id: v.string(), type: v.literal("scene"), scene: sceneValidator }),
 );
 export type LessonBlock = Infer<typeof lessonBlockValidator>;
 
@@ -474,6 +642,7 @@ export const lessonBlockInputValidator = v.union(
     steps: v.array(v.object({ title: v.optional(v.string()), md: v.string() })),
   }),
   v.object({ id: v.optional(v.string()), type: v.literal("check"), check: lessonCheckValidator }),
+  v.object({ id: v.optional(v.string()), type: v.literal("scene"), scene: sceneValidator }),
 );
 export type LessonBlockInput = Infer<typeof lessonBlockInputValidator>;
 

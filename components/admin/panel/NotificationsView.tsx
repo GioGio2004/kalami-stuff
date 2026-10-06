@@ -25,6 +25,7 @@ import { WritingDots } from "@/components/ui/StatusScreen";
 import type { Id } from "@/convex/_generated/dataModel";
 import { errorMessage } from "@/lib/errors";
 import { timeAgo } from "@/lib/format";
+import { useDebounced } from "@/lib/useDebounced";
 
 type AudienceKind = BroadcastAudience["kind"];
 
@@ -39,7 +40,24 @@ const KIND_OPTIONS: { value: AudienceKind; label: string; superOnly?: boolean }[
   { value: "group", label: "A group" },
   { value: "course", label: "A course" },
   { value: "people", label: "Specific people" },
+  { value: "emails", label: "Email addresses" },
 ];
+
+const MAX_ADDRESSES = 200;
+const EMAIL_RE = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
+
+/** The pasted list split and cleaned (commas, spaces, new lines), with what doesn't look like an address. */
+function parseEmails(text: string): { emails: string[]; bad: string[] } {
+  const emails: string[] = [];
+  const bad: string[] = [];
+  for (const entry of text.split(/[\s,;]+/)) {
+    const email = entry.trim().toLowerCase();
+    if (email === "") continue;
+    if (email.length > 254 || !EMAIL_RE.test(email)) bad.push(entry.trim());
+    else if (!emails.includes(email)) emails.push(email);
+  }
+  return { emails, bad };
+}
 
 export type NotificationsData = {
   universities: AdminUniversity[] | undefined;
@@ -92,6 +110,10 @@ export function NotificationsView({
   const [groupId, setGroupId] = useState<Id<"groups"> | null>(null);
   const [course, setCourse] = useState<CourseRow | null>(null);
   const [picked, setPicked] = useState<PersonHit[]>([]);
+  const [emailsText, setEmailsText] = useState("");
+  const parsedEmails = parseEmails(useDebounced(emailsText, 300));
+  const [inviting, setInviting] = useState(false);
+  const [inviteGroupId, setInviteGroupId] = useState<Id<"groups"> | null>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [link, setLink] = useState("");
@@ -124,10 +146,20 @@ export function NotificationsView({
         return course === null ? null : { kind, courseId: course._id };
       case "people":
         return picked.length === 0 ? null : { kind, userIds: picked.map((person) => person.userId) };
+      case "emails":
+        return parsedEmails.emails.length === 0 || parsedEmails.emails.length > MAX_ADDRESSES || parsedEmails.bad.length > 0
+          ? null
+          : { kind, emails: parsedEmails.emails };
     }
-  }, [kind, universityPick, groupId, course, picked]);
+  }, [kind, universityPick, groupId, course, picked, parsedEmails]);
 
-  const everyoneByEmail = email && emailEveryone;
+  // The message is an invitation: for addresses or picked people, with a group chosen.
+  const canInvite = kind === "emails" || kind === "people";
+  const invitingTo = canInvite && inviting ? inviteGroupId : null;
+  const inviteGroupName = invitingTo === null ? undefined : groups?.find((group) => group._id === invitingTo)?.name;
+  // An invitation can only reach people without an account by email.
+  const emailOn = email || invitingTo !== null;
+  const everyoneByEmail = emailOn && emailEveryone;
   useEffect(() => {
     onAudience(audience, everyoneByEmail);
   }, [audience, everyoneByEmail, onAudience]);
@@ -157,10 +189,13 @@ export function NotificationsView({
         return `the course ${course?.title ?? ""}`;
       case "people":
         return picked.length === 1 ? picked[0].name : `${picked.length} people`;
+      case "emails":
+        return `${parsedEmails.emails.length} email address${parsedEmails.emails.length === 1 ? "" : "es"}`;
     }
   }
 
-  const ready = audience !== null && title.trim().length > 0 && body.trim().length > 0;
+  const ready =
+    audience !== null && title.trim().length > 0 && body.trim().length > 0 && !(canInvite && inviting && invitingTo === null);
 
   async function submit() {
     if (audience === null) return;
@@ -172,8 +207,9 @@ export function NotificationsView({
         body: body.trim(),
         link: link.trim() === "" ? undefined : link.trim(),
         audience,
-        channels: { push, email },
+        channels: { push, email: emailOn },
         emailEveryone: everyoneByEmail,
+        groupId: invitingTo ?? undefined,
       });
       setSent(title.trim());
       setTitle("");
@@ -238,6 +274,19 @@ export function NotificationsView({
               {kind === "people" && (
                 <PeoplePicker people={people} query={peopleQuery} onQuery={onPeopleQuery} picked={picked} onPicked={setPicked} id={`${ids}-people`} />
               )}
+              {kind === "emails" && <EmailsPicker text={emailsText} onText={setEmailsText} parsed={parsedEmails} id={`${ids}-emails`} />}
+              {canInvite && (
+                <div className="space-y-3">
+                  <CheckCard checked={inviting} onChange={setInviting}>
+                    Turn this message into a group invitation
+                    <span className="mt-1 block text-xs font-normal leading-relaxed text-graphite">
+                      Everyone gets a personal link to join the group, which works only with their own email address; people without
+                      an account sign up with it. The message goes by email either way. Members of the group just get the message.
+                    </span>
+                  </CheckCard>
+                  {inviting && <GroupPicker groups={groups} value={inviteGroupId} onChange={setInviteGroupId} id={`${ids}-invite-group`} />}
+                </div>
+              )}
             </section>
 
             <section className="space-y-4">
@@ -282,16 +331,17 @@ export function NotificationsView({
                     Only devices where they turned notifications on. The bell in the app shows it either way.
                   </span>
                 </CheckCard>
-                <CheckCard checked={email} onChange={setEmail}>
+                <CheckCard checked={emailOn} onChange={setEmail}>
                   <span className="flex items-center gap-2">
                     <Mail className="size-4 shrink-0" /> Email
                   </span>
                   <span className="mt-1 block text-xs font-normal leading-relaxed text-graphite">
                     Students and staff, in their language, with a link to stop these emails.
+                    {invitingTo !== null && " Always on for an invitation."}
                   </span>
                 </CheckCard>
               </div>
-              {email && (
+              {emailOn && (
                 <CheckCard checked={emailEveryone} onChange={setEmailEveryone}>
                   Also email people who switched notification emails off
                   <span className="mt-1 block text-xs font-normal leading-relaxed text-graphite">
@@ -301,7 +351,7 @@ export function NotificationsView({
               )}
             </section>
 
-            <PreviewBox audience={audience} preview={preview} push={push} email={email} />
+            <PreviewBox audience={audience} preview={preview} push={push} email={emailOn} />
 
             {error && !confirming && <FormError>{error}</FormError>}
             {sent !== null && (
@@ -323,7 +373,13 @@ export function NotificationsView({
                 <Megaphone className="size-4" />
                 Send…
               </Button>
-              <span className="text-sm text-graphite">{ready ? "You confirm first." : "Pick who gets it and write the message."}</span>
+              <span className="text-sm text-graphite">
+                {ready
+                  ? "You confirm first."
+                  : canInvite && inviting && invitingTo === null
+                    ? "Pick the group to invite them to."
+                    : "Pick who gets it and write the message."}
+              </span>
             </div>
           </div>
         </Card>
@@ -394,6 +450,12 @@ export function NotificationsView({
                 )}
               </dd>
             </div>
+            {invitingTo !== null && (
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-graphite">Invitation to</dt>
+                <dd className="mt-0.5">{inviteGroupName ?? "the group"} · a personal join link for everyone not in it yet</dd>
+              </div>
+            )}
             <div>
               <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-graphite">Title</dt>
               <dd className="mt-0.5 font-medium">{title.trim()}</dd>
@@ -403,7 +465,7 @@ export function NotificationsView({
               <dd className="mt-1 flex flex-wrap gap-1.5">
                 <Pill tone="ink">Bell</Pill>
                 {push && <Pill tone="ink">Push</Pill>}
-                {email && <Pill tone="ink">Email{everyoneByEmail ? ", everyone" : ""}</Pill>}
+                {emailOn && <Pill tone="ink">Email{everyoneByEmail ? ", everyone" : ""}</Pill>}
               </dd>
             </div>
           </dl>
@@ -464,6 +526,7 @@ function PreviewBox({
               {push && ` · ${formatCount(preview.withPush)} with push on`}
             </li>
             {preview.staff > 0 && <li>{formatCount(preview.staff)} lecturers and admins (email only)</li>}
+            {preview.noAccount > 0 && <li>{formatCount(preview.noAccount)} without an account you reach: email only</li>}
             {email && (
               <li>
                 Email: {formatCount(preview.emailable)} get it
@@ -587,6 +650,47 @@ function CoursePicker({
             </ul>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+function EmailsPicker({
+  text,
+  onText,
+  parsed,
+  id,
+}: {
+  text: string;
+  onText: (text: string) => void;
+  parsed: { emails: string[]; bad: string[] };
+  id: string;
+}) {
+  const count = parsed.emails.length;
+  return (
+    <div className="space-y-2">
+      <Field
+        label="Email addresses"
+        htmlFor={id}
+        hint="One per line, or separated by commas. Addresses with an account get the message in the app too; the rest get the email."
+      >
+        <TextArea
+          id={id}
+          rows={5}
+          value={text}
+          placeholder={"ana.beridze@gsu.edu.ge\ng.maisuradze@gsu.edu.ge"}
+          onChange={(event) => onText(event.target.value)}
+        />
+      </Field>
+      <p className="text-sm text-graphite">
+        {count === 0 ? "No addresses yet." : `${formatCount(count)} address${count === 1 ? "" : "es"}`}
+        {count > MAX_ADDRESSES && ` · at most ${MAX_ADDRESSES} in one message`}
+      </p>
+      {parsed.bad.length > 0 && (
+        <FormError>
+          These don&apos;t look like email addresses: {parsed.bad.slice(0, 5).join(", ")}
+          {parsed.bad.length > 5 ? ", …" : ""}
+        </FormError>
       )}
     </div>
   );

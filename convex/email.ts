@@ -222,40 +222,51 @@ export function announcementUrl(link: string | undefined): string | undefined {
   return link.startsWith("/") ? `${studentAppUrl()}${link}` : link;
 }
 
+/** Who an announcement goes to: an account, or just an address (no account within the sender's reach). */
+export type AnnouncementTarget = { email: string; user?: Doc<"users"> };
+
 /**
- * One announcement from the notification center, to one person (student or
- * staff), in their language. Nothing goes to a bounced or complained address,
- * or to someone who switched emails off unless the admin marked the message
- * as one for everyone. Returns the queued email's id, or why none went.
+ * One announcement from the notification center, to one person (student,
+ * staff, or an address without an account), in their language when it's
+ * known. Nothing goes to a bounced, complained or unsubscribed address, or to
+ * someone who switched emails off unless the admin marked the message as one
+ * for everyone. Returns the queued email's id, or why none went.
  */
 export async function sendAnnouncementEmail(
   ctx: MutationCtx,
-  user: Doc<"users">,
+  target: AnnouncementTarget,
   broadcast: { _id: Id<"broadcasts">; title: string; body: string; link?: string; emailEveryone: boolean },
   sentBy: string,
+  invite?: { groupName: string; url: string },
 ): Promise<{ emailId?: string; skipped?: EmailSkipReason }> {
-  if (!canSendTo(user.email)) return { skipped: "not_configured" };
-  if (user.deletedAt !== undefined || user.emailStatus !== undefined || (await isSuppressed(ctx, user.email))) {
+  const { user } = target;
+  const email = user?.email ?? normalizeEmail(target.email);
+  if (!canSendTo(email)) return { skipped: "not_configured" };
+  if ((user !== undefined && (user.deletedAt !== undefined || user.emailStatus !== undefined)) || (await isSuppressed(ctx, email))) {
     return { skipped: "blocked" };
   }
-  if (user.emailOptOut === true && !broadcast.emailEveryone) return { skipped: "opted_out" };
-  const token = await unsubscribeToken(user._id);
+  if (user?.emailOptOut === true && !broadcast.emailEveryone) return { skipped: "opted_out" };
+  const token = await unsubscribeToken(user === undefined ? email : user._id);
   const site = siteUrl();
   if (token === null || site === null) return { skipped: "not_configured" };
-  const unsubscribeUrl = `${site}/email/unsubscribe?u=${user._id}&t=${token}`;
+  const unsubscribeUrl =
+    user === undefined
+      ? `${site}/email/unsubscribe?e=${encodeURIComponent(email)}&t=${token}`
+      : `${site}/email/unsubscribe?u=${user._id}&t=${token}`;
   const rendered = renderAnnouncementEmail({
-    locale: user.locale,
-    firstName: user.firstName,
+    locale: user?.locale,
+    firstName: user?.firstName,
     from: sentBy,
     title: broadcast.title,
     body: broadcast.body,
     url: announcementUrl(broadcast.link),
+    invite,
     unsubscribeUrl,
   });
   const replyTo = process.env.EMAIL_REPLY_TO;
   const emailId = await sendLogged(ctx, {
     from: from(),
-    to: user.email,
+    to: email,
     subject: rendered.subject,
     html: rendered.html,
     text: rendered.text,
@@ -265,7 +276,7 @@ export async function sendAnnouncementEmail(
       { name: "List-Unsubscribe-Post", value: "List-Unsubscribe=One-Click" },
     ],
     // A retried batch never produces a second email for the same person.
-    idempotencyKey: `broadcast:${broadcast._id}:${user._id}`,
+    idempotencyKey: `broadcast:${broadcast._id}:${user?._id ?? email}`,
   });
   return { emailId };
 }

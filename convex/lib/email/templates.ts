@@ -335,14 +335,23 @@ const INVITE_IGNORE = {
 const ANNOUNCEMENT = {
   ka: {
     why: (from: string) => `ამ წერილს იღებ, რადგან კალამის მომხმარებელი ხარ. გამოგზავნა: ${from}.`,
+    whyAddress: (from: string) => `ამ წერილს იღებ, რადგან ${from} კალამის მეშვეობით შენს ელფოსტაზე გამოგიგზავნა.`,
+    group: "ჯგუფი",
+    accept: "მოწვევის მიღება",
+    signIn: "მოწვევის მისაღებად შედი ან დარეგისტრირდი სწორედ ამ ელფოსტით.",
   },
   en: {
     why: (from: string) => `You get this because you have a Kalami account. Sent by ${from}.`,
+    whyAddress: (from: string) => `You get this because ${from} sent it to your address through Kalami.`,
+    group: "Group",
+    accept: "Accept the invitation",
+    signIn: "Sign in or sign up with this email address to accept.",
   },
 } as const;
 
 export type AnnouncementEmailInput = {
-  locale: Locale;
+  /** Unknown for an address without an account: Georgian, with the reason in both languages. */
+  locale?: Locale;
   firstName?: string;
   /** Who it's from, as the small label: "Kalami" or the university's name. */
   from: string;
@@ -351,6 +360,8 @@ export type AnnouncementEmailInput = {
   body: string;
   /** Where the button goes, if the admin gave a link. */
   url?: string;
+  /** The message is also a personal group invitation: the button accepts it. */
+  invite?: { groupName: string; url: string };
   unsubscribeUrl: string;
 };
 
@@ -364,27 +375,37 @@ export function paragraphsOf(body: string): string[] {
 
 /** A message from an admin, for one person, in their language. The title is the subject. */
 export function renderAnnouncementEmail(input: AnnouncementEmailInput): RenderedEmail {
-  const copy = COPY[input.locale];
+  const locale = input.locale ?? "ka";
+  const copy = COPY[locale];
+  const words = ANNOUNCEMENT[locale];
   const paragraphs = paragraphsOf(input.body);
-  const button = input.url === undefined ? undefined : { label: copy.button, url: input.url };
+  const button =
+    input.invite !== undefined
+      ? { label: words.accept, url: input.invite.url }
+      : input.url === undefined
+        ? undefined
+        : { label: copy.button, url: input.url };
+  const why = input.locale === undefined ? words.whyAddress : words.why;
+  const footer: EmailFooterLine[] = [{ text: why(input.from), link: { label: copy.unsubscribe, url: input.unsubscribeUrl } }];
+  if (input.locale === undefined) footer.push({ text: ANNOUNCEMENT.en.whyAddress(input.from) });
+  footer.push({ text: BRAND[locale] });
   return renderEmail({
-    lang: input.locale,
+    lang: locale,
     subject: input.title,
     preheader: (paragraphs[0] ?? input.title).slice(0, 140),
     sections: [
       {
-        lang: input.locale,
+        lang: locale,
         eyebrow: input.from,
         heading: input.title,
         paragraphs: [copy.hello(input.firstName?.trim() || undefined), ...paragraphs],
+        details: input.invite === undefined ? undefined : [[words.group, input.invite.groupName]],
         button,
+        note: input.invite === undefined ? undefined : words.signIn,
       },
     ],
     fallback: button === undefined ? undefined : { label: copy.fallback, url: button.url },
-    footer: [
-      { text: ANNOUNCEMENT[input.locale].why(input.from), link: { label: copy.unsubscribe, url: input.unsubscribeUrl } },
-      { text: BRAND[input.locale] },
-    ],
+    footer,
   });
 }
 

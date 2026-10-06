@@ -95,7 +95,8 @@ http.route({
   method: "GET",
   handler: httpAction(async (_ctx, request) => {
     const url = new URL(request.url);
-    const state = url.searchParams.get("u") && url.searchParams.get("t") ? "ask" : "invalid";
+    const who = url.searchParams.get("u") || url.searchParams.get("e");
+    const state = who && url.searchParams.get("t") ? "ask" : "invalid";
     return new Response(renderUnsubscribePage(state), { status: state === "ask" ? 200 : 404, headers: UNSUBSCRIBE_HEADERS });
   }),
 });
@@ -106,9 +107,14 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const url = new URL(request.url);
     const userId = url.searchParams.get("u") ?? "";
+    // A message to an address that had no account: the link names the address instead.
+    const email = url.searchParams.get("e") ?? "";
     const token = url.searchParams.get("t") ?? "";
     const ok =
-      userId !== "" && token !== "" && (await ctx.runMutation(internal.notifications.unsubscribe, { userId, token }));
+      token !== "" &&
+      (userId !== ""
+        ? await ctx.runMutation(internal.notifications.unsubscribe, { userId, token })
+        : email !== "" && (await ctx.runMutation(internal.notifications.unsubscribeEmail, { email, token })));
     return new Response(renderUnsubscribePage(ok ? "done" : "invalid"), {
       status: ok ? 200 : 404,
       headers: UNSUBSCRIBE_HEADERS,

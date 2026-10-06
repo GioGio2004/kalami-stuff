@@ -49,7 +49,8 @@ export function SystemView({ system, onAllowEmail }: { system: SystemInfo | unde
           <Card>
             <CardTitle count={system.email.suppressions.length}>Addresses Kalami stopped emailing</CardTitle>
             <p className="mt-1 text-sm text-graphite">
-              Bounced or marked Kalami as spam, as Resend reported it. Allowing one again removes the mark, for the account too.
+              Bounced or marked Kalami as spam, as Resend reported it, or unsubscribed from a message sent before they had an account.
+              Allowing one again removes the mark, for the account too.
             </p>
             {system.email.suppressions.length === 0 ? (
               <div className="mt-4">
@@ -65,7 +66,9 @@ export function SystemView({ system, onAllowEmail }: { system: SystemInfo | unde
                         {row.name ?? (row.userId ? "An account without a name" : "No account")} · since {formatDateTime(row.at)}
                       </p>
                     </div>
-                    <Pill tone="red">{row.status === "bounced" ? "Bounced" : "Marked as spam"}</Pill>
+                    <Pill tone="red">
+                      {row.status === "bounced" ? "Bounced" : row.status === "complained" ? "Marked as spam" : "Unsubscribed"}
+                    </Pill>
                     <Button
                       size="sm"
                       variant="outline"

@@ -18,7 +18,9 @@ const TYPING = 'input, textarea, select, [contenteditable]:not([contenteditable=
  * see the same thing.
  *
  * Moving on is always the reader's choice: Previous and Next (disabled at the
- * ends, no wrapping), or ← and → while focus is in the player. A slide is
+ * ends, no wrapping), or ← and → while focus is in the player. A slide that
+ * reveals in steps (an animated scene, a step list) gets the arrow keys first,
+ * through its `data-stepper` buttons, until it has no step left that way. A slide is
  * mounted the first time it's shown and then kept, hidden, so answers and
  * revealed steps are still there on the way back; a video is unmounted when
  * its slide is left, which stops it.
@@ -202,6 +204,12 @@ export function LessonSlides({
     });
     if (action === null) return;
     event.preventDefault();
+    // A slide that reveals in steps (an animated scene, a step list) takes the key while it has steps left.
+    const stepper = stageRef.current?.querySelector<HTMLButtonElement>(`[data-active] [data-stepper="${action}"]:not(:disabled)`);
+    if (stepper) {
+      stepper.click();
+      return;
+    }
     goTo(action === "next" ? index + 1 : index - 1);
   }
 

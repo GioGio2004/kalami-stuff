@@ -53,6 +53,7 @@ export function BroadcastDetailDialog({
             )}
             <div className="mt-4 flex flex-wrap gap-1.5">
               <Pill tone="ink">To: {broadcast.audienceLabel}</Pill>
+              {broadcast.groupName !== undefined && <Pill tone="lime">Invitation to {broadcast.groupName}</Pill>}
               <Pill tone={broadcast.status === "sending" ? "lime" : "panel"}>
                 {broadcast.status === "sending" ? "Sending…" : `Sent${broadcast.finishedAt !== undefined ? ` · ${formatDateTime(broadcast.finishedAt)}` : ""}`}
               </Pill>
@@ -82,11 +83,14 @@ export function BroadcastDetailDialog({
                   <li key={row._id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
                     <Avatar name={row.name} email={row.email} size="sm" />
                     <span className="min-w-0 flex-1 basis-40">
-                      <span className="block truncate font-medium">{row.name}</span>
-                      <span className="block truncate text-xs text-graphite">{row.email || "Deleted account"}</span>
+                      <span className="block truncate font-medium">{row.name || row.email || "Deleted account"}</span>
+                      <span className="block truncate text-xs text-graphite">
+                        {row.name !== "" ? row.email || "Deleted account" : row.role === "none" ? "No account you reach" : ""}
+                      </span>
                     </span>
-                    <Pill>{ROLE_LABEL[row.role]}</Pill>
+                    <Pill>{row.role === "none" ? "Address" : ROLE_LABEL[row.role]}</Pill>
                     <span className="flex flex-wrap gap-1.5">
+                      {row.invited && <Mark ok label="Invited" />}
                       <Mark ok={row.inApp} label="Bell" />
                       <Mark ok={row.devices > 0} label={row.devices > 0 ? `Push · ${row.devices}` : "Push"} />
                       <Mark ok={row.emailed} label={row.emailed ? "Email" : `Email · ${EMAIL_SKIP_LABEL[row.emailSkipped ?? "off"]}`} />

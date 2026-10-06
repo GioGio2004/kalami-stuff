@@ -44,6 +44,7 @@ import {
   type InspectResult,
 } from "./model/kalamiImport";
 import { outlineValidator } from "./model/outline";
+import { addDriveFolder } from "./model/weeks";
 import { codeTaskReportValidator, testCodeTask } from "./model/codeTasks";
 import {
   courseCountsValidator,
@@ -84,8 +85,8 @@ import {
  * actorFromToken), and `client`, which OAuth client the agent came through,
  * for the audit log; every check after that is the same as in the web app.
  *
- * Deliberately missing: publishing (assessments, weeks, lessons), Google
- * Drive folders, deleting courses, and anything about students. Agents draft
+ * Deliberately missing: publishing (assessments, weeks, lessons),
+ * deleting courses, and anything about students. Agents draft
  * and may delete only drafts; people review and publish in the dashboard. Join codes are
  * left out too: an agent has no use for them, and they would end up in chat
  * transcripts.
@@ -379,8 +380,8 @@ export const checkCodeTask = query({
 // --- Course outline: weeks and lessons ---------------------------------------------
 //
 // Agents build the outline as drafts: weeks, lessons (blocks), links, and where
-// tasks and quizzes sit. They can't publish, can't create Drive folders (that
-// needs the lecturer's own Google consent), and can only change draft weeks
+// tasks and quizzes sit. Drive folders use the lecturer's existing Google
+// consent. Agents can't publish and can only change draft weeks
 // and draft lessons; they may add a new draft lesson to a published week.
 
 const linkInputValidator = v.object({ title: v.string(), url: v.string() });
@@ -681,4 +682,16 @@ export const importKalamiForAgent = action({
       args.text,
       args.universityId,
     ),
+});
+
+/** Uses the same private-folder job as the dashboard, with draft-only MCP access. */
+export const prepareWeekDriveAsAgent = mutation({
+  args: { ...tokenArg, weekId: v.id("weeks") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await addDriveFolder(ctx, actor, args.weekId);
+    return null;
+  },
 });

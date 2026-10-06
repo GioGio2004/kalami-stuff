@@ -234,6 +234,7 @@ describe("notification center: sending", () => {
       recipients: 3,
       students: 3,
       staff: 0,
+      noAccount: 0,
       withPush: 1,
       emailable: 1,
       optedOut: 1,

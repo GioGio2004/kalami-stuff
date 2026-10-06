@@ -153,6 +153,7 @@ async function requireWeek(ctx: QueryCtx, actor: Actor, weekId: Id<"weeks">, pur
     throw appError("NOT_FOUND", "Week not found.");
   }
   const { course } = await requireCourseContentEditor(ctx, actor, week.courseId);
+  requireReadingIdle(week);
   if (actor.via === "mcp" && (purpose === "publish" || week.status !== "draft")) {
     throw appError(
       "CONFLICT",
@@ -175,8 +176,15 @@ async function requireDriveOwner(ctx: QueryCtx, actor: Actor, courseId: Id<"cour
 }
 
 function requireIdle(week: Doc<"weeks">, now: number) {
+  requireReadingIdle(week);
   if (week.syncing !== undefined && !isStale(week, now)) {
     throw appError("CONFLICT", "Google Drive is still working on this week. Give it a moment.");
+  }
+}
+
+export function requireReadingIdle(week: Doc<"weeks">) {
+  if (week.readingWrite && week.readingWrite.until > Date.now()) {
+    throw appError("CONFLICT", "A reading document is being saved. Wait for it to finish, then try again.");
   }
 }
 
@@ -421,6 +429,9 @@ export async function removeWeek(ctx: MutationCtx, actor: Actor, weekId: Id<"wee
     }
   }
   await ctx.db.delete("weeks", weekId);
+  for (const reading of await ctx.db.query("readingDocuments").withIndex("by_weekId_and_key", (q) => q.eq("weekId", weekId)).take(100)) {
+    await ctx.db.delete("readingDocuments", reading._id);
+  }
   await logAudit(ctx, actor, {
     action: "week.remove",
     targetTable: "weeks",
@@ -502,9 +513,6 @@ async function startDriveFolder(ctx: MutationCtx, actor: Actor, week: Doc<"weeks
   if (!driveConfigured()) {
     throw appError("CONFLICT", "Google Drive isn't set up on this Kalami server yet. Add links instead.");
   }
-  if (actor.via === "mcp") {
-    throw appError("FORBIDDEN", "Agents can't create Drive folders. Add links, or ask the lecturer to add the folder.");
-  }
   const drive = await requireDriveOwner(ctx, actor, week.courseId);
   const now = Date.now();
   if (drive === null) {
@@ -570,6 +578,7 @@ export async function takeOverDrive(ctx: MutationCtx, actor: Actor, courseId: Id
     throw appError("CONFLICT", "Google Drive isn't set up on this Kalami server yet.");
   }
   const previous = displayName(await ctx.db.get("users", drive.ownerId));
+  for (const week of await weeksOf(ctx, courseId)) requireReadingIdle(week);
   const now = Date.now();
   await ctx.db.patch("courseDrive", drive._id, {
     ownerId: actor.user._id,

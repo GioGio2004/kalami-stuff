@@ -270,6 +270,10 @@ describe(".kalami files", () => {
     expect(result).toMatchObject({ ok: true, summary: { weeks: 1, lessons: 1, questions: 2 } });
     const blocks = JSON.parse(fenced("## Lessons: blocks")) as unknown[];
     for (const block of blocks) expect(lessonBlockSchema.safeParse(block).success).toBe(true);
+    const scene = JSON.parse(fenced("## Lessons: animated scenes")) as unknown;
+    const parsed = lessonBlockSchema.safeParse(scene);
+    expect(parsed.error?.issues.map((issue) => issue.message)).toBeUndefined();
+    expect(parsed.success).toBe(true);
     expect(JSON.parse(fenced("## The shape"))).toMatchObject({ format: "kalami", version: 1 });
   });
 });

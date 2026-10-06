@@ -12,6 +12,7 @@ import {
   sendDueReminders,
   setEmailPreference as setEmailPreferenceFor,
   unsubscribeByToken,
+  unsubscribeEmailByToken,
 } from "./model/notifications";
 
 // Student app (Clerk session): the bell. Sending happens in model/notifications.ts and email.ts.
@@ -62,6 +63,13 @@ export const unsubscribe = internalMutation({
   args: { userId: v.string(), token: v.string() },
   returns: v.boolean(),
   handler: async (ctx, args) => await unsubscribeByToken(ctx, args.userId, args.token),
+});
+
+/** The link in a message to an address without an account (http.ts). */
+export const unsubscribeEmail = internalMutation({
+  args: { email: v.string(), token: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => await unsubscribeEmailByToken(ctx, args.email, args.token),
 });
 
 /** One batch of students for one event; schedules the next batch itself. */

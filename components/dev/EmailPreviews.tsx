@@ -74,6 +74,16 @@ const EMAILS: { name: string; email: RenderedEmail }[] = [
     }),
   },
   {
+    name: "Announcement as a group invitation · address without an account (Georgian, English reason)",
+    email: renderAnnouncementEmail({
+      from: "გორის სახელმწიფო უნივერსიტეტი",
+      title: "კეთილი იყოს შენი მობრძანება ჯგუფში ICT-24-1",
+      body: "ეს შენი ამ წლის ჯგუფია: მისი კურსები, მასალები და დავალებები შენს დაფაზე გამოჩნდება.\n\nშევხვდებით ორშაბათს 10:00-ზე, 214 აუდიტორიაში.",
+      invite: { groupName: "ICT-24-1", url: "https://app.kalami.space/join/invite/q3Xk9mPz2LtV8wRbN4c7" },
+      unsubscribeUrl: "https://example.convex.site/email/unsubscribe?e=luka.ts%40gmail.com&t=2",
+    }),
+  },
+  {
     name: "Group invitation (students)",
     email: renderGroupInviteEmail({
       inviterName: "Tea Todua",

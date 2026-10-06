@@ -30,6 +30,7 @@
     "css-what": "^8.0.0",
     "domhandler": "^6.0.1",
     "domutils": "^4.0.2",
+    "gsap": "^3.15.0",
     "mcp-handler": "^2.2.0",
     "motion": "^14.0.0",
     "next": "16.3.8",

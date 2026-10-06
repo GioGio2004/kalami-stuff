@@ -1,4 +1,20 @@
 import { z } from "zod";
+import {
+  EMPHASIS_EFFECTS,
+  ENTER_EFFECTS,
+  EXIT_EFFECTS,
+  SCENE_ALIGNS,
+  SCENE_CODE_LANGUAGES,
+  SCENE_COLORS,
+  SCENE_LIMITS,
+  SCENE_SHAPES,
+  SCENE_SIZES,
+  SCENE_STAGE,
+  SCENE_THEMES,
+  SCENE_TONES,
+  sceneProblems,
+  type Scene,
+} from "./scene";
 
 /**
  * The shapes of course content (assessment settings, questions, code tasks,
@@ -213,6 +229,223 @@ export const markdown = (max: number) =>
     .describe("Markdown: paragraphs, **bold**, *italic*, `code`, [links](https://…), - lists, 1. lists, ### headings");
 const blockId = z.string().max(40).optional().describe("Only to keep an existing block when replacing blocks");
 
+// --- Animated scenes (lib/scene/index.ts has the rules; sceneProblems runs on every scene) ------
+
+const sceneId = z
+  .string()
+  .regex(/^[a-z][a-z0-9_-]{0,31}$/)
+  .describe('A short unique id, lowercase: "title", "box-1"');
+const sceneColor = z.enum(SCENE_COLORS).describe("A Kalami colour token");
+const sceneSize = z.enum(SCENE_SIZES).describe("Type size; md if left out");
+const sceneBox = {
+  x: z.number().min(0).max(SCENE_STAGE.width).describe(`Left edge, 0 to ${SCENE_STAGE.width}`),
+  y: z.number().min(0).max(SCENE_STAGE.height).describe(`Top edge, 0 to ${SCENE_STAGE.height}`),
+  w: z.number().min(16).max(SCENE_STAGE.width).optional().describe("Width; a sensible default per kind if left out"),
+  h: z.number().min(16).max(SCENE_STAGE.height).optional().describe("Height; a sensible default per kind if left out"),
+};
+const sceneText = z.string().min(1).max(SCENE_LIMITS.text);
+const sceneMd = z.string().min(1).max(SCENE_LIMITS.md).describe("Markdown, short");
+const sceneLabel = z.string().max(SCENE_LIMITS.label).optional();
+
+export const sceneElementSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        id: sceneId,
+        kind: z.literal("heading"),
+        text: sceneText,
+        size: sceneSize.optional(),
+        align: z.enum(SCENE_ALIGNS).optional(),
+        color: sceneColor.optional(),
+        ...sceneBox,
+      })
+      .describe("A big line of text; cascades in letter by letter"),
+    z
+      .object({
+        id: sceneId,
+        kind: z.literal("text"),
+        md: sceneMd,
+        size: sceneSize.optional(),
+        align: z.enum(SCENE_ALIGNS).optional(),
+        color: sceneColor.optional(),
+        ...sceneBox,
+      })
+      .describe("A short paragraph"),
+    z
+      .object({
+        id: sceneId,
+        kind: z.literal("list"),
+        items: z.array(sceneText).min(1).max(SCENE_LIMITS.listItems).describe("Markdown items; they reveal one by one"),
+        ordered: z.boolean().optional(),
+        size: sceneSize.optional(),
+        color: sceneColor.optional(),
+        ...sceneBox,
+      })
+      .describe("A list whose items arrive one after another"),
+    z
+      .object({
+        id: sceneId,
+        kind: z.literal("code"),
+        language: z.enum(SCENE_CODE_LANGUAGES),
+        code: z
+          .string()
+          .min(1)
+          .max(SCENE_LIMITS.code)
+          .describe(`A fragment, at most ${SCENE_LIMITS.codeLines} lines; it types itself line by line`),
+        size: sceneSize.optional(),
+        ...sceneBox,
+      })
+      .describe("A code window"),
+    z
+      .object({
+        id: sceneId,
+        kind: z.literal("image"),
+        url: httpsUrl,
+        alt: sceneText.describe("What the image shows, for screen readers"),
+        fit: z.enum(["cover", "contain"]).optional(),
+        ...sceneBox,
+      })
+      .describe("A picture"),
+    z
+      .object({
+        id: sceneId,
+        kind: z.literal("shape"),
+        shape: z.enum(SCENE_SHAPES),
+        fill: sceneColor.optional().describe("Background; highlighter if left out"),
+        stroke: sceneColor.optional().describe("Outline colour; none if left out"),
+        label: sceneLabel.describe("Text centred in the shape"),
+        color: sceneColor.optional().describe("Label colour"),
+        ...sceneBox,
+      })
+      .describe("A box, circle, pill or diamond, with an optional label: the nodes of a diagram"),
+    z
+      .object({
+        id: sceneId,
+        kind: z.literal("arrow"),
+        from: sceneId.describe("The element it starts at"),
+        to: sceneId.describe("The element it points to"),
+        label: sceneLabel,
+        color: sceneColor.optional(),
+        curve: z.number().min(-1).max(1).optional().describe("Bow the arrow sideways: 0 straight, 0.3 gentle, 1 strong; negative bows the other way"),
+      })
+      .describe("An arrow between two elements; it draws itself and follows them when they move"),
+    z
+      .object({
+        id: sceneId,
+        kind: z.literal("number"),
+        value: z.number().describe("The number it counts up to"),
+        label: sceneLabel.describe("What the number is, under it"),
+        prefix: sceneLabel,
+        suffix: sceneLabel.describe('e.g. "%" or " ms"'),
+        decimals: z.number().int().min(0).max(4).optional(),
+        size: sceneSize.optional(),
+        color: sceneColor.optional(),
+        ...sceneBox,
+      })
+      .describe("A big number that counts up when it enters"),
+    z
+      .object({ id: sceneId, kind: z.literal("note"), tone: z.enum(SCENE_TONES), md: sceneMd, ...sceneBox })
+      .describe("A small callout chip: a tip, definition, warning or note"),
+  ])
+  .describe("One element on the stage");
+
+const sceneTargets = z.array(sceneId).max(SCENE_LIMITS.targetsPerAction).describe("Element ids");
+const sceneTiming = {
+  at: z
+    .number()
+    .min(0)
+    .max(10)
+    .optional()
+    .describe("Seconds after the step starts; left out, actions follow each other with a little overlap"),
+  duration: z.number().min(0.1).max(6).optional().describe("Seconds; each effect has its own default"),
+};
+const sceneStagger = z
+  .number()
+  .min(0)
+  .max(1)
+  .optional()
+  .describe("Seconds between targets (and between letters, items or lines of a cascade)");
+
+export const sceneActionSchema = z
+  .discriminatedUnion("do", [
+    z
+      .object({
+        do: z.literal("enter"),
+        targets: sceneTargets.min(1),
+        effect: z
+          .enum(ENTER_EFFECTS)
+          .optional()
+          .describe(
+            "Left out, each kind picks its own: headings and lists cascade, code types, arrows draw, numbers count, the rest pop or rise",
+          ),
+        stagger: sceneStagger,
+        ...sceneTiming,
+      })
+      .describe("Bring elements onto the stage. Elements no step enters are there from the start"),
+    z
+      .object({
+        do: z.literal("exit"),
+        targets: sceneTargets.min(1),
+        effect: z.enum(EXIT_EFFECTS).optional(),
+        stagger: sceneStagger,
+        ...sceneTiming,
+      })
+      .describe("Take elements off the stage"),
+    z
+      .object({ do: z.literal("emphasize"), targets: sceneTargets.min(1), effect: z.enum(EMPHASIS_EFFECTS).optional(), ...sceneTiming })
+      .describe("Draw the eye to elements that are already there"),
+    z
+      .object({ do: z.literal("focus"), targets: sceneTargets, ...sceneTiming })
+      .describe("Dim everything but the targets; an empty targets list lifts the focus"),
+    z
+      .object({
+        do: z.literal("move"),
+        target: sceneId,
+        x: z.number().min(0).max(SCENE_STAGE.width).optional(),
+        y: z.number().min(0).max(SCENE_STAGE.height).optional(),
+        w: z.number().min(16).max(SCENE_STAGE.width).optional(),
+        h: z.number().min(16).max(SCENE_STAGE.height).optional(),
+        ...sceneTiming,
+      })
+      .describe("Glide an element to a new place or size; arrows attached to it follow"),
+    z
+      .object({
+        do: z.literal("camera"),
+        target: sceneId.optional().describe("Zoom in on this element"),
+        x: z.number().min(0).max(SCENE_STAGE.width).optional().describe("Or centre the camera here (with y and scale)"),
+        y: z.number().min(0).max(SCENE_STAGE.height).optional(),
+        scale: z.number().min(1).max(4).optional().describe("The zoom (1 = the whole stage)"),
+        ...sceneTiming,
+      })
+      .describe("Move the camera: frame an element or a point; with nothing given, back to the whole stage"),
+  ])
+  .describe("One animation in a step");
+
+export const sceneSchema = z
+  .object({
+    title: z.string().max(SCENE_LIMITS.title).optional().describe("Shown as the slide's label"),
+    theme: z.enum(SCENE_THEMES).optional().describe("paper: light stage (default); ink: dark stage"),
+    elements: z
+      .array(sceneElementSchema)
+      .min(1)
+      .max(SCENE_LIMITS.elements)
+      .describe(`Everything on the ${SCENE_STAGE.width} x ${SCENE_STAGE.height} stage`),
+    steps: z
+      .array(
+        z.object({
+          note: z.string().max(SCENE_LIMITS.note).optional().describe("A caption under the stage while this step is shown"),
+          actions: z.array(sceneActionSchema).min(1).max(SCENE_LIMITS.actionsPerStep),
+        }),
+      )
+      .min(1)
+      .max(SCENE_LIMITS.steps)
+      .describe("Students click through the steps in order; each runs its actions"),
+  })
+  .superRefine((scene, ctx) => {
+    for (const problem of sceneProblems(scene as Scene)) ctx.addIssue({ code: "custom", message: problem });
+  })
+  .describe("An animated scene");
+
 export const lessonBlockSchema = z
   .discriminatedUnion("type", [
     z.object({ id: blockId, type: z.literal("text"), md: markdown(20_000) }).describe("Explanation text. One idea per block."),
@@ -298,5 +531,10 @@ export const lessonBlockSchema = z
         }),
       })
       .describe("A quick ungraded self-check question; students see right away whether they got it"),
+    z
+      .object({ id: blockId, type: z.literal("scene"), scene: sceneSchema })
+      .describe(
+        "An animated scene: elements on a stage and steps that animate them. Students click through the steps (arrow keys work too)",
+      ),
   ])
   .describe("One lesson block");

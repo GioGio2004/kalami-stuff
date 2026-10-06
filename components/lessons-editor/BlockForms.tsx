@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, type ReactNode } from "react";
+import { SCENE_TEMPLATES } from "@/components/lessons/scene/templates";
 import { videoEmbedUrl, type LessonBlock, type LessonBlockType, type LessonCheck } from "@/components/lessons/types";
 import { Button } from "@/components/ui/buttons";
 import { CheckCard, Field, Segmented, SelectInput, TextArea, TextInput } from "@/components/ui/form";
@@ -15,8 +16,11 @@ import {
   Play,
   Plus,
   Question,
+  Sparkle,
   TextLines,
 } from "@/components/ui/icons";
+import { Menu } from "@/components/ui/Menu";
+import { SCENE_LIMITS, SCENE_STAGE, type Scene } from "@/lib/scene";
 import { CALLOUT_TONES, CODE_LANGUAGES, canPreview, isHttpsUrl } from "./draft";
 
 type Of<T extends LessonBlockType> = Extract<LessonBlock, { type: T }>;
@@ -39,6 +43,8 @@ export function BlockForm({ block, uid, onChange }: { block: LessonBlock; uid: s
       return <StepsForm block={block} uid={uid} onChange={onChange} />;
     case "check":
       return <CheckForm block={block} uid={uid} onChange={onChange} />;
+    case "scene":
+      return <SceneForm block={block} uid={uid} onChange={onChange} />;
   }
 }
 
@@ -58,6 +64,8 @@ export function BlockIcon({ type, className = "size-4" }: { type: LessonBlockTyp
       return <ListChecks className={className} />;
     case "check":
       return <Question className={className} />;
+    case "scene":
+      return <Sparkle className={className} />;
   }
 }
 
@@ -166,7 +174,7 @@ function CodeForm({ block, uid, onChange }: FormProps<"code">) {
 }
 
 /** A plain monospace textarea where Tab indents (Esc, then Tab, moves on). */
-function CodeArea({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
+function CodeArea({ id, value, onChange, rows = 8 }: { id: string; value: string; onChange: (value: string) => void; rows?: number }) {
   const leaving = useRef(false);
   return (
     <textarea
@@ -175,8 +183,8 @@ function CodeArea({ id, value, onChange }: { id: string; value: string; onChange
       spellCheck={false}
       autoCapitalize="off"
       autoCorrect="off"
-      rows={8}
-      maxLength={20_000}
+      rows={rows}
+      maxLength={60_000}
       onChange={(e) => onChange(e.target.value)}
       onBlur={() => {
         leaving.current = false;
@@ -543,6 +551,102 @@ function CheckForm({ block, uid, onChange }: FormProps<"check">) {
       </Field>
     </div>
   );
+}
+
+// --- Scene ----------------------------------------------------------------------------------
+
+/**
+ * A scene is edited as its JSON: lecturers mostly get scenes from their AI
+ * assistant (the MCP connector documents the format), and tweak numbers here.
+ * The preview beside the editor plays every change as soon as the JSON parses;
+ * the rules it breaks are listed under the block (blockProblems).
+ */
+function SceneForm({ block, uid, onChange }: FormProps<"scene">) {
+  const [text, setText] = useState(() => JSON.stringify(block.scene, null, 2));
+  const [parseError, setParseError] = useState<string | null>(null);
+  // Text typed here is the source until it parses; a change from outside (a template, a reload) replaces it.
+  const [seen, setSeen] = useState(block.scene);
+  if (block.scene !== seen) {
+    setSeen(block.scene);
+    if (parseError === null && JSON.stringify(parseLoose(text)) !== JSON.stringify(block.scene)) {
+      setText(JSON.stringify(block.scene, null, 2));
+    }
+  }
+
+  function edit(value: string) {
+    setText(value);
+    const parsed = parseLoose(value);
+    if (parsed === null) {
+      setParseError("Not valid JSON yet.");
+      return;
+    }
+    if (!isSceneShape(parsed)) {
+      setParseError('A scene is an object with "elements" and "steps" arrays.');
+      return;
+    }
+    setParseError(null);
+    onChange({ ...block, scene: parsed });
+  }
+
+  function applyTemplate(scene: Scene) {
+    const next = structuredClone(scene);
+    setParseError(null);
+    setText(JSON.stringify(next, null, 2));
+    onChange({ ...block, scene: next });
+  }
+
+  const templates = SCENE_TEMPLATES.map((t) => ({ label: t.label, description: t.description, onSelect: () => applyTemplate(t.scene) }));
+  const elements = block.scene.elements.length;
+  const steps = block.scene.steps.length;
+  const summary = `${elements} element${elements === 1 ? "" : "s"} · ${steps} step${steps === 1 ? "" : "s"}`;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-sm text-graphite">{summary}</p>
+        <span className="ml-auto">
+          <Menu
+            label="Start from a template"
+            items={templates}
+            buttonClassName="inline-flex h-9 items-center gap-1.5 rounded-full border border-ink/15 px-3.5 text-sm font-medium transition hover:bg-panel"
+          >
+            Templates
+          </Menu>
+        </span>
+      </div>
+      <Field
+        label="Scene (JSON)"
+        htmlFor={`${uid}-scene`}
+        hint={
+          <>
+            A stage of {SCENE_STAGE.width} × {SCENE_STAGE.height}. <code className="font-mono">elements</code> (up to {SCENE_LIMITS.elements}:
+            heading, text, list, code, image, shape, arrow, number, note) and <code className="font-mono">steps</code> (up to{" "}
+            {SCENE_LIMITS.steps}), each with actions: enter, exit, emphasize, focus, move, camera. Ask your AI assistant for a scene; it has
+            the full format.
+          </>
+        }
+      >
+        <CodeArea id={`${uid}-scene`} value={text} onChange={edit} rows={18} />
+      </Field>
+      {parseError && (
+        <p role="alert" className="text-sm text-red-pen">
+          {parseError}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function parseLoose(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function isSceneShape(value: unknown): value is Scene {
+  return typeof value === "object" && value !== null && Array.isArray((value as Scene).elements) && Array.isArray((value as Scene).steps);
 }
 
 export function SmallIcon({

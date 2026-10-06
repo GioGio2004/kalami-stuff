@@ -3,6 +3,7 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { appError } from "../lib/errors";
+import { normalizeEmail } from "../lib/input";
 import { verifyUnsubscribeToken } from "../lib/tokens";
 import { assessmentKindValidator, notificationKindValidator, type NotificationKind } from "../lib/validators";
 import { latestAttempt, type Student } from "./learn";
@@ -136,6 +137,35 @@ export async function unsubscribeByToken(ctx: MutationCtx, rawUserId: string, to
   }
   if (user.emailOptOut !== true) {
     await ctx.db.patch("users", userId, { emailOptOut: true });
+  }
+  return true;
+}
+
+/**
+ * The link in a message sent to an address with no account (the notification
+ * center): the address goes on the list Kalami no longer emails. An account
+ * with that address, now or later, keeps its own switch under the bell.
+ */
+export async function unsubscribeEmailByToken(ctx: MutationCtx, rawEmail: string, token: string): Promise<boolean> {
+  const email = normalizeEmail(rawEmail);
+  if (email === "" || !(await verifyUnsubscribeToken(email, token))) {
+    return false;
+  }
+  const listed = await ctx.db
+    .query("emailSuppressions")
+    .withIndex("by_email", (q) => q.eq("email", email))
+    .first();
+  if (listed === null) {
+    await ctx.db.insert("emailSuppressions", { email, status: "unsubscribed", at: Date.now() });
+  }
+  const users = await ctx.db
+    .query("users")
+    .withIndex("by_email", (q) => q.eq("email", email))
+    .take(5);
+  for (const user of users) {
+    if (user.emailOptOut !== true) {
+      await ctx.db.patch("users", user._id, { emailOptOut: true });
+    }
   }
   return true;
 }

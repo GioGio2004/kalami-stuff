@@ -7,6 +7,8 @@ import { cpSync, rmSync } from "node:fs";
 
 const shared = [
   ["convex/lib/checks", "../kalami/lib/checks"],
+  // The scene rules the backend validates animated lesson scenes with; the player and editor share them.
+  ["convex/lib/scene", "../kalami/lib/scene"],
   ["components/sandbox", "../kalami/components/sandbox"],
   ["components/lessons", "../kalami/components/lessons"],
   // The MCP connector's OAuth side (Clerk tokens, the service credential); each app has its own server.ts.

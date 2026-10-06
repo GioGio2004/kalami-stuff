@@ -41,11 +41,26 @@ describe("lesson blocks", () => {
           type: "check",
           check: { kind: "single", prompt: "Which tag makes a link?", options: [{ text: "<a>", correct: true }, { text: "<p>", correct: false }] },
         },
+        {
+          type: "scene",
+          scene: {
+            title: " A link ",
+            elements: [
+              { id: "title", kind: "heading", text: "Links", x: 80, y: 60 },
+              { id: "a", kind: "shape", shape: "pill", label: "<a>", x: 100, y: 300 },
+              { id: "page", kind: "shape", shape: "rect", label: "Page", x: 800, y: 300 },
+              { id: "to", kind: "arrow", from: "a", to: "page", label: "href" },
+            ],
+            steps: [{ actions: [{ do: "enter", targets: ["title"] }] }, { note: "Where it goes", actions: [{ do: "enter", targets: ["to"] }] }],
+          },
+        },
       ],
     });
     const lesson = await nino.query(api.lessons.get, { lessonId });
-    expect(lesson.blocks.map((b) => b.type)).toEqual(["text", "callout", "code", "code", "image", "video", "steps", "check"]);
-    expect(new Set(lesson.blocks.map((b) => b.id)).size).toBe(8);
+    expect(lesson.blocks.map((b) => b.type)).toEqual(["text", "callout", "code", "code", "image", "video", "steps", "check", "scene"]);
+    expect(new Set(lesson.blocks.map((b) => b.id)).size).toBe(9);
+    const scene = lesson.blocks.find((b) => b.type === "scene");
+    expect(scene?.type === "scene" && scene.scene.title).toBe("A link");
     const [html, python] = lesson.blocks.filter((b) => b.type === "code");
     expect(html).toMatchObject({ language: "html", preview: true });
     // Only HTML and CSS can run in the preview.
@@ -62,6 +77,14 @@ describe("lesson blocks", () => {
         check: { kind: "single" as const, prompt: "Q", options: [{ text: "a", correct: true }, { text: "b", correct: true }] },
       },
       { type: "check" as const, check: { kind: "short" as const, prompt: "Q", accepted: [] } },
+      // A scene whose step names an element that isn't there.
+      {
+        type: "scene" as const,
+        scene: {
+          elements: [{ id: "a", kind: "heading" as const, text: "x", x: 0, y: 0 }],
+          steps: [{ actions: [{ do: "enter" as const, targets: ["ghost"] }] }],
+        },
+      },
     ];
     for (const block of bad) {
       await expectAppError(nino.mutation(api.lessons.addBlocksTo, { lessonId, blocks: [block] }), "INVALID_INPUT");

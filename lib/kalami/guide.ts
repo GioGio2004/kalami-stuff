@@ -100,6 +100,7 @@ paragraphs, \`**bold**\`, \`*italic*\`, inline \`code\` in backticks,
 | \`video\` | \`url\`, \`caption?\` | YouTube and Vimeo play inside the lesson; other links show as a link |
 | \`steps\` | \`title?\`, \`steps\`: [{ \`title?\`, \`md\` }] (1 to 20) | procedures; students reveal one step at a time |
 | \`check\` | \`check\`: { \`kind\`, \`prompt\`, \`options?\`, \`accepted?\`, \`explanation?\` } | a quick, ungraded self-check |
+| \`scene\` | \`scene\`: { \`title?\`, \`theme?\`, \`elements\`, \`steps\` } | an animated scene students click through; see **Lessons: animated scenes** |
 
 \`code.language\` is one of: html, css, javascript, typescript, python, java, c,
 cpp, csharp, php, sql, json, bash, text.
@@ -128,6 +129,71 @@ ignoring case and extra spaces). Always add an \`explanation\`.
 
 Up to 150 blocks per lesson. A good lesson covers one topic in roughly 5 to 25
 blocks (10 to 20 minutes of reading), with a \`check\` every few blocks.
+
+## Lessons: animated scenes
+
+A \`scene\` block is a small animated presentation inside a lesson: elements
+placed on a stage of **1200 × 675** units (x to the right, y down, from the
+top-left corner; the stage scales to the screen), and **steps** a student clicks
+through, each running a few named animations. Nothing in a scene is code, so
+write freely: Kalami checks every id, position and effect before accepting it.
+
+\`{ "type": "scene", "scene": { "title?", "theme?": "paper" | "ink", "elements": [...], "steps": [...] } }\`
+
+Elements (up to 24; every \`id\` is lowercase, unique, like \`"title"\` or \`"box-2"\`;
+\`x\`, \`y\` are required, \`w\`, \`h\` optional with a sensible default per kind):
+
+| kind | fields | notes |
+|---|---|---|
+| \`heading\` | \`text\`, \`size?\` (sm/md/lg/xl), \`align?\`, \`color?\` | one line, cascades in letter by letter |
+| \`text\` | \`md\`, \`size?\`, \`align?\`, \`color?\` | a short paragraph |
+| \`list\` | \`items\` (1 to 12, Markdown), \`ordered?\`, \`size?\`, \`color?\` | items arrive one after another |
+| \`code\` | \`language\`, \`code\` (up to 24 lines), \`size?\` | types itself line by line |
+| \`image\` | \`url\` (https), \`alt\`, \`fit?\` (cover/contain) | |
+| \`shape\` | \`shape\` (rect/circle/pill/diamond), \`fill?\`, \`stroke?\`, \`label?\`, \`color?\` | the nodes of a diagram |
+| \`arrow\` | \`from\`, \`to\` (element ids), \`label?\`, \`color?\`, \`curve?\` (-1 to 1) | no x/y: it joins two elements, draws itself and follows them |
+| \`number\` | \`value\`, \`label?\`, \`prefix?\`, \`suffix?\`, \`decimals?\`, \`size?\`, \`color?\` | counts up when it enters |
+| \`note\` | \`tone\` (tip/definition/warning/note), \`md\` | a small callout chip |
+
+Colours are Kalami's tokens: \`ink\`, \`paper\`, \`graphite\`, \`panel\`, \`card\`,
+\`charcoal\`, \`highlighter\`, \`highlighter-deep\`, \`red-pen\`, \`ok\`, \`warn\`.
+
+Steps (up to 30, each \`{ "note?", "actions": [...] }\`, 1 to 12 actions; the note
+is a caption under the stage). Actions, each with optional \`at\` (seconds after
+the step starts; otherwise they follow each other with a little overlap) and
+\`duration\`:
+
+| do | fields | what happens |
+|---|---|---|
+| \`enter\` | \`targets\`, \`effect?\`, \`stagger?\` | brings elements in: fade, rise, drop, slide-left, slide-right, pop, cascade, wipe, draw (arrows), count (numbers), type (code). Left out, each kind picks its best |
+| \`exit\` | \`targets\`, \`effect?\`, \`stagger?\` | fade, sink, shrink, slide-left, slide-right |
+| \`emphasize\` | \`targets\`, \`effect?\` | pulse, shake, glow, flash, bounce |
+| \`focus\` | \`targets\` | dims everything else; \`[]\` lifts the focus |
+| \`move\` | \`target\`, \`x?\`, \`y?\`, \`w?\`, \`h?\` | glides an element; its arrows follow |
+| \`camera\` | \`target?\` or \`x?\`, \`y?\`, \`scale?\` (1 to 4) | zooms on an element or a point; with nothing, back to the whole stage |
+
+An element no step enters is on the stage from the start. Keep text short and
+big: a scene is watched, not read. Three to six steps with one idea each beat
+one step that does everything.
+
+~~~json
+{ "type": "scene", "scene": {
+  "title": "How a request travels",
+  "theme": "ink",
+  "elements": [
+    { "id": "title", "kind": "heading", "text": "From address bar to pixels", "x": 80, "y": 60, "w": 1040, "size": "lg", "align": "center" },
+    { "id": "browser", "kind": "shape", "shape": "pill", "fill": "paper", "label": "Browser", "x": 90, "y": 300, "w": 260, "h": 110 },
+    { "id": "server", "kind": "shape", "shape": "rect", "fill": "highlighter", "label": "Web server", "x": 850, "y": 300, "w": 260, "h": 110 },
+    { "id": "request", "kind": "arrow", "from": "browser", "to": "server", "label": "GET /" },
+    { "id": "aside", "kind": "note", "tone": "definition", "md": "**GET** asks for a page without changing anything.", "x": 400, "y": 460, "w": 420, "h": 100 }
+  ],
+  "steps": [
+    { "note": "Two machines.", "actions": [ { "do": "enter", "targets": ["title"] }, { "do": "enter", "targets": ["browser", "server"], "stagger": 0.2 } ] },
+    { "note": "The browser asks.", "actions": [ { "do": "enter", "targets": ["request"] }, { "do": "camera", "target": "server", "scale": 1.5, "at": 0.8 } ] },
+    { "actions": [ { "do": "camera" }, { "do": "enter", "targets": ["aside"] }, { "do": "emphasize", "targets": ["request"], "effect": "pulse", "at": 0.6 } ] }
+  ]
+} }
+~~~
 
 ## Assessments (tasks, quizzes, midterms, finals)
 

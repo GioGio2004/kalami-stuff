@@ -27,6 +27,7 @@ import { StaffGate } from "@/components/StaffGate";
 import { StaffNav } from "@/components/StaffNav";
 import { AssessmentBuilder } from "@/components/studio/AssessmentBuilder";
 import { LessonEditor } from "@/components/lessons-editor/LessonEditor";
+import { SCENE_TEMPLATES } from "@/components/lessons/scene/templates";
 import { CourseGroups } from "@/components/studio/CourseGroups";
 import { CourseOutline, type OutlineActions } from "@/components/studio/CourseOutline";
 import { CourseView } from "@/components/studio/CourseView";
@@ -647,6 +648,7 @@ const lessonBlocks: Block[] = [
       accepted: [".", "a dot", "dot", "full stop"],
     },
   },
+  { id: "b10", type: "scene", scene: SCENE_TEMPLATES[1].scene },
 ];
 
 const lessonDetail: LessonDetail = {

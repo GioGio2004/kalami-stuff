@@ -1,3 +1,5 @@
+import type { Scene } from "@/lib/scene";
+
 // A lesson block as both apps receive it from the backend (convex/lib/validators.ts
 // lessonBlockValidator). Written out here, not imported, because this folder is
 // copied into the student app (scripts/sync-student.mjs), which has its own API types.
@@ -19,7 +21,8 @@ export type LessonBlock =
   | { id: string; type: "image"; url: string; alt: string; caption?: string }
   | { id: string; type: "video"; url: string; caption?: string }
   | { id: string; type: "steps"; title?: string; steps: { title?: string; md: string }[] }
-  | { id: string; type: "check"; check: LessonCheck };
+  | { id: string; type: "check"; check: LessonCheck }
+  | { id: string; type: "scene"; scene: Scene };
 
 export type LessonBlockType = LessonBlock["type"];
 

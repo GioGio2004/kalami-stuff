@@ -316,6 +316,18 @@ export default defineSchema({
 
   // The course's folder in a lecturer's Google Drive. The files stay theirs:
   // Kalami only creates folders and shares published weeks by link.
+  readingDocuments: defineTable({
+    courseId: v.id("courses"),
+    weekId: v.id("weeks"),
+    key: v.string(),
+    ownerId: v.id("users"),
+    folderId: v.string(),
+    documentId: v.optional(v.string()),
+    // Never blindly repeat an ambiguous Google file creation.
+    createAttempted: v.boolean(),
+    updatedAt: v.number(),
+  }).index("by_weekId_and_key", ["weekId", "key"]).index("by_courseId", ["courseId"]),
+
   courseDrive: defineTable({
     courseId: v.id("courses"),
     // Whose Drive. Only this person's Google connection is ever used for the course.
@@ -361,6 +373,7 @@ export default defineSchema({
   // folder in the lecturer's Google Drive and any number of links), and the
   // tasks and quizzes placed in it. Students see it once it's published.
   weeks: defineTable({
+    readingWrite: v.optional(v.object({ id: v.string(), until: v.number() })),
     courseId: v.id("courses"),
     order: v.number(),
     title: v.string(),
@@ -469,11 +482,11 @@ export default defineSchema({
     email: v.string(),
   }).index("by_emailId", ["emailId"]),
 
-  // Addresses Kalami no longer emails because they bounced or complained,
-  // including people who have no account (invite recipients).
+  // Addresses Kalami no longer emails because they bounced, complained, or
+  // unsubscribed from a message sent to them before they had an account.
   emailSuppressions: defineTable({
     email: v.string(),
-    status: v.union(v.literal("bounced"), v.literal("complained")),
+    status: v.union(v.literal("bounced"), v.literal("complained"), v.literal("unsubscribed")),
     at: v.number(),
   }).index("by_email", ["email"]),
 
@@ -638,6 +651,8 @@ export default defineSchema({
     body: v.string(),
     // Where "Open" goes: a path in the student app or an https link.
     link: v.optional(v.string()),
+    // The message is also a personal invitation to this group (each person gets their own join link).
+    groupId: v.optional(v.id("groups")),
     audience: broadcastAudienceValidator,
     // The audience in words at the time of sending, for the history.
     audienceLabel: v.string(),
@@ -657,8 +672,12 @@ export default defineSchema({
   // didn't go. A second batch for the same person does nothing.
   broadcastDeliveries: defineTable({
     broadcastId: v.id("broadcasts"),
-    userId: v.id("users"),
+    // The account, or (without one within the sender's reach) the address that was emailed.
+    userId: v.optional(v.id("users")),
+    email: v.optional(v.string()),
     notificationId: v.optional(v.id("notifications")),
+    // The personal group invite this message carried.
+    inviteId: v.optional(v.id("groupInvites")),
     // Devices with push on when it was sent (the pushes themselves go through pushDelivery.ts).
     devices: v.number(),
     emailId: v.optional(v.string()),
@@ -667,7 +686,8 @@ export default defineSchema({
     ),
   })
     .index("by_broadcastId", ["broadcastId"])
-    .index("by_broadcastId_and_userId", ["broadcastId", "userId"]),
+    .index("by_broadcastId_and_userId", ["broadcastId", "userId"])
+    .index("by_broadcastId_and_email", ["broadcastId", "email"]),
 
   // Who changed what, and whether a person or their agent did it.
   auditLog: defineTable({

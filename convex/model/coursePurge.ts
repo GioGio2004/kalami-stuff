@@ -120,6 +120,11 @@ export async function purgeCourseStep(ctx: MutationCtx, courseId: Id<"courses">)
   return (
     (await drain(
       budget,
+      (n) => ctx.db.query("readingDocuments").withIndex("by_courseId", (q) => q.eq("courseId", courseId)).take(n),
+      (row) => ctx.db.delete("readingDocuments", row._id),
+    )) &&
+    (await drain(
+      budget,
       (n) =>
         ctx.db
           .query("lessons")

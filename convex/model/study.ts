@@ -28,6 +28,7 @@ import {
 } from "./learn";
 import { attemptOrder, studentQuestion } from "./quiz";
 import { publishedWeeks } from "./weeks";
+import { sceneText } from "../lib/scene";
 
 /**
  * The student's read-only connector (study.ts): what a student's own AI
@@ -315,6 +316,8 @@ function blockText(block: Doc<"lessons">["blocks"][number]): string {
       return `${block.title ?? ""} ${block.steps.map((step) => `${step.title ?? ""} ${step.md}`).join(" ")}`;
     case "check":
       return block.check.prompt;
+    case "scene":
+      return sceneText(block.scene);
   }
 }
 

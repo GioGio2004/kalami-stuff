@@ -3,7 +3,7 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { emailConfigured, sendAnnouncementEmail } from "../email";
+import { emailConfigured, groupInviteUrl, sendAnnouncementEmail } from "../email";
 import { getMemberships, isSuperAdmin } from "../lib/auth";
 import { appError } from "../lib/errors";
 import { normalizeEmail } from "../lib/input";
@@ -19,20 +19,24 @@ import {
 } from "../lib/validators";
 import { pushConfigured } from "../push";
 import { displayName, logAudit } from "./audit";
+import { isEmailAddress, openInviteFor } from "./groups";
 import { actorOf, covers, type AdminScope } from "./platform";
 
 /**
  * The admin panel's notification center: a message from an admin to many
  * people at once. The audience is a rule (everyone, a role, a university, a
- * group, a course, a list of people) turned into rows a batch at a time by a
- * scheduled mutation. Students get a row in the bell (the record), a push to
- * their devices and an email as chosen; staff get the email. One delivery row
- * per person says what they got, so a retried batch never doubles anything.
+ * group, a course, a list of people, a list of email addresses) turned into
+ * rows a batch at a time by a scheduled mutation. Students get a row in the
+ * bell (the record), a push to their devices and an email as chosen; staff
+ * get the email; an address without an account gets the email only. A message
+ * can double as a personal group invitation: each person gets their own join
+ * link, so students can be invited before they have an account. One delivery
+ * row per person says what they got, so a retried batch never doubles anything.
  */
 
 /** People handled per scheduled mutation. */
 const BATCH = 100;
-/** People an admin can pick one by one for a single message. */
+/** People or addresses an admin can list one by one for a single message. */
 const MAX_PEOPLE = 200;
 /** People the preview counts before it says "more than". */
 const PREVIEW_CAP = 1000;
@@ -57,6 +61,8 @@ export const audiencePreviewValidator = v.object({
   recipients: v.number(),
   students: v.number(),
   staff: v.number(),
+  /** Addresses with no account the sender can reach: they get the email only. */
+  noAccount: v.number(),
   /** Students with at least one device that has push on. */
   withPush: v.number(),
   /** Who gets the email, and who doesn't and why. */
@@ -77,6 +83,9 @@ export const broadcastRowValidator = v.object({
   title: v.string(),
   body: v.string(),
   link: v.optional(v.string()),
+  /** The message was also an invitation to this group. */
+  groupId: v.optional(v.id("groups")),
+  groupName: v.optional(v.string()),
   audienceLabel: v.string(),
   channels: broadcastChannelsValidator,
   emailEveryone: v.boolean(),
@@ -90,15 +99,18 @@ export const broadcastRowValidator = v.object({
 
 export const deliveryRowValidator = v.object({
   _id: v.id("broadcastDeliveries"),
-  userId: v.id("users"),
+  userId: v.optional(v.id("users")),
   name: v.string(),
   email: v.string(),
-  role: roleValidator,
+  /** "none": an address the sender could only email (no account, or one outside their reach). */
+  role: v.union(roleValidator, v.literal("none")),
   /** In the student app's bell. */
   inApp: v.boolean(),
   devices: v.number(),
   emailed: v.boolean(),
   emailSkipped: v.optional(emailSkipValidator),
+  /** Got a personal invite to the group. */
+  invited: v.boolean(),
 });
 
 export const personHitValidator = v.object({
@@ -117,7 +129,11 @@ type Source =
   | { table: "memberships"; role: Role; universityId: Id<"universities"> | undefined | null }
   | { table: "groupMembers"; groupId: Id<"groups"> }
   | { table: "enrollments"; courseId: Id<"courses"> }
-  | { table: "list"; userIds: Id<"users">[] };
+  | { table: "list"; userIds: Id<"users">[] }
+  | { table: "emails"; emails: string[] };
+
+/** One person to reach: an account, or an address that may or may not have one. */
+type Recipient = { userId: Id<"users"> } | { email: string };
 
 function universityOf(value: Id<"universities"> | "none" | undefined): Id<"universities"> | undefined | null {
   return value === undefined ? null : value === "none" ? undefined : value;
@@ -147,10 +163,21 @@ function sourcesOf(audience: BroadcastAudience): Source[] {
       return [{ table: "enrollments", courseId: audience.courseId }];
     case "people":
       return [{ table: "list", userIds: audience.userIds }];
+    case "emails":
+      return [{ table: "emails", emails: audience.emails }];
   }
 }
 
-type Page = { userIds: Id<"users">[]; cursor: string | null; done: boolean };
+type Page = { recipients: Recipient[]; cursor: string | null; done: boolean };
+
+const byId = (userId: Id<"users">): Recipient => ({ userId });
+
+function sliceOf<T>(items: T[], cursor: string | null, numItems: number) {
+  const start = cursor === null ? 0 : Number(cursor);
+  const slice = items.slice(start, start + numItems);
+  const end = start + slice.length;
+  return { slice, cursor: String(end), done: end >= items.length };
+}
 
 /** One page of a source, for the fan-out (a mutation may paginate once per call). */
 async function pageOf(ctx: QueryCtx, source: Source, cursor: string | null, numItems: number): Promise<Page> {
@@ -158,7 +185,7 @@ async function pageOf(ctx: QueryCtx, source: Source, cursor: string | null, numI
   switch (source.table) {
     case "users": {
       const result = await ctx.db.query("users").paginate(opts);
-      return { userIds: result.page.map((row) => row._id), cursor: result.continueCursor, done: result.isDone };
+      return { recipients: result.page.map((row) => byId(row._id)), cursor: result.continueCursor, done: result.isDone };
     }
     case "memberships": {
       const { role, universityId } = source;
@@ -172,7 +199,7 @@ async function pageOf(ctx: QueryCtx, source: Source, cursor: string | null, numI
               .query("memberships")
               .withIndex("by_universityId_and_role", (q) => q.eq("universityId", universityId).eq("role", role))
               .paginate(opts);
-      return { userIds: result.page.map((row) => row.userId), cursor: result.continueCursor, done: result.isDone };
+      return { recipients: result.page.map((row) => byId(row.userId)), cursor: result.continueCursor, done: result.isDone };
     }
     case "groupMembers": {
       const { groupId } = source;
@@ -180,7 +207,7 @@ async function pageOf(ctx: QueryCtx, source: Source, cursor: string | null, numI
         .query("groupMembers")
         .withIndex("by_groupId", (q) => q.eq("groupId", groupId))
         .paginate(opts);
-      return { userIds: result.page.map((row) => row.userId), cursor: result.continueCursor, done: result.isDone };
+      return { recipients: result.page.map((row) => byId(row.userId)), cursor: result.continueCursor, done: result.isDone };
     }
     case "enrollments": {
       const { courseId } = source;
@@ -189,25 +216,27 @@ async function pageOf(ctx: QueryCtx, source: Source, cursor: string | null, numI
         .withIndex("by_courseId", (q) => q.eq("courseId", courseId))
         .paginate(opts);
       return {
-        userIds: result.page.filter((row) => row.status === "active").map((row) => row.userId),
+        recipients: result.page.filter((row) => row.status === "active").map((row) => byId(row.userId)),
         cursor: result.continueCursor,
         done: result.isDone,
       };
     }
     case "list": {
-      const start = cursor === null ? 0 : Number(cursor);
-      const slice = source.userIds.slice(start, start + numItems);
-      const end = start + slice.length;
-      return { userIds: slice, cursor: String(end), done: end >= source.userIds.length };
+      const { slice, ...rest } = sliceOf(source.userIds, cursor, numItems);
+      return { recipients: slice.map(byId), ...rest };
+    }
+    case "emails": {
+      const { slice, ...rest } = sliceOf(source.emails, cursor, numItems);
+      return { recipients: slice.map((email) => ({ email })), ...rest };
     }
   }
 }
 
 /** Up to `limit` people of a source, for the preview (queries read with take, not paginate). */
-async function takeOf(ctx: QueryCtx, source: Source, limit: number): Promise<Id<"users">[]> {
+async function takeOf(ctx: QueryCtx, source: Source, limit: number): Promise<Recipient[]> {
   switch (source.table) {
     case "users":
-      return (await ctx.db.query("users").take(limit)).map((row) => row._id);
+      return (await ctx.db.query("users").take(limit)).map((row) => byId(row._id));
     case "memberships": {
       const { role, universityId } = source;
       const rows =
@@ -220,7 +249,7 @@ async function takeOf(ctx: QueryCtx, source: Source, limit: number): Promise<Id<
               .query("memberships")
               .withIndex("by_universityId_and_role", (q) => q.eq("universityId", universityId).eq("role", role))
               .take(limit);
-      return rows.map((row) => row.userId);
+      return rows.map((row) => byId(row.userId));
     }
     case "groupMembers": {
       const { groupId } = source;
@@ -228,7 +257,7 @@ async function takeOf(ctx: QueryCtx, source: Source, limit: number): Promise<Id<
         .query("groupMembers")
         .withIndex("by_groupId", (q) => q.eq("groupId", groupId))
         .take(limit);
-      return rows.map((row) => row.userId);
+      return rows.map((row) => byId(row.userId));
     }
     case "enrollments": {
       const { courseId } = source;
@@ -236,16 +265,76 @@ async function takeOf(ctx: QueryCtx, source: Source, limit: number): Promise<Id<
         .query("enrollments")
         .withIndex("by_courseId", (q) => q.eq("courseId", courseId))
         .take(limit);
-      return rows.filter((row) => row.status === "active").map((row) => row.userId);
+      return rows.filter((row) => row.status === "active").map((row) => byId(row.userId));
     }
     case "list":
-      return source.userIds.slice(0, limit);
+      return source.userIds.slice(0, limit).map(byId);
+    case "emails":
+      return source.emails.slice(0, limit).map((email) => ({ email }));
   }
+}
+
+// --- Who a recipient turns out to be ---------------------------------------------------------
+
+/** How far the sender's administration reaches: everything, or their universities. */
+type Reach = { all: true } | { all: false; universityIds: Id<"universities">[] };
+
+function reachOfScope(scope: AdminScope): Reach {
+  return scope.universityIds === null ? { all: true } : { all: false, universityIds: scope.universityIds };
+}
+
+async function reachOfSender(ctx: QueryCtx, senderId: Id<"users">): Promise<Reach> {
+  const memberships = await getMemberships(ctx, senderId);
+  if (isSuperAdmin(memberships)) return { all: true };
+  return {
+    all: false,
+    universityIds: memberships.flatMap((m) => (m.role === "uni_admin" && m.universityId !== undefined ? [m.universityId] : [])),
+  };
+}
+
+function withinReach(reach: Reach, memberships: Doc<"memberships">[]): boolean {
+  return reach.all || memberships.some((m) => m.universityId !== undefined && reach.universityIds.includes(m.universityId));
+}
+
+type Resolved =
+  | { kind: "user"; user: Doc<"users">; memberships: Doc<"memberships">[]; student: boolean }
+  | { kind: "address"; email: string };
+
+async function userRecipient(ctx: QueryCtx, user: Doc<"users">): Promise<Resolved | null> {
+  if (user.deletedAt !== undefined) return null;
+  const memberships = await getMemberships(ctx, user._id);
+  if (memberships.length === 0) return null;
+  return { kind: "user", user, memberships, student: memberships.some((m) => m.role === "student") };
+}
+
+/**
+ * An account id is the account (its reach was checked when the audience was).
+ * An address is its account when one exists within the sender's reach, else
+ * just an address to email. Null: nobody to reach (deleted, never onboarded).
+ */
+async function resolve(ctx: QueryCtx, recipient: Recipient, reach: Reach): Promise<Resolved | null> {
+  if ("userId" in recipient) {
+    const user = await ctx.db.get("users", recipient.userId);
+    return user === null ? null : await userRecipient(ctx, user);
+  }
+  const users = await ctx.db
+    .query("users")
+    .withIndex("by_email", (q) => q.eq("email", recipient.email))
+    .take(5);
+  for (const user of users) {
+    const resolved = await userRecipient(ctx, user);
+    if (resolved !== null && resolved.kind === "user" && withinReach(reach, resolved.memberships)) return resolved;
+  }
+  return { kind: "address", email: recipient.email };
+}
+
+function keyOf(resolved: Resolved): string {
+  return resolved.kind === "user" ? `u:${resolved.user._id}` : `e:${resolved.email}`;
 }
 
 // --- Checking an audience against the caller -------------------------------------------------
 
-type CheckedAudience = { audience: BroadcastAudience; label: string; universityId: Id<"universities"> | undefined };
+type CheckedAudience = { audience: BroadcastAudience; label: string; universityId: Id<"universities"> | undefined; count?: number };
 
 async function universityName(ctx: QueryCtx, universityId: Id<"universities">): Promise<string> {
   const university = await ctx.db.get("universities", universityId);
@@ -266,10 +355,37 @@ function inReach(scope: AdminScope, memberships: Doc<"memberships">[]): boolean 
   return scope.isSuperAdmin || memberships.some((m) => covers(scope, m.universityId));
 }
 
+/** Splits a pasted list and keeps each address once; bad ones are an error, named. */
+function cleanEmails(raw: string[]): string[] {
+  const emails: string[] = [];
+  const bad: string[] = [];
+  for (const entry of raw.flatMap((value) => value.split(/[\s,;]+/))) {
+    const email = normalizeEmail(entry);
+    if (email === "") continue;
+    if (!isEmailAddress(email)) bad.push(entry.trim());
+    else if (!emails.includes(email)) emails.push(email);
+  }
+  if (bad.length > 0) {
+    throw appError(
+      "INVALID_INPUT",
+      `These don't look like email addresses: ${bad.slice(0, 5).join(", ")}${bad.length > 5 ? ", …" : ""}.`,
+    );
+  }
+  if (emails.length === 0) {
+    throw appError("INVALID_INPUT", "Paste at least one email address.");
+  }
+  if (emails.length > MAX_PEOPLE) {
+    throw appError("INVALID_INPUT", `Up to ${MAX_PEOPLE} addresses in one message.`);
+  }
+  return emails;
+}
+
 /**
  * The audience the caller may address, in words. A university admin reaches
  * their own university's people, groups and courses; only the platform admin
  * messages everyone, a whole role across universities, or people outside any.
+ * Pasted addresses are anyone's to message: an account outside the caller's
+ * reach gets the email only, like an address without one.
  */
 async function checkAudience(ctx: QueryCtx, scope: AdminScope, audience: BroadcastAudience): Promise<CheckedAudience> {
   switch (audience.kind) {
@@ -332,7 +448,16 @@ async function checkAudience(ctx: QueryCtx, scope: AdminScope, audience: Broadca
       const shown = names.slice(0, 3).join(", ");
       const label =
         names.length <= 3 ? shown : `${shown} and ${names.length - 3} ${names.length - 3 === 1 ? "other" : "others"}`;
-      return { audience: { kind: "people", userIds }, label, universityId: undefined };
+      return { audience: { kind: "people", userIds }, label, universityId: undefined, count: userIds.length };
+    }
+    case "emails": {
+      const emails = cleanEmails(audience.emails);
+      return {
+        audience: { kind: "emails", emails },
+        label: `${emails.length} email address${emails.length === 1 ? "" : "es"}`,
+        universityId: undefined,
+        count: emails.length,
+      };
     }
   }
 }
@@ -364,35 +489,48 @@ async function hasDevice(ctx: QueryCtx, userId: Id<"users">): Promise<boolean> {
   return row !== null;
 }
 
+/** Whether an address is on the list Kalami no longer emails (bounced, complained, unsubscribed). */
+async function isListed(ctx: QueryCtx, email: string): Promise<boolean> {
+  const row = await ctx.db
+    .query("emailSuppressions")
+    .withIndex("by_email", (q) => q.eq("email", email))
+    .first();
+  return row !== null;
+}
+
 /** Who a message would reach, counted up to a cap, with the email and push outlook. */
 export async function previewAudience(ctx: QueryCtx, scope: AdminScope, audience: BroadcastAudience, emailEveryone: boolean) {
   const checked = await checkAudience(ctx, scope, audience);
-  const counts = { recipients: 0, students: 0, staff: 0, withPush: 0, emailable: 0, optedOut: 0, blocked: 0 };
-  const seen = new Set<Id<"users">>();
+  const reach = reachOfScope(scope);
+  const counts = { recipients: 0, students: 0, staff: 0, noAccount: 0, withPush: 0, emailable: 0, optedOut: 0, blocked: 0 };
+  const seen = new Set<string>();
   let capped = false;
   for (const source of sourcesOf(checked.audience)) {
-    const userIds = await takeOf(ctx, source, PREVIEW_CAP + 1);
-    for (const userId of userIds) {
-      if (seen.has(userId)) continue;
+    for (const recipient of await takeOf(ctx, source, PREVIEW_CAP + 1)) {
       if (seen.size >= PREVIEW_CAP) {
         capped = true;
         break;
       }
-      seen.add(userId);
-      const user = await ctx.db.get("users", userId);
-      if (user === null || user.deletedAt !== undefined) continue;
-      const memberships = await getMemberships(ctx, userId);
-      if (memberships.length === 0) continue;
-      const student = memberships.some((m) => m.role === "student");
+      const resolved = await resolve(ctx, recipient, reach);
+      if (resolved === null) continue;
+      const key = keyOf(resolved);
+      if (seen.has(key)) continue;
+      seen.add(key);
       counts.recipients++;
-      if (student) {
+      if (resolved.kind === "address") {
+        counts.noAccount++;
+        if (await isListed(ctx, resolved.email)) counts.blocked++;
+        else counts.emailable++;
+        continue;
+      }
+      if (resolved.student) {
         counts.students++;
-        if (await hasDevice(ctx, userId)) counts.withPush++;
+        if (await hasDevice(ctx, resolved.user._id)) counts.withPush++;
       } else {
         counts.staff++;
       }
-      if (user.emailStatus !== undefined) counts.blocked++;
-      else if (user.emailOptOut === true && !emailEveryone) counts.optedOut++;
+      if (resolved.user.emailStatus !== undefined || (await isListed(ctx, resolved.user.email))) counts.blocked++;
+      else if (resolved.user.emailOptOut === true && !emailEveryone) counts.optedOut++;
       else counts.emailable++;
     }
     if (capped) break;
@@ -411,6 +549,8 @@ export async function createBroadcast(
     audience: BroadcastAudience;
     channels: BroadcastChannels;
     emailEveryone: boolean;
+    /** The message is also a personal invitation to this group (addresses or picked people only). */
+    groupId?: Id<"groups">;
   },
 ): Promise<Id<"broadcasts">> {
   const title = input.title.trim();
@@ -423,16 +563,34 @@ export async function createBroadcast(
   }
   const link = cleanLink(input.link);
   const checked = await checkAudience(ctx, scope, input.audience);
+  let group: Doc<"groups"> | null = null;
+  if (input.groupId !== undefined) {
+    if (checked.count === undefined) {
+      throw appError("INVALID_INPUT", "An invitation goes to email addresses or to people picked one by one.");
+    }
+    group = await ctx.db.get("groups", input.groupId);
+    if (group === null || !covers(scope, group.universityId)) {
+      throw appError("NOT_FOUND", "That group isn't in a university you administer.");
+    }
+    if (group.archivedAt !== undefined) {
+      throw appError("CONFLICT", "This group is archived. Restore it to invite students.");
+    }
+    // The same allowance as inviting from the group's page.
+    await enforceLimit(ctx, "groupInvite", scope.user._id, checked.count);
+  }
   await enforceLimit(ctx, "broadcast", scope.user._id);
+  const label = group === null ? checked.label : `${checked.label}, invited to ${group.name}`;
   const broadcastId = await ctx.db.insert("broadcasts", {
     senderId: scope.user._id,
     from: await fromLabel(ctx, scope, checked),
     title,
     body,
     link,
+    groupId: group?._id,
     audience: checked.audience,
-    audienceLabel: checked.label,
-    channels: input.channels,
+    audienceLabel: label,
+    // An invitation can only reach people without an account by email.
+    channels: { push: input.channels.push, email: input.channels.email || group !== null },
     emailEveryone: input.emailEveryone,
     status: "sending",
     recipients: 0,
@@ -444,23 +602,29 @@ export async function createBroadcast(
     action: "broadcast.send",
     targetTable: "broadcasts",
     targetId: broadcastId,
-    summary: `Sent "${title}" to ${checked.label}`,
+    summary: `Sent "${title}" to ${label}`,
   });
   await ctx.scheduler.runAfter(0, internal.broadcasts.fanOut, { broadcastId, phase: 0, cursor: null });
   return broadcastId;
 }
 
-async function deliveryOf(ctx: QueryCtx, broadcastId: Id<"broadcasts">, userId: Id<"users">) {
-  return await ctx.db
-    .query("broadcastDeliveries")
-    .withIndex("by_broadcastId_and_userId", (q) => q.eq("broadcastId", broadcastId).eq("userId", userId))
-    .unique();
+async function deliveryOf(ctx: QueryCtx, broadcastId: Id<"broadcasts">, resolved: Resolved) {
+  return resolved.kind === "user"
+    ? await ctx.db
+        .query("broadcastDeliveries")
+        .withIndex("by_broadcastId_and_userId", (q) => q.eq("broadcastId", broadcastId).eq("userId", resolved.user._id))
+        .first()
+    : await ctx.db
+        .query("broadcastDeliveries")
+        .withIndex("by_broadcastId_and_email", (q) => q.eq("broadcastId", broadcastId).eq("email", resolved.email))
+        .first();
 }
 
 /**
  * One batch of one part of the audience: a bell row for each student (pushed
- * to their devices when asked), an email for everyone when asked. Schedules
- * the next batch, the next part, or marks the broadcast sent.
+ * to their devices when asked), an email for everyone when asked, a personal
+ * invite when the message is one. Schedules the next batch, the next part, or
+ * marks the broadcast sent.
  */
 export async function fanOutBroadcast(
   ctx: MutationCtx,
@@ -475,33 +639,38 @@ export async function fanOutBroadcast(
     return;
   }
   const page = await pageOf(ctx, source, args.cursor, BATCH);
+  const reach = await reachOfSender(ctx, broadcast.senderId);
+  const group = broadcast.groupId === undefined ? null : await ctx.db.get("groups", broadcast.groupId);
   const toPush: Id<"notifications">[] = [];
   const counts = { recipients: 0, inApp: 0, pushed: 0, emailed: 0 };
-  for (const userId of page.userIds) {
-    if ((await deliveryOf(ctx, broadcast._id, userId)) !== null) continue;
-    const user = await ctx.db.get("users", userId);
-    if (user === null || user.deletedAt !== undefined) continue;
-    const memberships = await getMemberships(ctx, userId);
-    if (memberships.length === 0) continue;
-    const sentBy = broadcast.from[user.locale];
+  for (const recipient of page.recipients) {
+    const resolved = await resolve(ctx, recipient, reach);
+    if (resolved === null) continue;
+    if ((await deliveryOf(ctx, broadcast._id, resolved)) !== null) continue;
+    const user = resolved.kind === "user" ? resolved.user : null;
+    const student = resolved.kind === "user" && resolved.student;
+    const email = resolved.kind === "address" ? resolved.email : resolved.user.email;
+    const sentBy = broadcast.from[user?.locale ?? "ka"];
+    const invite = group === null ? null : await openInviteFor(ctx, group._id, email, broadcast.senderId);
+    const invitation = invite === null || group === null ? undefined : { groupName: group.name, url: groupInviteUrl(invite.token) };
     let notificationId: Id<"notifications"> | undefined;
     let devices = 0;
-    if (memberships.some((m) => m.role === "student")) {
+    if (user !== null && student) {
       notificationId = await ctx.db.insert("notifications", {
-        userId,
+        userId: user._id,
         kind: "announcement",
         title: broadcast.title,
         courseTitle: sentBy,
         body: broadcast.body,
         broadcastId: broadcast._id,
-        href: broadcast.link ?? "/dashboard",
+        href: invite === null ? (broadcast.link ?? "/dashboard") : `/join/invite/${invite.token}`,
       });
       counts.inApp++;
       if (broadcast.channels.push) {
         devices = (
           await ctx.db
             .query("pushSubscriptions")
-            .withIndex("by_userId", (q) => q.eq("userId", userId))
+            .withIndex("by_userId", (q) => q.eq("userId", user._id))
             .take(16)
         ).length;
         if (devices > 0) {
@@ -513,14 +682,30 @@ export async function fanOutBroadcast(
     let emailId: string | undefined;
     let emailSkipped: Doc<"broadcastDeliveries">["emailSkipped"];
     if (broadcast.channels.email) {
-      const sent = await sendAnnouncementEmail(ctx, user, broadcast, sentBy);
+      const sent = await sendAnnouncementEmail(
+        ctx,
+        user === null ? { email } : { email, user },
+        // An invitation reaches someone who switched notification emails off, like one from the group's page.
+        { ...broadcast, emailEveryone: broadcast.emailEveryone || invite !== null },
+        sentBy,
+        invitation,
+      );
       emailId = sent.emailId;
       emailSkipped = sent.skipped;
       if (emailId !== undefined) counts.emailed++;
     } else {
       emailSkipped = "off";
     }
-    await ctx.db.insert("broadcastDeliveries", { broadcastId: broadcast._id, userId, notificationId, devices, emailId, emailSkipped });
+    await ctx.db.insert("broadcastDeliveries", {
+      broadcastId: broadcast._id,
+      userId: user?._id,
+      email: user === null ? email : undefined,
+      notificationId,
+      devices,
+      emailId,
+      emailSkipped,
+      inviteId: invite?._id,
+    });
     counts.recipients++;
   }
   await ctx.db.patch("broadcasts", broadcast._id, {
@@ -544,6 +729,7 @@ export async function fanOutBroadcast(
 // --- History ------------------------------------------------------------------------------
 
 async function toBroadcastRow(ctx: QueryCtx, row: Doc<"broadcasts">) {
+  const group = row.groupId === undefined ? null : await ctx.db.get("groups", row.groupId);
   return {
     _id: row._id,
     _creationTime: row._creationTime,
@@ -552,6 +738,8 @@ async function toBroadcastRow(ctx: QueryCtx, row: Doc<"broadcasts">) {
     title: row.title,
     body: row.body,
     link: row.link,
+    groupId: row.groupId,
+    groupName: group?.name,
     audienceLabel: row.audienceLabel,
     channels: row.channels,
     emailEveryone: row.emailEveryone,
@@ -594,14 +782,15 @@ function primaryRole(memberships: Doc<"memberships">[]): Role {
 
 type DeliveryRow = {
   _id: Id<"broadcastDeliveries">;
-  userId: Id<"users">;
+  userId: Id<"users"> | undefined;
   name: string;
   email: string;
-  role: Role;
+  role: Role | "none";
   inApp: boolean;
   devices: number;
   emailed: boolean;
   emailSkipped: Doc<"broadcastDeliveries">["emailSkipped"];
+  invited: boolean;
 };
 
 /** Who one message reached and what each person got, a page at a time. */
@@ -618,17 +807,18 @@ export async function listRecipients(
     .paginate(paginationOpts);
   const page: DeliveryRow[] = [];
   for (const row of result.page) {
-    const user = await ctx.db.get("users", row.userId);
+    const user = row.userId === undefined ? null : await ctx.db.get("users", row.userId);
     page.push({
       _id: row._id,
       userId: row.userId,
-      name: displayName(user),
-      email: user === null || user.deletedAt !== undefined ? "" : user.email,
-      role: primaryRole(await getMemberships(ctx, row.userId)),
+      name: user === null ? "" : displayName(user),
+      email: user === null ? (row.email ?? "") : user.deletedAt !== undefined ? "" : user.email,
+      role: user === null ? "none" : primaryRole(await getMemberships(ctx, user._id)),
       inApp: row.notificationId !== undefined,
       devices: row.devices,
       emailed: row.emailId !== undefined,
       emailSkipped: row.emailSkipped,
+      invited: row.inviteId !== undefined,
     });
   }
   return { ...result, page };

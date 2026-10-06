@@ -770,6 +770,56 @@ export function splitEmails(raw: string[]): string[] {
 
 const EMAIL_PATTERN = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
 
+/** Whether this looks like an address Kalami can invite or email. */
+export function isEmailAddress(email: string): boolean {
+  return email.length <= 254 && EMAIL_PATTERN.test(email);
+}
+
+/**
+ * The open personal invite for an address, for a message that doubles as an
+ * invitation (model/broadcasts.ts): the one already waiting, or a new row.
+ * Not emailed here: the message carries the link. Null when the address
+ * already belongs to a member, the group is archived or gone, or too many
+ * invites are waiting.
+ */
+export async function openInviteFor(
+  ctx: MutationCtx,
+  groupId: Id<"groups">,
+  email: string,
+  invitedBy: Id<"users">,
+): Promise<Doc<"groupInvites"> | null> {
+  const group = await ctx.db.get("groups", groupId);
+  if (group === null || group.archivedAt !== undefined) return null;
+  const users = await ctx.db
+    .query("users")
+    .withIndex("by_email", (q) => q.eq("email", email))
+    .take(5);
+  for (const user of users) {
+    if ((await membership(ctx, groupId, user._id)) !== null) return null;
+  }
+  const now = Date.now();
+  const earlier = await ctx.db
+    .query("groupInvites")
+    .withIndex("by_email", (q) => q.eq("email", email))
+    .take(50);
+  const open = earlier.find(
+    (invite) =>
+      invite.groupId === groupId && invite.acceptedAt === undefined && invite.revokedAt === undefined && invite.expiresAt > now,
+  );
+  if (open !== undefined) return open;
+  const pending = await pendingCountOf(ctx, group);
+  if (pending >= MAX_PENDING_INVITES) return null;
+  const inviteId = await ctx.db.insert("groupInvites", {
+    groupId,
+    email,
+    token: generateLinkToken(),
+    invitedBy,
+    expiresAt: now + INVITE_TTL_MS,
+  });
+  await ctx.db.patch("groups", groupId, { updatedAt: now, pendingInvites: pending + 1 });
+  return await ctx.db.get("groupInvites", inviteId);
+}
+
 /**
  * Personal invites, one per address, each emailed. Addresses already in the
  * group or already invited are reported back, not invited twice; bad ones are

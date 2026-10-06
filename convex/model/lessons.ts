@@ -10,6 +10,7 @@ import {
   type LessonBlock,
   type LessonBlockInput,
 } from "../lib/validators";
+import { sceneProblems } from "../lib/scene";
 import { logAudit } from "./audit";
 import type { Student } from "./learn";
 import { keepsPublishedOrder, lessonsOf, requireHttpsUrl, weeksOf } from "./weeks";
@@ -168,6 +169,24 @@ function normalizeBlock(input: LessonBlockInput, taken: Set<string>, where: stri
         );
       }
       return { id, type: "check", check: { kind: check.kind, prompt, options, explanation } };
+    }
+    case "scene": {
+      // The scene's own rules (lib/scene) decide; the first few problems make the message.
+      const problems = sceneProblems(input.scene);
+      if (problems.length > 0) {
+        throw appError("INVALID_INPUT", `${label("scene")}: ${problems.slice(0, 5).join(" ")}`);
+      }
+      const { scene } = input;
+      return {
+        id,
+        type: "scene",
+        scene: {
+          title: optionalText(scene.title, label("scene title"), 120),
+          theme: scene.theme,
+          elements: scene.elements,
+          steps: scene.steps,
+        },
+      };
     }
   }
 }

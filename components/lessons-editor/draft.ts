@@ -1,4 +1,6 @@
+import { SCENE_TEMPLATES } from "@/components/lessons/scene/templates";
 import type { CalloutTone, LessonBlock, LessonBlockType, LessonCheck } from "@/components/lessons/types";
+import { sceneProblems } from "@/lib/scene";
 import type { LessonBlockInput } from "@/components/studio/types";
 
 /**
@@ -16,6 +18,7 @@ export const BLOCK_TYPES: { type: LessonBlockType; label: string; description: s
   { type: "video", label: "Video", description: "YouTube and Vimeo play inside the lesson." },
   { type: "steps", label: "Steps", description: "A procedure students reveal one step at a time." },
   { type: "check", label: "Quick check", description: "A question to answer on the spot. Not graded." },
+  { type: "scene", label: "Animated scene", description: "Elements on a stage, animated step by step. Best built by your AI assistant." },
 ];
 
 export const BLOCK_LABEL = Object.fromEntries(BLOCK_TYPES.map((t) => [t.type, t.label])) as Record<LessonBlockType, string>;
@@ -84,6 +87,8 @@ export function blankBlock(type: LessonBlockType): LessonBlock {
           accepted: [""],
         },
       };
+    case "scene":
+      return { id: "", type, scene: structuredClone(SCENE_TEMPLATES[0].scene) };
   }
 }
 
@@ -155,6 +160,8 @@ export function toInput(block: LessonBlock): LessonBlockInput {
         }),
       });
     }
+    case "scene":
+      return clean({ id, type: block.type, scene: block.scene });
   }
 }
 
@@ -212,6 +219,9 @@ export function blockProblems(block: LessonBlock): string[] {
       }
       break;
     }
+    case "scene":
+      out.push(...sceneProblems(block.scene));
+      break;
   }
   return out;
 }
@@ -233,5 +243,7 @@ export function previewGap(block: LessonBlock): string | null {
       return block.steps.every((step) => step.md.trim() === "") ? "No steps written yet" : null;
     case "check":
       return block.check.prompt.trim() === "" ? "Write the question to see the check" : null;
+    case "scene":
+      return block.scene.elements.length === 0 ? "Add elements to the scene to see it here" : null;
   }
 }

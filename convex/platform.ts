@@ -1,7 +1,18 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { courseStatusValidator, universityStatusValidator } from "./lib/validators";
+import { broadcastAudienceValidator, broadcastChannelsValidator, courseStatusValidator, universityStatusValidator } from "./lib/validators";
+import {
+  audiencePreviewValidator,
+  broadcastRowValidator,
+  createBroadcast,
+  deliveryRowValidator,
+  listBroadcasts,
+  listRecipients,
+  personHitValidator,
+  previewAudience,
+  searchPeople,
+} from "./model/broadcasts";
 import {
   addStaffRole as addStaffRoleModel,
   auditLineValidator,
@@ -241,6 +252,64 @@ export const groups = query({
   handler: async (ctx, args) => {
     const scope = await requireAdminScope(ctx);
     return await listGroups(ctx, scope, args.university);
+  },
+});
+
+// --- Notifications: the notification center (model/broadcasts.ts) --------------------------
+
+/** Anyone within reach whose email starts with the query, for picking recipients one by one. */
+export const findPeople = query({
+  args: { query: v.string() },
+  returns: v.array(personHitValidator),
+  handler: async (ctx, args) => {
+    const scope = await requireAdminScope(ctx);
+    return await searchPeople(ctx, scope, args.query);
+  },
+});
+
+/** Who a message would reach, before it's sent. */
+export const broadcastPreview = query({
+  args: { audience: broadcastAudienceValidator, emailEveryone: v.boolean() },
+  returns: audiencePreviewValidator,
+  handler: async (ctx, args) => {
+    const scope = await requireAdminScope(ctx);
+    return await previewAudience(ctx, scope, args.audience, args.emailEveryone);
+  },
+});
+
+/** Sends a message: the bell for students, a push and an email as chosen. Delivered in batches right after. */
+export const sendBroadcast = mutation({
+  args: {
+    title: v.string(),
+    body: v.string(),
+    link: v.optional(v.string()),
+    audience: broadcastAudienceValidator,
+    channels: broadcastChannelsValidator,
+    emailEveryone: v.boolean(),
+  },
+  returns: v.id("broadcasts"),
+  handler: async (ctx, args) => {
+    const scope = await requireAdminScope(ctx);
+    return await createBroadcast(ctx, scope, args);
+  },
+});
+
+/** The newest messages sent: every one for the platform admin, their own for a university admin. */
+export const broadcasts = query({
+  args: {},
+  returns: v.array(broadcastRowValidator),
+  handler: async (ctx) => {
+    const scope = await requireAdminScope(ctx);
+    return await listBroadcasts(ctx, scope);
+  },
+});
+
+export const broadcastRecipients = query({
+  args: { broadcastId: v.id("broadcasts"), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(deliveryRowValidator),
+  handler: async (ctx, args) => {
+    const scope = await requireAdminScope(ctx);
+    return await listRecipients(ctx, scope, args.broadcastId, args.paginationOpts);
   },
 });
 

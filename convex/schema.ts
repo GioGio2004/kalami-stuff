@@ -31,6 +31,8 @@ import {
   roleValidator,
   universityStatusValidator,
   viaValidator,
+  broadcastAudienceValidator,
+  broadcastChannelsValidator,
 } from "./lib/validators";
 
 export default defineSchema({
@@ -559,12 +561,17 @@ export default defineSchema({
   notifications: defineTable({
     userId: v.id("users"),
     kind: notificationKindValidator,
-    courseId: v.id("courses"),
-    assessmentId: v.id("assessments"),
-    assessmentKind: assessmentKindValidator,
+    // The work it's about. Absent on an announcement from the notification center.
+    courseId: v.optional(v.id("courses")),
+    assessmentId: v.optional(v.id("assessments")),
+    assessmentKind: v.optional(assessmentKindValidator),
     // Copied here so a row reads on its own, in the bell, a push or an email.
     title: v.string(),
+    // On an announcement: who it's from ("Kalami" or the university), shown where the course would be.
     courseTitle: v.string(),
+    // An announcement's text, and the broadcast it came from.
+    body: v.optional(v.string()),
+    broadcastId: v.optional(v.id("broadcasts")),
     // The closing time, shown as "due …" in the student's own time zone.
     dueAt: v.optional(v.number()),
     // Where tapping it goes, as a path in the student app.
@@ -619,6 +626,48 @@ export default defineSchema({
     result: v.union(v.string(), v.array(v.string())),
     at: v.number(),
   }).index("by_actorId_and_requestId", ["actorId", "requestId"]),
+
+  // A message from the admin panel's notification center to many people at
+  // once: the bell (students), a push and/or an email, as chosen. Sent in
+  // batches by broadcasts.fanOut; the counts grow as the batches run.
+  broadcasts: defineTable({
+    senderId: v.id("users"),
+    // Who people see it from: Kalami itself, or the university whose admin sent it.
+    from: localizedTextValidator,
+    title: v.string(),
+    body: v.string(),
+    // Where "Open" goes: a path in the student app or an https link.
+    link: v.optional(v.string()),
+    audience: broadcastAudienceValidator,
+    // The audience in words at the time of sending, for the history.
+    audienceLabel: v.string(),
+    channels: broadcastChannelsValidator,
+    // Email people who switched notification emails off too (important notices). Never bounced addresses.
+    emailEveryone: v.boolean(),
+    status: v.union(v.literal("sending"), v.literal("sent")),
+    recipients: v.number(),
+    inApp: v.number(),
+    // People with at least one device on when it went out.
+    pushed: v.number(),
+    emailed: v.number(),
+    finishedAt: v.optional(v.number()),
+  }).index("by_senderId", ["senderId"]),
+
+  // One row per person a broadcast reached: what they got, and why an email
+  // didn't go. A second batch for the same person does nothing.
+  broadcastDeliveries: defineTable({
+    broadcastId: v.id("broadcasts"),
+    userId: v.id("users"),
+    notificationId: v.optional(v.id("notifications")),
+    // Devices with push on when it was sent (the pushes themselves go through pushDelivery.ts).
+    devices: v.number(),
+    emailId: v.optional(v.string()),
+    emailSkipped: v.optional(
+      v.union(v.literal("off"), v.literal("opted_out"), v.literal("blocked"), v.literal("not_configured")),
+    ),
+  })
+    .index("by_broadcastId", ["broadcastId"])
+    .index("by_broadcastId_and_userId", ["broadcastId", "userId"]),
 
   // Who changed what, and whether a person or their agent did it.
   auditLog: defineTable({

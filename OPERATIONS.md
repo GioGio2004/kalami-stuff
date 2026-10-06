@@ -82,6 +82,10 @@ student app's `public/sw.js` shows the notification and opens the page on tap.
 5. Payloads are small (title, one line, the page to open, a tag so a resend replaces instead of stacks) and kept by the push service for a day for devices that are off.
 6. Development: `/sw.js?mode=dev` is registered, which caches nothing (hot reloading keeps working) but still receives pushes. The dev deployment has its own key pair.
 
+## The notification center (admin panel → Notifications)
+
+An admin writes a message once and picks who gets it: everyone on Kalami (platform admin only), all students or all lecturers and admins (optionally at one university, or outside any), everyone at a university, a group (its students), a course (its active students), or people picked by email. It goes out in batches of 100 through scheduled mutations (`convex/broadcasts.ts`, `convex/model/broadcasts.ts`): students get a row in the bell (kind `announcement`), a push to their devices when chosen (needs the VAPID settings above, through the same `pushDelivery.ts`), and an email when chosen (needs `RESEND_API_KEY`, with the one-click unsubscribe headers); lecturers and admins get the email only. People who switched notification emails off are skipped unless the admin ticked "also email people who switched notification emails off"; bounced and complained addresses are never emailed. One `broadcastDeliveries` row per person says what they got and why no email went (`off`, `opted_out`, `blocked`, `not_configured`), so a retried batch never doubles anything. At most 30 messages an hour per admin; every send is in the audit log as `broadcast.send`. The preview before sending counts up to 1000 people.
+
 ## Messages (the contact card)
 
 Students write from the contact card ("Something wrong? Let's bother someone :))")

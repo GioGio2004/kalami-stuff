@@ -313,13 +313,36 @@ export const checkOutcomeValidator = v.object({ id: v.string(), passed: v.boolea
 
 // --- Notifications ---------------------------------------------------------------
 
-/** What a notification tells a student: new work, or a deadline reminder. */
+/** What a notification tells a student: new work, a deadline reminder, or a message from an admin. */
 export const notificationKindValidator = v.union(
   v.literal("published"),
   v.literal("due_24h"),
   v.literal("due_1h"),
+  // From the admin panel's notification center: no course or work behind it.
+  v.literal("announcement"),
 );
 export type NotificationKind = Infer<typeof notificationKindValidator>;
+/** The kinds that are about a piece of work. */
+export type WorkNotificationKind = Exclude<NotificationKind, "announcement">;
+
+/**
+ * Who a message from the notification center goes to. `universityId: "none"`
+ * means people outside any university; absent means every university.
+ */
+export const broadcastAudienceValidator = v.union(
+  v.object({ kind: v.literal("everyone") }),
+  v.object({ kind: v.literal("students"), universityId: v.optional(v.union(v.id("universities"), v.literal("none"))) }),
+  v.object({ kind: v.literal("staff"), universityId: v.optional(v.union(v.id("universities"), v.literal("none"))) }),
+  v.object({ kind: v.literal("university"), universityId: v.id("universities") }),
+  v.object({ kind: v.literal("group"), groupId: v.id("groups") }),
+  v.object({ kind: v.literal("course"), courseId: v.id("courses") }),
+  v.object({ kind: v.literal("people"), userIds: v.array(v.id("users")) }),
+);
+export type BroadcastAudience = Infer<typeof broadcastAudienceValidator>;
+
+/** Besides the bell, which students always get: a push to their devices, an email. */
+export const broadcastChannelsValidator = v.object({ push: v.boolean(), email: v.boolean() });
+export type BroadcastChannels = Infer<typeof broadcastChannelsValidator>;
 
 // --- Groups -----------------------------------------------------------------------
 

@@ -36,10 +36,14 @@ export const notificationValidator = v.object({
   _id: v.id("notifications"),
   _creationTime: v.number(),
   kind: notificationKindValidator,
-  assessmentKind: assessmentKindValidator,
+  /** Absent on an announcement; so is the course. */
+  assessmentKind: v.optional(assessmentKindValidator),
   title: v.string(),
+  /** On an announcement: who it's from. */
   courseTitle: v.string(),
-  courseId: v.id("courses"),
+  courseId: v.optional(v.id("courses")),
+  /** An announcement's text. */
+  body: v.optional(v.string()),
   dueAt: v.optional(v.number()),
   href: v.string(),
   read: v.boolean(),
@@ -63,6 +67,7 @@ function toNotification(row: Doc<"notifications">) {
     title: row.title,
     courseTitle: row.courseTitle,
     courseId: row.courseId,
+    body: row.body,
     dueAt: row.dueAt,
     href: row.href,
     read: row.readAt !== undefined,

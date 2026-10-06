@@ -4,6 +4,7 @@ import { components, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import {
+  renderAnnouncementEmail,
   renderGroupInviteEmail,
   renderNotificationEmail,
   renderStaffInviteEmail,
@@ -79,6 +80,8 @@ export async function deliverNotifications(ctx: MutationCtx, notificationIds: Id
   for (const notificationId of notificationIds) {
     const row = await ctx.db.get("notifications", notificationId);
     if (row === null || row.emailId !== undefined) continue;
+    // Announcements are emailed by the broadcast itself (sendAnnouncementEmail), staff included.
+    if (row.kind === "announcement") continue;
     const user = await ctx.db.get("users", row.userId);
     if (
       user === null ||
@@ -99,7 +102,8 @@ export async function deliverNotifications(ctx: MutationCtx, notificationIds: Id
       locale: user.locale,
       firstName: user.firstName,
       kind: row.kind,
-      assessmentKind: row.assessmentKind,
+      // Always set on a row about work; the fallback only satisfies the type.
+      assessmentKind: row.assessmentKind ?? "task",
       title: row.title,
       courseTitle: row.courseTitle,
       dueAt: row.dueAt,
@@ -165,6 +169,7 @@ type LoggedEmail = {
   html: string;
   text: string;
   replyTo?: string[];
+  headers?: { name: string; value: string }[];
   idempotencyKey: string;
 };
 
@@ -206,6 +211,63 @@ export async function sendGroupInviteEmail(
   });
   await ctx.db.patch("groupInvites", invite._id, { emailId, emailedAt: now });
   return true;
+}
+
+/** Why an announcement wasn't emailed to someone. */
+export type EmailSkipReason = "opted_out" | "blocked" | "not_configured";
+
+/** A broadcast's link as an address: a path opens in the student app, anything else as given. */
+export function announcementUrl(link: string | undefined): string | undefined {
+  if (link === undefined) return undefined;
+  return link.startsWith("/") ? `${studentAppUrl()}${link}` : link;
+}
+
+/**
+ * One announcement from the notification center, to one person (student or
+ * staff), in their language. Nothing goes to a bounced or complained address,
+ * or to someone who switched emails off unless the admin marked the message
+ * as one for everyone. Returns the queued email's id, or why none went.
+ */
+export async function sendAnnouncementEmail(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+  broadcast: { _id: Id<"broadcasts">; title: string; body: string; link?: string; emailEveryone: boolean },
+  sentBy: string,
+): Promise<{ emailId?: string; skipped?: EmailSkipReason }> {
+  if (!canSendTo(user.email)) return { skipped: "not_configured" };
+  if (user.deletedAt !== undefined || user.emailStatus !== undefined || (await isSuppressed(ctx, user.email))) {
+    return { skipped: "blocked" };
+  }
+  if (user.emailOptOut === true && !broadcast.emailEveryone) return { skipped: "opted_out" };
+  const token = await unsubscribeToken(user._id);
+  const site = siteUrl();
+  if (token === null || site === null) return { skipped: "not_configured" };
+  const unsubscribeUrl = `${site}/email/unsubscribe?u=${user._id}&t=${token}`;
+  const rendered = renderAnnouncementEmail({
+    locale: user.locale,
+    firstName: user.firstName,
+    from: sentBy,
+    title: broadcast.title,
+    body: broadcast.body,
+    url: announcementUrl(broadcast.link),
+    unsubscribeUrl,
+  });
+  const replyTo = process.env.EMAIL_REPLY_TO;
+  const emailId = await sendLogged(ctx, {
+    from: from(),
+    to: user.email,
+    subject: rendered.subject,
+    html: rendered.html,
+    text: rendered.text,
+    replyTo: replyTo ? [replyTo] : undefined,
+    headers: [
+      { name: "List-Unsubscribe", value: `<${unsubscribeUrl}>` },
+      { name: "List-Unsubscribe-Post", value: "List-Unsubscribe=One-Click" },
+    ],
+    // A retried batch never produces a second email for the same person.
+    idempotencyKey: `broadcast:${broadcast._id}:${user._id}`,
+  });
+  return { emailId };
 }
 
 /** Where a personal group invite opens in the student app. */

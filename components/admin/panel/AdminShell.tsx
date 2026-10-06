@@ -8,7 +8,7 @@ import type { Me } from "@/components/CurrentUserProvider";
 import { KalamiMark, Logo } from "@/components/Logo";
 import { ButtonLink } from "@/components/ui/buttons";
 import { SelectInput } from "@/components/ui/form";
-import { Building, Clock, Grid, Mail, Notebook, Pen, Search, Shield, Users } from "@/components/ui/icons";
+import { Bell, Building, Clock, Grid, Mail, Notebook, Pen, Search, Shield, Users } from "@/components/ui/icons";
 
 type IconProps = ComponentProps<"svg">;
 type NavItem = { href: string; label: string; icon: ComponentType<IconProps>; superOnly?: boolean; exact?: boolean };
@@ -23,6 +23,7 @@ export const ADMIN_SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: "/admin/lecturers", label: "Lecturers", icon: Pen },
       { href: "/admin/people", label: "Find a person", icon: Search, superOnly: true },
       { href: "/admin/invites", label: "Invites", icon: Mail },
+      { href: "/admin/notifications", label: "Notifications", icon: Bell },
     ],
   },
   {

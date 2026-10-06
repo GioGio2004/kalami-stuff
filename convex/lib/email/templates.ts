@@ -1,4 +1,4 @@
-import type { AssessmentKind, Locale, NotificationKind } from "../validators";
+import type { AssessmentKind, Locale, WorkNotificationKind } from "../validators";
 import { formatTbilisi } from "./time";
 
 /**
@@ -206,7 +206,7 @@ const BRAND = {
 export type NotificationEmailInput = {
   locale: Locale;
   firstName?: string;
-  kind: NotificationKind;
+  kind: WorkNotificationKind;
   assessmentKind: AssessmentKind;
   title: string;
   courseTitle: string;
@@ -329,6 +329,64 @@ const INVITE_IGNORE = {
   ka: "თუ ამ მოწვევას არ ელოდი, უბრალოდ წაშალე ეს წერილი.",
   en: "If you weren't expecting this invitation, you can ignore this email.",
 };
+
+// --- Announcements (the admin panel's notification center) ------------------------------------
+
+const ANNOUNCEMENT = {
+  ka: {
+    why: (from: string) => `ამ წერილს იღებ, რადგან კალამის მომხმარებელი ხარ. გამოგზავნა: ${from}.`,
+  },
+  en: {
+    why: (from: string) => `You get this because you have a Kalami account. Sent by ${from}.`,
+  },
+} as const;
+
+export type AnnouncementEmailInput = {
+  locale: Locale;
+  firstName?: string;
+  /** Who it's from, as the small label: "Kalami" or the university's name. */
+  from: string;
+  title: string;
+  /** Plain text; blank lines separate paragraphs. */
+  body: string;
+  /** Where the button goes, if the admin gave a link. */
+  url?: string;
+  unsubscribeUrl: string;
+};
+
+/** Splits a message into paragraphs on blank lines; single line breaks become spaces. */
+export function paragraphsOf(body: string): string[] {
+  return body
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.replace(/\s*\n\s*/g, " ").trim())
+    .filter((paragraph) => paragraph.length > 0);
+}
+
+/** A message from an admin, for one person, in their language. The title is the subject. */
+export function renderAnnouncementEmail(input: AnnouncementEmailInput): RenderedEmail {
+  const copy = COPY[input.locale];
+  const paragraphs = paragraphsOf(input.body);
+  const button = input.url === undefined ? undefined : { label: copy.button, url: input.url };
+  return renderEmail({
+    lang: input.locale,
+    subject: input.title,
+    preheader: (paragraphs[0] ?? input.title).slice(0, 140),
+    sections: [
+      {
+        lang: input.locale,
+        eyebrow: input.from,
+        heading: input.title,
+        paragraphs: [copy.hello(input.firstName?.trim() || undefined), ...paragraphs],
+        button,
+      },
+    ],
+    fallback: button === undefined ? undefined : { label: copy.fallback, url: button.url },
+    footer: [
+      { text: ANNOUNCEMENT[input.locale].why(input.from), link: { label: copy.unsubscribe, url: input.unsubscribeUrl } },
+      { text: BRAND[input.locale] },
+    ],
+  });
+}
 
 export type GroupInviteEmailInput = {
   /** The lecturer's name as students know it. */

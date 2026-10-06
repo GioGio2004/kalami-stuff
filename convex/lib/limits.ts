@@ -30,6 +30,8 @@ export const LIMITS = {
   addQuestions: { kind: "token bucket", rate: 20, period: 10 * MINUTE, capacity: 10 },
   grade: { kind: "token bucket", rate: 120, period: MINUTE, capacity: 30 },
   invite: { kind: "fixed window", rate: 50, period: 24 * HOUR },
+  // The notification center: messages sent per admin.
+  broadcast: { kind: "fixed window", rate: 30, period: HOUR },
   createGroup: { kind: "token bucket", rate: 20, period: HOUR, capacity: 20 },
   // One unit per email address, so a class of 40 is one paste.
   groupInvite: { kind: "token bucket", rate: 300, period: 24 * HOUR, capacity: 200 },

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  renderAnnouncementEmail,
   renderGroupInviteEmail,
   renderNotificationEmail,
   renderStaffInviteEmail,
@@ -47,6 +48,29 @@ const EMAILS: { name: string; email: RenderedEmail }[] = [
       email: "tutor@gmail.com",
       url: "https://staff.kalami.space/invite/0f9e8d7c6b5a49382716f5e4d3c2b1a00f9e8d7c6b5a4938",
       expiresAt: DUE,
+    }),
+  },
+  {
+    name: "Announcement from the notification center · student, Georgian, with a link",
+    email: renderAnnouncementEmail({
+      locale: "ka",
+      firstName: "ანა",
+      from: "გორის სახელმწიფო უნივერსიტეტი",
+      title: "ბიბლიოთეკა პარასკევს დაკეტილია",
+      body: "მთავარი ბიბლიოთეკა ამ პარასკევს ტექნიკური სამუშაოების გამო დაკეტილია.\n\nმეორე სართულის სამკითხველო დარბაზები 18:00-მდე ღიაა.",
+      url: "https://app.kalami.space/dashboard",
+      unsubscribeUrl: UNSUBSCRIBE,
+    }),
+  },
+  {
+    name: "Announcement from the notification center · lecturer, English, no link",
+    email: renderAnnouncementEmail({
+      locale: "en",
+      firstName: "Nino",
+      from: "Kalami",
+      title: "Kalami is getting push notifications",
+      body: "From this week students can turn on notifications in the app and hear about new work and deadlines on their phones.\n\nNothing changes for you: the studio works as before.",
+      unsubscribeUrl: UNSUBSCRIBE,
     }),
   },
   {

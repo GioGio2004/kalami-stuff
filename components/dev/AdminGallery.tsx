@@ -13,6 +13,8 @@ import { StaffView } from "@/components/admin/panel/StaffView";
 import { StudentDetailDialog } from "@/components/admin/panel/StudentDetail";
 import { StudentsView } from "@/components/admin/panel/StudentsView";
 import { SystemView } from "@/components/admin/panel/SystemView";
+import { BroadcastDetailDialog } from "@/components/admin/panel/BroadcastDetail";
+import { NotificationsView } from "@/components/admin/panel/NotificationsView";
 import { UniversitiesView } from "@/components/admin/panel/UniversitiesView";
 import type {
   AdminCourseDetail,
@@ -27,6 +29,10 @@ import type {
   StudentRow,
   SystemInfo,
   UniversityRow,
+  AudiencePreview,
+  BroadcastRow,
+  DeliveryRow,
+  PersonHit,
 } from "@/components/admin/types";
 import { CurrentUserContext, type Me } from "@/components/CurrentUserProvider";
 
@@ -364,7 +370,91 @@ export const adminViews: Record<string, string> = {
   "panel-groups": "Admin panel · groups",
   "panel-activity": "Admin panel · activity log",
   "panel-system": "Admin panel · system",
+  "panel-notifications": "Admin panel · notifications (compose + history)",
+  "panel-notification": "Admin panel · one message (dialog with recipients)",
 };
+
+const broadcastRows: BroadcastRow[] = [
+  {
+    _id: id("sample_b1"),
+    _creationTime: NOW - 25 * 60 * 1000,
+    senderName: "Giorgi Khvichia",
+    from: { ka: "კალამი", en: "Kalami" },
+    title: "Kalami is getting push notifications",
+    body: "From this week you can turn on notifications in the app and hear about new work and deadlines on your phone.\n\nOpen the bell and switch them on.",
+    link: "/dashboard",
+    audienceLabel: "All students",
+    channels: { push: true, email: true },
+    emailEveryone: false,
+    status: "sending",
+    recipients: 640,
+    inApp: 640,
+    pushed: 212,
+    emailed: 598,
+    finishedAt: undefined,
+  },
+  {
+    _id: id("sample_b2"),
+    _creationTime: NOW - 2 * DAY,
+    senderName: "Tea Todua",
+    from: gori.name,
+    title: "Library closed on Friday",
+    body: "The main library is closed this Friday for maintenance.\n\nThe reading rooms on the second floor stay open until 18:00.",
+    link: undefined,
+    audienceLabel: "Group ICT-24-1 (Gori State University)",
+    channels: { push: true, email: false },
+    emailEveryone: false,
+    status: "sent",
+    recipients: 28,
+    inApp: 28,
+    pushed: 9,
+    emailed: 0,
+    finishedAt: NOW - 2 * DAY + 4000,
+  },
+  {
+    _id: id("sample_b3"),
+    _creationTime: NOW - 6 * DAY,
+    senderName: "Giorgi Khvichia",
+    from: { ka: "კალამი", en: "Kalami" },
+    title: "Midterm schedule published",
+    body: "The midterm dates are in each course's Exams section. Check yours and ask your lecturer if something doesn't fit.",
+    link: "/dashboard",
+    audienceLabel: "Course Web basics",
+    channels: { push: false, email: true },
+    emailEveryone: true,
+    status: "sent",
+    recipients: 42,
+    inApp: 42,
+    pushed: 0,
+    emailed: 39,
+    finishedAt: NOW - 6 * DAY + 2500,
+  },
+];
+
+const deliveryRows: DeliveryRow[] = [
+  { _id: id("sample_d1"), userId: id("sample_u1"), name: "Ana Beridze", email: "ana.beridze@gsu.edu.ge", role: "student", inApp: true, devices: 2, emailed: false, emailSkipped: "off" },
+  { _id: id("sample_d2"), userId: id("sample_u2"), name: "Giorgi Maisuradze", email: "g.maisuradze@gsu.edu.ge", role: "student", inApp: true, devices: 0, emailed: false, emailSkipped: "off" },
+  { _id: id("sample_d3"), userId: id("sample_u3"), name: "Mariam Kapanadze", email: "mariam.k@gsu.edu.ge", role: "student", inApp: true, devices: 1, emailed: false, emailSkipped: "off" },
+  { _id: id("sample_d4"), userId: id("sample_u4"), name: "Luka Tsiklauri", email: "luka.ts@gsu.edu.ge", role: "student", inApp: true, devices: 0, emailed: false, emailSkipped: "off" },
+];
+
+const previewSample: AudiencePreview = {
+  recipients: 28,
+  students: 28,
+  staff: 0,
+  withPush: 9,
+  emailable: 25,
+  optedOut: 2,
+  blocked: 1,
+  capped: false,
+  emailConfigured: true,
+  pushConfigured: true,
+};
+
+const peopleHits: PersonHit[] = [
+  { userId: id("sample_u1"), name: "Ana Beridze", email: "ana.beridze@gsu.edu.ge", roles: ["student"], universityName: gori.name },
+  { userId: id("sample_u5"), name: "Anna Kiknadze", email: "anna.kiknadze@tsu.ge", roles: ["lecturer"], universityName: tsu.name },
+];
 
 /** The admin panel screen for a gallery view, or null if the view isn't one of ours. */
 export function renderAdminView(view: string): ReactNode | null {
@@ -376,6 +466,27 @@ export function renderAdminView(view: string): ReactNode | null {
   );
   const coursesPage = (
     <CoursesView rows={courseRows} status="done" onLoadMore={noop} statusFilter="all" onStatusFilter={noop} query="" onQuery={noop} searching={false} scopeLabel="Every university" onOpen={noop} />
+  );
+  const notificationsPage = (
+    <NotificationsView
+      universities={[gori, tsu]}
+      filter={undefined}
+      isSuperAdmin
+      scopeLabel="Every university"
+      groups={groupRows}
+      courses={courseRows}
+      courseQuery=""
+      onCourseQuery={noop}
+      people={peopleHits}
+      peopleQuery="an"
+      onPeopleQuery={noop}
+      preview={previewSample}
+      onAudience={noop}
+      history={broadcastRows}
+      now={NOW}
+      onOpen={noop}
+      onSend={pause}
+    />
   );
   switch (view) {
     case "panel-overview":
@@ -442,6 +553,16 @@ export function renderAdminView(view: string): ReactNode | null {
       return adminPage(<ActivityView rows={recent} status="more" onLoadMore={noop} filter="" onFilter={noop} now={NOW} />, "/admin/activity");
     case "panel-system":
       return adminPage(<SystemView system={systemInfo} onAllowEmail={pause} />, "/admin/system");
+    case "panel-notifications":
+      return adminPage(notificationsPage, "/admin/notifications");
+    case "panel-notification":
+      return adminPage(
+        <>
+          {notificationsPage}
+          <BroadcastDetailDialog broadcast={broadcastRows[1]} recipients={deliveryRows} status="more" onLoadMore={noop} open onClose={noop} />
+        </>,
+        "/admin/notifications",
+      );
     default:
       return null;
   }

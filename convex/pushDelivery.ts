@@ -4,7 +4,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalAction, type ActionCtx } from "./_generated/server";
-import { notificationPushMessage, testPushMessage, type PushMessage } from "./lib/pushMessage";
+import { announcementPushMessage, notificationPushMessage, testPushMessage, type PushMessage } from "./lib/pushMessage";
 
 /**
  * Sends the pushes (Node, because `web-push` encrypts the payload for each
@@ -78,17 +78,28 @@ export const deliver = internalAction({
     const items = await ctx.runQuery(internal.push.payloadsFor, { notificationIds: args.notificationIds });
     const results: Results = { ok: [], gone: [], failed: [] };
     for (const item of items) {
-      const message = notificationPushMessage({
-        notificationId: item.notificationId,
-        locale: item.locale,
-        kind: item.kind,
-        assessmentKind: item.assessmentKind,
-        title: item.title,
-        courseTitle: item.courseTitle,
-        dueAt: item.dueAt,
-        href: item.href,
-        studentAppUrl: studentAppUrl(),
-      });
+      const message =
+        item.kind === "announcement"
+          ? announcementPushMessage({
+              notificationId: item.notificationId,
+              locale: item.locale,
+              title: item.title,
+              body: item.body ?? item.courseTitle,
+              href: item.href,
+              studentAppUrl: studentAppUrl(),
+            })
+          : notificationPushMessage({
+              notificationId: item.notificationId,
+              locale: item.locale,
+              kind: item.kind,
+              // Always set on a row about work; the fallback only satisfies the type.
+              assessmentKind: item.assessmentKind ?? "task",
+              title: item.title,
+              courseTitle: item.courseTitle,
+              dueAt: item.dueAt,
+              href: item.href,
+              studentAppUrl: studentAppUrl(),
+            });
       await sendToAll(item.subscriptions, message, results);
     }
     await report(ctx, args.notificationIds, results);

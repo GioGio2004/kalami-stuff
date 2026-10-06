@@ -1,4 +1,4 @@
-import type { FunctionReturnType } from "convex/server";
+import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import type { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 
@@ -20,6 +20,12 @@ export type AdminCourseDetail = FunctionReturnType<typeof api.platform.course>;
 export type GroupRow = FunctionReturnType<typeof api.platform.groups>[number];
 export type AuditLine = FunctionReturnType<typeof api.platform.activity>["page"][number];
 export type SystemInfo = FunctionReturnType<typeof api.platform.system>;
+export type BroadcastRow = FunctionReturnType<typeof api.platform.broadcasts>[number];
+export type DeliveryRow = FunctionReturnType<typeof api.platform.broadcastRecipients>["page"][number];
+export type AudiencePreview = FunctionReturnType<typeof api.platform.broadcastPreview>;
+export type PersonHit = FunctionReturnType<typeof api.platform.findPeople>[number];
+export type BroadcastArgs = FunctionArgs<typeof api.platform.sendBroadcast>;
+export type BroadcastAudience = BroadcastArgs["audience"];
 
 /** How a paginated list stands: still loading, more to load, or everything shown. */
 export type ListStatus = "loading" | "more" | "done" | "loading-more";

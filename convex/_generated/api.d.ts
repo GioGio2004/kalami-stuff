@@ -11,6 +11,7 @@
 import type * as admin from "../admin.js";
 import type * as assessments from "../assessments.js";
 import type * as audit from "../audit.js";
+import type * as broadcasts from "../broadcasts.js";
 import type * as courses from "../courses.js";
 import type * as crons from "../crons.js";
 import type * as drive from "../drive.js";
@@ -51,6 +52,7 @@ import type * as migrations from "../migrations.js";
 import type * as model_agentRequests from "../model/agentRequests.js";
 import type * as model_assessments from "../model/assessments.js";
 import type * as model_audit from "../model/audit.js";
+import type * as model_broadcasts from "../model/broadcasts.js";
 import type * as model_codeTasks from "../model/codeTasks.js";
 import type * as model_coursePurge from "../model/coursePurge.js";
 import type * as model_courses from "../model/courses.js";
@@ -91,6 +93,7 @@ declare const fullApi: ApiFromModules<{
   admin: typeof admin;
   assessments: typeof assessments;
   audit: typeof audit;
+  broadcasts: typeof broadcasts;
   courses: typeof courses;
   crons: typeof crons;
   drive: typeof drive;
@@ -131,6 +134,7 @@ declare const fullApi: ApiFromModules<{
   "model/agentRequests": typeof model_agentRequests;
   "model/assessments": typeof model_assessments;
   "model/audit": typeof model_audit;
+  "model/broadcasts": typeof model_broadcasts;
   "model/codeTasks": typeof model_codeTasks;
   "model/coursePurge": typeof model_coursePurge;
   "model/courses": typeof model_courses;

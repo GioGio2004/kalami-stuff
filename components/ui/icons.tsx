@@ -373,3 +373,22 @@ export function Pulse(props: IconProps) {
     </Icon>
   );
 }
+
+export function Bell(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z" />
+      <path d="M10 20.5a2 2 0 0 0 4 0" />
+    </Icon>
+  );
+}
+
+export function Megaphone(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3.5 10v4a1.5 1.5 0 0 0 1.5 1.5h2l8 4V4.5l-8 4H5A1.5 1.5 0 0 0 3.5 10z" />
+      <path d="M7 15.5v4" />
+      <path d="M18.5 9.5a3.5 3.5 0 0 1 0 5" />
+    </Icon>
+  );
+}

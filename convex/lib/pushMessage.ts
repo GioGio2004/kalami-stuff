@@ -1,4 +1,4 @@
-import type { AssessmentKind, Locale, NotificationKind } from "./validators";
+import type { AssessmentKind, Locale, WorkNotificationKind } from "./validators";
 
 /**
  * What a push notification says: the same event as the bell row and the
@@ -31,7 +31,7 @@ const TITLE = {
     due_24h: () => "Due tomorrow",
     due_1h: () => "Due in one hour",
   },
-} satisfies Record<Locale, Record<NotificationKind, (kind: string) => string>>;
+} satisfies Record<Locale, Record<WorkNotificationKind, (kind: string) => string>>;
 
 function dueLine(locale: Locale, dueAt: number): string {
   const when = new Intl.DateTimeFormat(locale === "ka" ? "ka-GE" : "en-GB", {
@@ -48,7 +48,7 @@ function dueLine(locale: Locale, dueAt: number): string {
 export function notificationPushMessage(input: {
   notificationId: string;
   locale: Locale;
-  kind: NotificationKind;
+  kind: WorkNotificationKind;
   assessmentKind: AssessmentKind;
   title: string;
   courseTitle: string;
@@ -63,6 +63,30 @@ export function notificationPushMessage(input: {
     title,
     body,
     url: `${input.studentAppUrl.replace(/\/+$/, "")}${input.href}`,
+    tag: `notification:${input.notificationId}`,
+    lang: input.locale,
+  };
+}
+
+/** The push a student's device shows for a path in the student app, or for a link elsewhere. */
+export function pushUrl(href: string, studentAppUrl: string): string {
+  return href.startsWith("/") ? `${studentAppUrl.replace(/\/+$/, "")}${href}` : href;
+}
+
+/** A message from an admin (the notification center): the title as written, the text cut to a lock screen. */
+export function announcementPushMessage(input: {
+  notificationId: string;
+  locale: Locale;
+  title: string;
+  body: string;
+  href: string;
+  studentAppUrl: string;
+}): PushMessage {
+  const body = input.body.replace(/\s+/g, " ").trim();
+  return {
+    title: input.title,
+    body: body.length > 160 ? `${body.slice(0, 159).trimEnd()}…` : body,
+    url: pushUrl(input.href, input.studentAppUrl),
     tag: `notification:${input.notificationId}`,
     lang: input.locale,
   };

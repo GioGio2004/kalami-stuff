@@ -31,8 +31,8 @@ type Enter = "intro" | "end" | "still";
 type Layer = { key: number; index: number; enter: Enter; leaving: boolean; dir: 1 | -1 };
 
 /**
- * A presentation, played. Students watch decks with it, the staff editor
- * previews with it, and the lecturer presents with it.
+ * A presentation, played. Students watch decks with it (so does anyone with
+ * a share link), the staff editor previews with it, and the lecturer presents with it.
  *
  * Next plays the current slide's next build (a point, a node, a code
  * highlight) and then moves on; Back plays the last build in reverse, and
@@ -55,6 +55,7 @@ export function DeckPlayer({
   deck,
   title,
   mode = "page",
+  speakerNotes = true,
   followIndex = null,
   onIndexChange,
   onPresentingChange,
@@ -66,6 +67,8 @@ export function DeckPlayer({
   title?: string;
   /** page: a page of its own (controls under the stage, full screen, all slides). compact: the editor's side preview. */
   mode?: "page" | "compact";
+  /** Whether the speaker notes can be opened (a shared link without them has no notes button). */
+  speakerNotes?: boolean;
   /** Show this slide whenever it changes (the editor's selected slide). */
   followIndex?: number | null;
   /** The viewer moved to another slide (not called for followIndex jumps). */
@@ -263,6 +266,7 @@ export function DeckPlayer({
         break;
       case "n":
       case "N":
+        if (!speakerNotes) return;
         setNotesOpen((open) => !open);
         break;
       case "g":
@@ -334,7 +338,7 @@ export function DeckPlayer({
       onNext={next}
       onReplay={replay}
       notesOpen={notesOpen}
-      onNotes={() => setNotesOpen((open) => !open)}
+      onNotes={speakerNotes ? () => setNotesOpen((open) => !open) : undefined}
       overview={mode === "page" ? { open: overview, toggle: () => setOverview((open) => !open) } : undefined}
       fullscreen={presentable ? { on: presenting, toggle: () => (presenting ? exit() : present()) } : undefined}
     />
@@ -695,7 +699,8 @@ function ControlPill({
   onNext: () => void;
   onReplay: () => void;
   notesOpen: boolean;
-  onNotes: () => void;
+  /** Missing when the notes can't be opened. */
+  onNotes?: () => void;
   overview?: { open: boolean; toggle: () => void };
   fullscreen?: { on: boolean; toggle: () => void };
 }) {
@@ -724,9 +729,11 @@ function ControlPill({
       <ChromeButton size={size} label="Replay this slide" onClick={onReplay}>
         <ReplayIcon />
       </ChromeButton>
-      <ChromeButton size={size} label={notesOpen ? "Hide notes" : "Speaker notes"} pressed={notesOpen} onClick={onNotes}>
-        <NotesIcon />
-      </ChromeButton>
+      {onNotes && (
+        <ChromeButton size={size} label={notesOpen ? "Hide notes" : "Speaker notes"} pressed={notesOpen} onClick={onNotes}>
+          <NotesIcon />
+        </ChromeButton>
+      )}
       {overview && (
         <ChromeButton size={size} label="All slides" pressed={overview.open} onClick={overview.toggle}>
           <GridIcon />

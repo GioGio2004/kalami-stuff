@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
-import { expectAppError, seed } from "./test.setup";
+import { expectAppError, person, seed } from "./test.setup";
 
 const SECRET = "test-service-secret-0123456789abcdef";
 beforeEach(() => vi.stubEnv("MCP_SERVICE_SECRET", SECRET));
@@ -140,11 +140,158 @@ describe("presentations", () => {
     await expectAppError(nino.query(api.presentations.get, { presentationId: draft }), "NOT_FOUND");
   });
 
+  test("presentations move up and down, to another week of the course, and agents reorder drafts around published ones", async () => {
+    const { nino, courseId } = await seed();
+    const token = await credential("nino");
+    const w1 = await nino.mutation(api.weeks.create, { courseId });
+    const w2 = await nino.mutation(api.weeks.create, { courseId });
+    const a = await nino.mutation(api.presentations.create, { weekId: w1, title: "A" });
+    const b = await nino.mutation(api.presentations.create, { weekId: w1, title: "B" });
+    const c = await nino.mutation(api.presentations.create, { weekId: w1, title: "C" });
+    const titles = async (weekId: typeof w1) =>
+      (await nino.query(api.weeks.outline, { courseId, now: Date.now() })).weeks
+        .find((week) => week._id === weekId)!
+        .presentations.map((deck) => deck.title);
+
+    await nino.mutation(api.presentations.move, { presentationId: c, direction: "up" });
+    expect(await titles(w1)).toEqual(["A", "C", "B"]);
+    // Off the end: nothing happens.
+    await nino.mutation(api.presentations.move, { presentationId: a, direction: "up" });
+    expect(await titles(w1)).toEqual(["A", "C", "B"]);
+
+    // Into another week: it goes to the end there.
+    await nino.mutation(api.presentations.create, { weekId: w2, title: "D" });
+    await nino.mutation(api.presentations.move, { presentationId: a, weekId: w2 });
+    expect(await titles(w1)).toEqual(["C", "B"]);
+    expect(await titles(w2)).toEqual(["D", "A"]);
+    const deck = await nino.query(api.presentations.get, { presentationId: a });
+    expect(deck.weekId).toBe(w2);
+
+    // Never into another course's week.
+    const other = await nino.mutation(api.courses.create, { title: "Other course" });
+    const elsewhere = await nino.mutation(api.weeks.create, { courseId: other });
+    await expectAppError(nino.mutation(api.presentations.move, { presentationId: b, weekId: elsewhere }), "NOT_FOUND");
+
+    // Agents: drafts move freely, published presentations keep their order for students.
+    await nino.mutation(api.presentations.setStatus, { presentationId: b, status: "published" });
+    await nino.mutation(api.mcp.reorderPresentationsAsAgent, { token, weekId: w1, presentationIds: [b, c] });
+    expect(await titles(w1)).toEqual(["B", "C"]);
+    const e = await nino.mutation(api.presentations.create, { weekId: w1, title: "E" });
+    await nino.mutation(api.presentations.setStatus, { presentationId: e, status: "published" });
+    await expectAppError(
+      nino.mutation(api.mcp.reorderPresentationsAsAgent, { token, weekId: w1, presentationIds: [e, b, c] }),
+      "CONFLICT",
+    );
+    await expectAppError(
+      nino.mutation(api.mcp.reorderPresentationsAsAgent, { token, weekId: w1, presentationIds: [b, c] }),
+      "INVALID_INPUT",
+    );
+    // A published presentation is the lecturer's to move; so is a draft's published neighbour.
+    await expectAppError(nino.mutation(api.mcp.movePresentationAsAgent, { token, presentationId: b, weekId: w2 }), "CONFLICT");
+    await expectAppError(nino.mutation(api.mcp.movePresentationAsAgent, { token, presentationId: c, direction: "up" }), "CONFLICT");
+    await nino.mutation(api.mcp.movePresentationAsAgent, { token, presentationId: c, weekId: w2 });
+    expect(await titles(w2)).toEqual(["D", "A", "C"]);
+    await expectAppError(nino.mutation(api.mcp.movePresentationAsAgent, { token, presentationId: c }), "INVALID_INPUT");
+  });
+
   test("removing a draft week removes its presentations", async () => {
     const { nino, courseId } = await seed();
     const weekId = await nino.mutation(api.weeks.create, { courseId });
     const presentationId = await nino.mutation(api.presentations.create, { weekId, title: "Gone soon" });
     await nino.mutation(api.weeks.remove, { weekId });
     await expectAppError(nino.query(api.presentations.get, { presentationId }), "NOT_FOUND");
+  });
+});
+
+describe("presentation share links", () => {
+  test("a shared link plays the deck for anyone, without notes unless the lecturer adds them, until it's replaced or stopped", async () => {
+    const { t, nino, courseId } = await seed();
+    const weekId = await nino.mutation(api.weeks.create, { courseId });
+    const presentationId = await nino.mutation(api.presentations.create, { weekId, title: "DNS", theme: "aurora" });
+    const deck = await nino.query(api.presentations.get, { presentationId });
+    await nino.mutation(api.presentations.save, {
+      presentationId,
+      slides: [deck.slides[0], { type: "statement", text: "Names become numbers", notes: "Ask who has a phone book." }],
+    });
+    expect(deck).toMatchObject({ share: null, canShare: true });
+
+    // A draft in a draft week can be shared: the lecturer decides.
+    const token = await nino.mutation(api.presentations.share, { presentationId, notes: false });
+    expect(token).toMatch(/^[A-Za-z0-9_-]{20}$/);
+    expect((await nino.query(api.presentations.get, { presentationId })).share).toEqual({
+      token,
+      notes: false,
+      by: "nino",
+      at: expect.any(Number),
+    });
+    // Nobody signs in to watch: the deck and who shared it, nothing about the course, no notes.
+    const watched = await t.query(api.presentations.shared, { token });
+    expect(watched).toEqual({
+      title: "DNS",
+      theme: "aurora",
+      slides: [deck.slides[0], { id: expect.any(String), type: "statement", text: "Names become numbers" }],
+      notes: false,
+      sharedBy: "nino",
+    });
+    const outline = await nino.query(api.weeks.outline, { courseId, now: Date.now() });
+    expect(outline.weeks[0].presentations[0].shared).toBe(true);
+
+    // Speaker notes on: same link, now with notes.
+    expect(await nino.mutation(api.presentations.share, { presentationId, notes: true })).toBe(token);
+    expect((await t.query(api.presentations.shared, { token }))?.slides[1].notes).toBe("Ask who has a phone book.");
+
+    // A new link: the old one is dead at once.
+    const renewed = await nino.mutation(api.presentations.share, { presentationId, notes: true, newLink: true });
+    expect(renewed).not.toBe(token);
+    expect(await t.query(api.presentations.shared, { token })).toBeNull();
+    expect((await t.query(api.presentations.shared, { token: ` ${renewed} ` }))?.title).toBe("DNS");
+
+    // Stopped: dead, and sharing again makes yet another link.
+    await nino.mutation(api.presentations.stopSharing, { presentationId });
+    expect(await t.query(api.presentations.shared, { token: renewed })).toBeNull();
+    expect((await nino.query(api.presentations.get, { presentationId })).share).toBeNull();
+    const again = await nino.mutation(api.presentations.share, { presentationId, notes: false });
+    expect([token, renewed]).not.toContain(again);
+
+    // Garbage never reaches the index.
+    expect(await t.query(api.presentations.shared, { token: "" })).toBeNull();
+    expect(await t.query(api.presentations.shared, { token: "short" })).toBeNull();
+    expect(await t.query(api.presentations.shared, { token: "x".repeat(500) })).toBeNull();
+
+    // Deleting the presentation kills its link.
+    await nino.mutation(api.presentations.remove, { presentationId });
+    expect(await t.query(api.presentations.shared, { token: again })).toBeNull();
+  });
+
+  test("only the course's editors share, archived courses too; assistants, students and agents can't", async () => {
+    const { t, nino, ana, courseId, universityId } = await seed();
+    const weekId = await nino.mutation(api.weeks.create, { courseId });
+    const presentationId = await nino.mutation(api.presentations.create, { weekId, title: "Old but good" });
+
+    const luka = t.withIdentity(person("luka"));
+    const lukaId = await luka.mutation(api.users.store, {});
+    await t.run(async (ctx) => {
+      await ctx.db.insert("memberships", { userId: lukaId, role: "lecturer", universityId });
+      await ctx.db.insert("courseStaff", { courseId, userId: lukaId, role: "assistant" });
+    });
+    await expectAppError(luka.mutation(api.presentations.share, { presentationId, notes: false }), "FORBIDDEN");
+    await expectAppError(ana.mutation(api.presentations.share, { presentationId, notes: false }), "FORBIDDEN");
+
+    // Archived courses are read-only, but their decks can still be passed around (and taken back).
+    await nino.mutation(api.courses.update, { courseId, status: "archived" });
+    const token = await nino.mutation(api.presentations.share, { presentationId, notes: false });
+    // The assistant sees the link to copy it, and can't change it.
+    expect(await luka.query(api.presentations.get, { presentationId })).toMatchObject({
+      canShare: false,
+      share: { token, notes: false },
+    });
+    await expectAppError(luka.mutation(api.presentations.stopSharing, { presentationId }), "FORBIDDEN");
+
+    // An agent reads the link and never turns it on or off (there's no tool for it, and the model refuses).
+    const agent = await nino.query(api.mcp.getPresentationAsAgent, { token: await credential("nino"), presentationId });
+    expect(agent).toMatchObject({ canShare: false, share: { token } });
+
+    await nino.mutation(api.presentations.stopSharing, { presentationId });
+    expect(await t.query(api.presentations.shared, { token })).toBeNull();
   });
 });

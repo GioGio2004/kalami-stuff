@@ -54,6 +54,8 @@ export default function CoursePage() {
   const place = useMutation(api.weeks.place);
   const createLesson = useMutation(api.lessons.create);
   const createPresentation = useMutation(api.presentations.create);
+  const movePresentation = useMutation(api.presentations.move);
+  const importPresentation = useMutation(api.kalami.importPresentation);
   const moveLesson = useMutation(api.lessons.move);
   const createAssessment = useMutation(api.assessments.create);
 
@@ -178,6 +180,15 @@ export default function CoursePage() {
             onCreatePresentation: async (weekId, title) => {
               const presentationId = await createPresentation({ weekId, title });
               router.push(`/courses/${id}/presentations/${presentationId}`);
+            },
+            onMovePresentation: async (presentationId, to) => {
+              await movePresentation({ presentationId, ...to });
+            },
+            onInspectPresentationFile: (text) => convex.query(api.kalami.inspectPresentation, { text }),
+            onImportPresentationFile: async (weekId, text) => {
+              const result = await importPresentation({ weekId, text });
+              if (result.ok) router.push(`/courses/${id}/presentations/${result.presentationId}`);
+              return result;
             },
             onMoveLesson: async (lessonId, direction) => {
               await moveLesson({ lessonId, direction });

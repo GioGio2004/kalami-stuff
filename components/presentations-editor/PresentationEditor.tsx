@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { SmallIcon } from "@/components/lessons-editor/BlockForms";
+import { KalamiFileIcon } from "@/components/kalami/KalamiFile";
 import { SaveBar, TitleEditor } from "@/components/lessons-editor/LessonEditor";
 import { DeckPlayer, SlideThumb, type DeckPlayerHandle } from "@/components/presentations/DeckPlayer";
 import type { PresentationDetail } from "@/components/studio/types";
 import { Button } from "@/components/ui/buttons";
 import { Dialog } from "@/components/ui/Dialog";
 import { FormError, Segmented, TextArea } from "@/components/ui/form";
-import { ArrowDown, ArrowLeft, ArrowUp, Check, Duplicate, Play, Plus, Robot, Trash } from "@/components/ui/icons";
+import { ArrowDown, ArrowLeft, ArrowUp, Check, Duplicate, LinkChain, Play, Plus, Robot, Trash } from "@/components/ui/icons";
 import { Menu } from "@/components/ui/Menu";
 import { Pill, statusLabel, statusTone } from "@/components/ui/Pill";
 import { errorMessage } from "@/lib/errors";
@@ -36,6 +37,7 @@ import {
   toInputs,
   type DraftSlide,
 } from "./draft";
+import { SharePresentation } from "./SharePresentation";
 import { SlideForm } from "./SlideForms";
 
 type Mode = "edit" | "preview";
@@ -54,7 +56,11 @@ export function PresentationEditor({
   onSave,
   onSetStatus,
   onDelete,
+  onExport,
+  onShare,
+  onStopSharing,
   initialMode = "edit",
+  initialSharing = false,
 }: {
   deck: PresentationDetail;
   onRename: (title: string) => Promise<void>;
@@ -62,7 +68,15 @@ export function PresentationEditor({
   onSave: (draft: { theme: DeckTheme; slides: ReturnType<typeof toInputs> }) => Promise<string[]>;
   onSetStatus: (status: "draft" | "published") => Promise<void>;
   onDelete: () => Promise<void>;
+  /** Downloads the presentation as a .kalami file (saved changes only). */
+  onExport?: () => Promise<void>;
+  /** Turns its public link on (or changes it); `newLink` replaces the link. */
+  onShare?: (options: { notes: boolean; newLink?: boolean }) => Promise<void>;
+  /** Turns its public link off. */
+  onStopSharing?: () => Promise<void>;
   initialMode?: Mode;
+  /** Opens with the Share dialog showing (the dev gallery). */
+  initialSharing?: boolean;
 }) {
   const canEdit = deck.canEdit;
   const [mode, setMode] = useState<Mode>(canEdit ? initialMode : "preview");
@@ -76,6 +90,9 @@ export function PresentationEditor({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
   const [presenting, setPresenting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [sharing, setSharing] = useState(initialSharing);
+  const shareable = onShare !== undefined && onStopSharing !== undefined && (deck.canShare || deck.share !== null);
 
   const dirty = contentKey(theme, items) !== saved;
   const problems = problemsBySlide(theme, items);
@@ -268,6 +285,12 @@ export function PresentationEditor({
                 Drafted by an agent
               </Pill>
             )}
+            {deck.share && (
+              <Pill tone="ok">
+                <LinkChain className="size-3.5" />
+                Shared by link
+              </Pill>
+            )}
             {!canEdit && <Pill>View only</Pill>}
           </div>
           <TitleEditor title={deck.title} canEdit={canEdit} label="Presentation title" onRename={(title) => own(() => onRename(title))} />
@@ -292,6 +315,33 @@ export function PresentationEditor({
             <Play className="size-4" />
             Present
           </Button>
+          {shareable && (
+            <Button variant="outline" onClick={() => setSharing(true)}>
+              <LinkChain className="size-4" />
+              Share
+            </Button>
+          )}
+          {onExport && (
+            <Button
+              variant="outline"
+              disabled={exporting}
+              title={dirty ? "Exports the saved version: save first to include your changes" : "Download it as a .kalami file, to import into another course or another Kalami"}
+              onClick={async () => {
+                setExporting(true);
+                setActionError(null);
+                try {
+                  await onExport();
+                } catch (caught) {
+                  setActionError(errorMessage(caught));
+                } finally {
+                  setExporting(false);
+                }
+              }}
+            >
+              <KalamiFileIcon className="h-4 w-auto" decorative />
+              {exporting ? "Exporting…" : "Export .kalami"}
+            </Button>
+          )}
           {canEdit &&
             (deck.status === "draft" ? (
               <Button variant="lime" disabled={statusBusy} onClick={() => setStatus("published")}>
@@ -416,6 +466,12 @@ export function PresentationEditor({
       )}
 
       {presenting && <Presenter deck={previewDeck} title={deck.title} start={selectedIndex} onDone={() => setPresenting(false)} />}
+
+      <Dialog open={sharing} onClose={() => setSharing(false)} label="Share presentation">
+        {sharing && shareable && (
+          <SharePresentation deck={deck} dirty={dirty} onShare={onShare} onStop={onStopSharing} onClose={() => setSharing(false)} />
+        )}
+      </Dialog>
 
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} label="Delete presentation">
         {confirmDelete && (

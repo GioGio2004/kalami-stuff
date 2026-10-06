@@ -52,7 +52,7 @@ export function AgentsView() {
               ["Can", "plan draft weeks, write lessons in them, add links, and put tasks and quizzes in a week"],
               ["Can", "build animated presentations in a week: typed slides in one of five themes"],
               ["Can", "add, edit, delete and reorder questions in drafts, with answer keys"],
-              ["Can’t", "publish anything: assessments, weeks, lessons and presentations wait for you"],
+              ["Can’t", "publish anything or share a presentation’s link: assessments, weeks, lessons and presentations wait for you"],
               ["Can’t", "change a week, lesson, presentation or assessment once it’s published, or create Drive folders"],
               ["Can’t", "see students, attempts, grades or integrity flags"],
               ["Can’t", "touch courses you only assist on"],

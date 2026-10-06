@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import {
@@ -28,6 +28,7 @@ import {
 } from "./learn";
 import { attemptOrder, studentQuestion } from "./quiz";
 import { publishedWeeks } from "./weeks";
+import { deckText } from "../lib/presentation";
 import { sceneText } from "../lib/scene";
 
 /**
@@ -39,7 +40,8 @@ import { sceneText } from "../lib/scene";
  * help during an attempt.
  */
 
-const MAX_SEARCH_LESSONS = 300;
+/** Lessons and presentations looked through per search, at most. */
+const MAX_SEARCH_ITEMS = 300;
 const MAX_SEARCH_HITS = 20;
 
 export const whoamiValidator = v.object({
@@ -289,16 +291,21 @@ export async function getProgress(ctx: QueryCtx, student: Student) {
   return out;
 }
 
-// --- Finding things in lessons -------------------------------------------------------------
+// --- Finding things in lessons and presentations -------------------------------------------
 
-export const lessonHitValidator = v.object({
-  lessonId: v.id("lessons"),
+const hitFields = {
   title: v.string(),
   course: v.object({ _id: v.id("courses"), title: v.string() }),
   weekTitle: v.string(),
   /** The first place the text appears, with a little around it. */
   snippet: v.string(),
-});
+};
+
+/** Where a phrase was found: a lesson, or a presentation (its slides' words). */
+export const studyHitValidator = v.union(
+  v.object({ kind: v.literal("lesson"), lessonId: v.id("lessons"), ...hitFields }),
+  v.object({ kind: v.literal("presentation"), presentationId: v.id("presentations"), ...hitFields }),
+);
 
 function blockText(block: Doc<"lessons">["blocks"][number]): string {
   switch (block.type) {
@@ -321,30 +328,44 @@ function blockText(block: Doc<"lessons">["blocks"][number]): string {
   }
 }
 
-/** Published lessons of the student's courses whose text contains the words, with a snippet each. */
-export async function searchLessons(ctx: QueryCtx, student: Student, rawQuery: string) {
+/** The text around the first place `needle` appears in `haystack`, or null. */
+function snippetOf(haystack: string, needle: string): string | null {
+  const at = haystack.toLowerCase().indexOf(needle);
+  if (at === -1) return null;
+  const start = Math.max(0, at - 80);
+  return `${start > 0 ? "…" : ""}${haystack.slice(start, at + needle.length + 120).replace(/\s+/g, " ").trim()}…`;
+}
+
+/**
+ * Published lessons and presentations of the student's courses whose words
+ * contain the phrase, in course order, with a snippet each.
+ */
+export async function searchCourses(ctx: QueryCtx, student: Student, rawQuery: string) {
   const needle = rawQuery.trim().toLowerCase().slice(0, 100);
   if (needle.length < 2) return [];
-  const hits = [];
+  const hits: Infer<typeof studyHitValidator>[] = [];
   let scanned = 0;
+  const full = () => scanned >= MAX_SEARCH_ITEMS || hits.length >= MAX_SEARCH_HITS;
   for (const summary of await listMyCourses(ctx, student)) {
+    const course = { _id: summary._id, title: summary.title };
     for (const week of await publishedWeeks(ctx, summary._id)) {
       for (const ref of week.lessons) {
-        if (scanned++ >= MAX_SEARCH_LESSONS || hits.length >= MAX_SEARCH_HITS) return hits;
+        if (full()) return hits;
+        scanned++;
         const lesson = await ctx.db.get("lessons", ref._id);
         if (lesson === null || lesson.status !== "published") continue;
-        const haystack = [lesson.title, ...lesson.blocks.map(blockText)].join("\n");
-        const at = haystack.toLowerCase().indexOf(needle);
-        if (at === -1) continue;
-        const start = Math.max(0, at - 80);
-        const snippet = `${start > 0 ? "…" : ""}${haystack.slice(start, at + needle.length + 120).replace(/\s+/g, " ").trim()}…`;
-        hits.push({
-          lessonId: lesson._id,
-          title: lesson.title,
-          course: { _id: summary._id, title: summary.title },
-          weekTitle: week.title,
-          snippet,
-        });
+        const snippet = snippetOf([lesson.title, ...lesson.blocks.map(blockText)].join("\n"), needle);
+        if (snippet !== null) hits.push({ kind: "lesson", lessonId: lesson._id, title: lesson.title, course, weekTitle: week.title, snippet });
+      }
+      for (const ref of week.presentations) {
+        if (full()) return hits;
+        scanned++;
+        const deck = await ctx.db.get("presentations", ref._id);
+        if (deck === null || deck.status !== "published") continue;
+        const snippet = snippetOf(`${deck.title}\n${deckText({ theme: deck.theme, slides: deck.slides })}`, needle);
+        if (snippet !== null) {
+          hits.push({ kind: "presentation", presentationId: deck._id, title: deck.title, course, weekTitle: week.title, snippet });
+        }
       }
     }
   }

@@ -431,9 +431,14 @@ export default defineSchema({
     createdBy: v.id("users"),
     createdVia: viaValidator,
     updatedAt: v.number(),
+    // Its public link, while it has one: anyone with the link watches it on
+    // the student app's /p/<token>, no account needed. `notes`: link viewers
+    // see the speaker notes too. `by` made the current link.
+    share: v.optional(v.object({ token: v.string(), notes: v.boolean(), by: v.id("users"), at: v.number() })),
   })
     .index("by_weekId_and_order", ["weekId", "order"])
-    .index("by_courseId", ["courseId"]),
+    .index("by_courseId", ["courseId"])
+    .index("by_shareToken", ["share.token"]),
 
   // -------------------------------------------------------------------------
   // Messages (the contact card)

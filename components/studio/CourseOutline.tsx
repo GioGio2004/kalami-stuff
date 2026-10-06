@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { PresentationImport } from "@/components/presentations-editor/PresentationImport";
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { Button } from "@/components/ui/buttons";
 import { Dialog } from "@/components/ui/Dialog";
@@ -19,6 +20,9 @@ import {
   type DriveConnection,
   type LessonId,
   type OutlineWeek,
+  type PresentationFileImport,
+  type PresentationFileInspect,
+  type PresentationId,
   type WeekId,
   type WeekLink,
 } from "./types";
@@ -45,6 +49,11 @@ export type OutlineActions = {
   onMoveLesson: (lessonId: LessonId, direction: "up" | "down") => Promise<void>;
   /** Creates a draft presentation; the page then opens its editor. */
   onCreatePresentation: (weekId: WeekId, title: string) => Promise<void>;
+  onMovePresentation: (presentationId: PresentationId, to: { direction: "up" | "down" } | { weekId: WeekId }) => Promise<void>;
+  /** Reads a .kalami presentation file without creating anything. */
+  onInspectPresentationFile: (text: string) => Promise<PresentationFileInspect>;
+  /** Imports one into the week; on success the page opens it. */
+  onImportPresentationFile: (weekId: WeekId, text: string) => Promise<PresentationFileImport>;
   /** Creates a draft assessment (tasks and quizzes in a week); the page then opens the builder. */
   onCreateAssessment: (args: { kind: AssessmentKind; title: string; weekId?: WeekId }) => Promise<void>;
   onPlace: (assessmentId: AssessmentId, weekId: WeekId | null) => Promise<void>;
@@ -57,6 +66,7 @@ type Dialogs =
   | { kind: "publish-week"; week: OutlineWeek }
   | { kind: "new-lesson"; week: OutlineWeek }
   | { kind: "new-presentation"; week: OutlineWeek }
+  | { kind: "import-presentation"; week: OutlineWeek }
   | { kind: "link"; week: OutlineWeek; link?: WeekLink }
   | { kind: "new-assessment"; assessmentKind: AssessmentKind; week?: OutlineWeek };
 
@@ -268,6 +278,8 @@ export function CourseOutline({
                 onMove: (to) => actions.onMoveWeek(selected._id, to),
                 onNewLesson: () => setDialog({ kind: "new-lesson", week: selected }),
                 onNewPresentation: () => setDialog({ kind: "new-presentation", week: selected }),
+                onImportPresentation: () => setDialog({ kind: "import-presentation", week: selected }),
+                onMovePresentation: actions.onMovePresentation,
                 onMoveLesson: actions.onMoveLesson,
                 onAddLink: () => setDialog({ kind: "link", week: selected }),
                 onEditLink: (link) => setDialog({ kind: "link", week: selected, link }),
@@ -343,7 +355,7 @@ export function CourseOutline({
                   aside={
                     canEdit && weekTargets.length > 0 ? (
                       <MoveToSelect
-                        assessment={assessment}
+                        name={assessment.title}
                         targets={weekTargets}
                         onPick={(weekId) => run(() => actions.onPlace(assessment._id, weekId))}
                       />
@@ -419,6 +431,8 @@ function dialogLabel(dialog: Dialogs | null): string {
       return "New lesson";
     case "new-presentation":
       return "New presentation";
+    case "import-presentation":
+      return "Import a presentation";
     case "link":
       return dialog.link ? "Edit link" : "Add a link";
     case "new-assessment":
@@ -526,6 +540,19 @@ function OutlineDialog({
           onSubmit={async (title) => {
             await actions.onCreatePresentation(dialog.week._id, title);
             onDone();
+          }}
+          onCancel={onDone}
+        />
+      );
+    case "import-presentation":
+      return (
+        <PresentationImport
+          weekTitle={dialog.week.title}
+          onInspect={actions.onInspectPresentationFile}
+          onImport={async (text) => {
+            const result = await actions.onImportPresentationFile(dialog.week._id, text);
+            if (result.ok) onDone();
+            return result;
           }}
           onCancel={onDone}
         />

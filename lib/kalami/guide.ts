@@ -251,6 +251,38 @@ slides, and mark one or two words per slide.
 }
 ~~~
 
+## Presentation files
+
+A \`.kalami\` file can also hold one presentation, to move it to another
+course, another lecturer or another Kalami site. It is the same envelope with
+\`"kind": "presentation"\` and a \`presentation\` (the shape under
+**Presentations**) instead of a \`course\`:
+
+~~~json
+{
+  "$schema": "https://staff.kalami.space/kalami.schema.json",
+  "format": "kalami",
+  "version": 1,
+  "kind": "presentation",
+  "presentation": {
+    "title": "DNS in five minutes",
+    "theme": "aurora",
+    "slides": [
+      { "type": "title", "title": "**DNS** in five minutes" },
+      { "type": "diagram", "layout": "flow", "nodes": [ { "label": "Browser" }, { "label": "Resolver", "edge": "kalami.space?" } ] },
+      { "type": "closing", "title": "Names become numbers" }
+    ]
+  }
+}
+~~~
+
+Export one with **Export .kalami** in a presentation's editor; import one with
+**Import** in a week's Presentations. It always becomes a new draft at the end
+of that week, and nothing else in the course changes. Kalami signs the files it
+exports the same way as course files, so an unchanged file shows "Verified by
+Kalami". A presentation file can't be imported as a course, nor a course file
+into a week.
+
 ## Assessments (tasks, quizzes, midterms, finals)
 
 ~~~json

@@ -9,7 +9,6 @@ import { optionalText, requireText } from "../lib/input";
 import { type WeekLink } from "../lib/validators";
 import { requireAssessmentAccess, toAssessment } from "./assessments";
 import { displayName, logAudit } from "./audit";
-import { presentationsOf } from "./presentations";
 
 /**
  * The course outline: weeks. A week ("Week 1", or any title: "Unit 2 · Forms")
@@ -44,6 +43,14 @@ export async function weeksOf(ctx: QueryCtx, courseId: Id<"courses">) {
 export async function lessonsOf(ctx: QueryCtx, weekId: Id<"weeks">) {
   return await ctx.db
     .query("lessons")
+    .withIndex("by_weekId_and_order", (q) => q.eq("weekId", weekId))
+    .take(100);
+}
+
+/** A week's presentations, in order (model/presentations.ts). */
+export async function presentationsOf(ctx: QueryCtx, weekId: Id<"weeks">) {
+  return await ctx.db
+    .query("presentations")
     .withIndex("by_weekId_and_order", (q) => q.eq("weekId", weekId))
     .take(100);
 }
@@ -121,6 +128,7 @@ export async function getOutline(ctx: QueryCtx, actor: Actor, courseId: Id<"cour
         status: deck.status,
         theme: deck.theme,
         slideCount: deck.slides.length,
+        shared: deck.share !== undefined,
         createdVia: deck.createdVia,
         updatedAt: deck.updatedAt,
       })),
@@ -319,7 +327,7 @@ export async function reorderWeeks(ctx: MutationCtx, actor: Actor, courseId: Id<
 export function keepsPublishedOrder<T extends { _id: string; status: string }>(
   current: T[],
   order: string[],
-  what: "weeks" | "lessons",
+  what: "weeks" | "lessons" | "presentations",
 ): void {
   const published = new Set(current.filter((item) => item.status === "published").map((item) => item._id));
   const before = current.filter((item) => published.has(item._id)).map((item) => item._id);

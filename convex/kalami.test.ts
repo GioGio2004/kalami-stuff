@@ -4,7 +4,7 @@ import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { KALAMI_GUIDE } from "../lib/kalami/guide";
 import { lessonBlockSchema, slidesSchema } from "./lib/contentSchemas";
-import { kalamiFileName, parseKalami } from "./lib/kalami";
+import { kalamiFileName, parseKalami, parseKalamiPresentation } from "./lib/kalami";
 import { expectAppError, person, seed } from "./test.setup";
 
 const SECRET = "test-service-secret-0123456789abcdef";
@@ -288,6 +288,8 @@ describe(".kalami files", () => {
     expect(result).toMatchObject({ ok: true, summary: { weeks: 1, lessons: 1, questions: 2 } });
     const blocks = JSON.parse(fenced("## Lessons: blocks")) as unknown[];
     for (const block of blocks) expect(lessonBlockSchema.safeParse(block).success).toBe(true);
+    const deckFile = parseKalamiPresentation(fenced("## Presentation files"));
+    expect(deckFile.ok ? [] : deckFile.errors).toEqual([]);
     const deck = JSON.parse(fenced("## Presentations")) as { slides: unknown[] };
     const deckParsed = slidesSchema.safeParse(deck.slides);
     expect(deckParsed.error?.issues.map((issue) => issue.message)).toBeUndefined();
@@ -296,5 +298,110 @@ describe(".kalami files", () => {
     expect(parsed.error?.issues.map((issue) => issue.message)).toBeUndefined();
     expect(parsed.success).toBe(true);
     expect(JSON.parse(fenced("## The shape"))).toMatchObject({ format: "kalami", version: 1 });
+  });
+});
+
+describe(".kalami presentation files", () => {
+  async function deckIn(s: Awaited<ReturnType<typeof seed>>) {
+    const weekId = await s.nino.mutation(api.weeks.create, { courseId: s.courseId, title: "Week 1" });
+    const presentationId = await s.nino.mutation(api.presentations.create, { weekId, title: "How the web works", theme: "aurora" });
+    await s.nino.mutation(api.presentations.save, {
+      presentationId,
+      slides: [
+        { type: "title", title: "How the **web** works", kicker: "Week 1" },
+        { type: "diagram", layout: "flow", build: true, nodes: [{ label: "Browser" }, { label: "Server", edge: "GET /" }], notes: "Pause here." },
+        { type: "closing", title: "Thanks", next: "Next week: HTML" },
+      ],
+    });
+    return { weekId, presentationId };
+  }
+
+  test("export → import puts the same presentation into any week of any course, as a draft, verified by Kalami", async () => {
+    const s = await seed();
+    const { nino } = s;
+    const { presentationId } = await deckIn(s);
+    const { fileName, content } = await nino.query(api.kalami.exportPresentation, { presentationId });
+    expect(fileName).toBe("how-the-web-works.kalami");
+    const file = JSON.parse(content) as { kind: string; presentation: { slides: unknown[] }; signature?: string };
+    expect(file.kind).toBe("presentation");
+    expect(file.signature).toEqual(expect.any(String));
+    // Ids never travel in files.
+    expect(content).not.toMatch(/"id":|"_id"/);
+
+    expect(await nino.query(api.kalami.inspectPresentation, { text: content })).toEqual({
+      ok: true,
+      summary: { title: "How the web works", theme: "aurora", slides: 3, exported: expect.objectContaining({ by: "nino", from: "Kalami" }) },
+      verified: { by: "nino", at: expect.any(String) },
+    });
+
+    // Another course entirely: it lands at the end of the chosen week.
+    const other = await nino.mutation(api.courses.create, { title: "Networks" });
+    const there = await nino.mutation(api.weeks.create, { courseId: other, title: "Unit 1" });
+    const imported = await nino.mutation(api.kalami.importPresentation, { weekId: there, text: content });
+    expect(imported).toMatchObject({ ok: true, verified: { by: "nino" }, summary: { slides: 3 } });
+    if (!imported.ok) return;
+    expect(imported.presentationId).not.toBe(presentationId);
+    const copy = await nino.query(api.presentations.get, { presentationId: imported.presentationId });
+    const original = await nino.query(api.presentations.get, { presentationId });
+    expect(copy).toMatchObject({ title: "How the web works", theme: "aurora", status: "draft", courseId: other, weekId: there });
+    const withoutIds = (slides: { id: string }[]) => slides.map(({ id: _id, ...rest }) => (void _id, rest));
+    expect(withoutIds(copy.slides)).toEqual(withoutIds(original.slides));
+
+    // An edited file still imports, but isn't marked verified.
+    const edited = content.replace('"Thanks"', '"Thank you"');
+    expect(await nino.query(api.kalami.inspectPresentation, { text: edited })).toMatchObject({ ok: true, verified: null });
+  });
+
+  test("broken files and the wrong kind of file explain themselves and create nothing", async () => {
+    const s = await seed();
+    const { nino, courseId } = s;
+    const { weekId } = await deckIn(s);
+    const handWritten = {
+      format: "kalami",
+      version: 1,
+      kind: "presentation",
+      presentation: { title: "Cycles", slides: [{ type: "diagram", layout: "hub", nodes: [{ label: "A" }, { label: "B" }] }] },
+    };
+    const broken = await nino.query(api.kalami.inspectPresentation, { text: JSON.stringify(handWritten) });
+    expect(broken.ok).toBe(false);
+    expect(!broken.ok && broken.errors.join("\n")).toContain("3 to 8 nodes for a hub");
+
+    // A course file is not a presentation file, and the other way round.
+    const course = (await nino.query(api.kalami.exportCourse, { courseId })).content;
+    expect(await nino.query(api.kalami.inspectPresentation, { text: course })).toEqual({
+      ok: false,
+      errors: [expect.stringContaining("whole course")],
+    });
+    handWritten.presentation.slides[0].nodes.push({ label: "C" });
+    const good = JSON.stringify(handWritten);
+    expect(await nino.action(api.kalami.inspect, { text: good })).toEqual({ ok: false, errors: [expect.stringContaining("one presentation")] });
+
+    // A hand-written file (no signature) imports, unverified, with the default theme.
+    const before = (await nino.query(api.weeks.outline, { courseId, now: Date.now() })).weeks[0].presentations.length;
+    const imported = await nino.mutation(api.kalami.importPresentation, { weekId, text: good });
+    expect(imported).toMatchObject({ ok: true, verified: null, summary: { title: "Cycles", slides: 1 } });
+    const after = (await nino.query(api.weeks.outline, { courseId, now: Date.now() })).weeks[0].presentations;
+    expect(after).toHaveLength(before + 1);
+    expect(after.at(-1)).toMatchObject({ title: "Cycles", theme: "ink", status: "draft" });
+
+    // Students can't export, open or import presentation files.
+    const { presentationId } = await deckIn(s);
+    await expectAppError(s.ana.query(api.kalami.exportPresentation, { presentationId }), "FORBIDDEN");
+  });
+
+  test("an agent exports a presentation and imports it elsewhere; a retry gives the same one", async () => {
+    const s = await seed();
+    const token = await credential("nino");
+    const { presentationId, weekId } = await deckIn(s);
+    const { content } = await s.nino.query(api.mcp.exportPresentationForAgent, { token, presentationId });
+    const first = await s.nino.mutation(api.mcp.importPresentationForAgent, { token, requestId: "copy-1", weekId, text: content });
+    const again = await s.nino.mutation(api.mcp.importPresentationForAgent, { token, requestId: "copy-1", weekId, text: content });
+    expect(first).toMatchObject({ ok: true, verified: { by: "nino" } });
+    expect(again).toEqual(first);
+    if (!first.ok) return;
+    expect(await s.nino.query(api.mcp.getPresentationAsAgent, { token, presentationId: first.presentationId })).toMatchObject({
+      createdVia: "mcp",
+      status: "draft",
+    });
   });
 });

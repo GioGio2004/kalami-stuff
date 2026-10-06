@@ -29,6 +29,8 @@ export type DriveConnection = FunctionReturnType<typeof api.drive.connection>;
 export type LessonDetail = FunctionReturnType<typeof api.lessons.get>;
 export type LessonBlockInput = FunctionArgs<typeof api.lessons.saveBlocks>["blocks"][number];
 export type PresentationDetail = FunctionReturnType<typeof api.presentations.get>;
+export type PresentationFileInspect = FunctionReturnType<typeof api.kalami.inspectPresentation>;
+export type PresentationFileImport = FunctionReturnType<typeof api.kalami.importPresentation>;
 
 export type NewCourseArgs = FunctionArgs<typeof api.courses.create>;
 export type UpdateCourseArgs = Omit<FunctionArgs<typeof api.courses.update>, "courseId">;

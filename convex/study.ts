@@ -2,20 +2,21 @@ import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { requireTokenStudent, studentFromToken } from "./lib/access";
 import { getStudentLesson, studentLessonValidator } from "./model/lessons";
+import { getStudentPresentation, studentPresentationValidator } from "./model/presentations";
 import { listMyCourses, listUpNext, getStudentCourse, myCourseValidator, studentCourseValidator, upNextValidator } from "./model/learn";
 import {
   getFinishedWork,
   getProgress,
-  lessonHitValidator,
   progressValidator,
-  searchLessons,
+  searchCourses,
+  studyHitValidator,
   studyWhoami,
   whoamiValidator,
   workValidator,
 } from "./model/study";
 
 // The student app's MCP connector (kalami/lib/mcp/server.ts): a student's own
-// AI assistant reading their courses, lessons, materials and finished work.
+// AI assistant reading their courses, lessons, presentations, materials and finished work.
 // Queries only: nothing here changes anything. Every call carries the signed
 // service credential of the student who signed in (lib/access.ts).
 
@@ -49,6 +50,14 @@ export const getLesson = query({
   handler: async (ctx, args) => await getStudentLesson(ctx, await requireTokenStudent(ctx, args.token), args.lessonId),
 });
 
+/** A published presentation: its theme and every slide's words. */
+export const getPresentation = query({
+  args: { ...tokenArgs, presentationId: v.id("presentations") },
+  returns: studentPresentationValidator,
+  handler: async (ctx, args) =>
+    await getStudentPresentation(ctx, await requireTokenStudent(ctx, args.token), args.presentationId),
+});
+
 /** A finished task, quiz or exam with the student's own answers, as far as the results setting allows. */
 export const getWork = query({
   args: { ...tokenArgs, assessmentId: v.id("assessments") },
@@ -68,8 +77,9 @@ export const upNext = query({
   handler: async (ctx, args) => await listUpNext(ctx, await requireTokenStudent(ctx, args.token)),
 });
 
-export const findInLessons = query({
+/** Where a word or phrase appears in the student's published lessons and presentations. */
+export const findInCourses = query({
   args: { ...tokenArgs, query: v.string() },
-  returns: v.array(lessonHitValidator),
-  handler: async (ctx, args) => await searchLessons(ctx, await requireTokenStudent(ctx, args.token), args.query),
+  returns: v.array(studyHitValidator),
+  handler: async (ctx, args) => await searchCourses(ctx, await requireTokenStudent(ctx, args.token), args.query),
 });

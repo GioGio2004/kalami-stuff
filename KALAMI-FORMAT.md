@@ -1,7 +1,9 @@
 # .kalami course files
 
 A `.kalami` file is a whole Kalami course in one file: weeks, lessons, links,
-tasks, quizzes and exams (with answer keys). Version 1 is UTF-8 JSON, so people
+tasks, quizzes and exams (with answer keys). With `"kind": "presentation"` it
+holds a single presentation instead, to move it into any week of any course
+(Export .kalami in the presentation editor, Import in a week's Presentations). Version 1 is UTF-8 JSON, so people
 and AI assistants can write one directly; a later version can become a zip
 with bundled images and documents, told apart by the `version` field.
 

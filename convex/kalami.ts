@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { action, internalMutation, query } from "./_generated/server";
+import { action, internalMutation, mutation, query } from "./_generated/server";
 import { requireStaffActor } from "./lib/access";
 import { appError } from "./lib/errors";
 import { enforceLimit } from "./lib/limits";
@@ -16,7 +16,17 @@ import {
 import { createAssessment } from "./model/assessments";
 import { createCourse } from "./model/courses";
 import { remember, remembered } from "./model/agentRequests";
-import { discardImportedCourse, exportCourseFile } from "./model/kalami";
+import {
+  checkPresentationFile,
+  discardImportedCourse,
+  exportCourseFile,
+  exportPresentationFile,
+  importPresentationFile,
+  presentationFileImportValidator,
+  presentationFileInspectValidator,
+  type PresentationFileImport,
+  type PresentationFileInspect,
+} from "./model/kalami";
 import {
   actorFor,
   importAsValidator,
@@ -69,6 +79,39 @@ export const importCourse = action({
   args: { text: v.string(), universityId: v.optional(v.union(v.id("universities"), v.null())) },
   returns: importResultValidator,
   handler: async (ctx, args): Promise<ImportResult> => await runImport(ctx, { kind: "session" }, args.text, args.universityId),
+});
+
+// --- Presentation files ---------------------------------------------------------------------
+
+/** A presentation as a signed .kalami file: its name and its text. */
+export const exportPresentation = query({
+  args: { presentationId: v.id("presentations") },
+  returns: v.object({ fileName: v.string(), content: v.string() }),
+  handler: async (ctx, args) => {
+    const actor = await requireStaffActor(ctx);
+    return await exportPresentationFile(ctx, actor, args.presentationId);
+  },
+});
+
+/** What a presentation file contains and whether it's fine, before importing it. Writes nothing. */
+export const inspectPresentation = query({
+  args: { text: v.string() },
+  returns: presentationFileInspectValidator,
+  handler: async (ctx, args): Promise<PresentationFileInspect> => {
+    await requireStaffActor(ctx);
+    const check = await checkPresentationFile(args.text);
+    return check.ok ? { ok: true as const, summary: check.summary, verified: check.verified } : check;
+  },
+});
+
+/** Creates the file's presentation as a new draft at the end of the week. */
+export const importPresentation = mutation({
+  args: { weekId: v.id("weeks"), text: v.string() },
+  returns: presentationFileImportValidator,
+  handler: async (ctx, args): Promise<PresentationFileImport> => {
+    const actor = await requireStaffActor(ctx);
+    return await importPresentationFile(ctx, actor, args.weekId, args.text);
+  },
 });
 
 // --- The import's steps (model/kalamiImport.ts runImport drives them) ----------------------

@@ -97,19 +97,52 @@ describe("study connector: courses, lessons and materials", () => {
     await expectAppError(t.query(api.study.getLesson, { token: maka, lessonId: published }), "NOT_FOUND");
   });
 
-  test("find_in_lessons searches published lessons of the student's courses only", async () => {
+  test("find_in_courses searches published lessons of the student's courses only", async () => {
     const env = await seed();
     const { t } = env;
     await lessons(env);
     const ana = await credential("ana");
-    const hits = await t.query(api.study.findInLessons, { token: ana, query: "Margin" });
+    const hits = await t.query(api.study.findInCourses, { token: ana, query: "Margin" });
     expect(hits).toHaveLength(1);
-    expect(hits[0]).toMatchObject({ title: "The box model", weekTitle: expect.any(String), course: { title: "Web basics" } });
+    expect(hits[0]).toMatchObject({ kind: "lesson", title: "The box model", weekTitle: expect.any(String), course: { title: "Web basics" } });
     expect(hits[0].snippet).toContain("Margin");
     // The draft lesson's words are not found; a stranger finds nothing; one letter is too short.
-    expect(await t.query(api.study.findInLessons, { token: ana, query: "collapsing" })).toEqual([]);
-    expect(await t.query(api.study.findInLessons, { token: await credential("maka"), query: "box" })).toEqual([]);
-    expect(await t.query(api.study.findInLessons, { token: ana, query: "b" })).toEqual([]);
+    expect(await t.query(api.study.findInCourses, { token: ana, query: "collapsing" })).toEqual([]);
+    expect(await t.query(api.study.findInCourses, { token: await credential("maka"), query: "box" })).toEqual([]);
+    expect(await t.query(api.study.findInCourses, { token: ana, query: "b" })).toEqual([]);
+  });
+  test("presentations: a student opens published ones and finds their words; drafts and strangers get nothing", async () => {
+    const env = await seed();
+    const { t, nino } = env;
+    const { weekId } = await lessons(env);
+    const ana = await credential("ana");
+    const maka = await credential("maka");
+    const deckId = await nino.mutation(api.presentations.create, { weekId, title: "Boxes, visually", theme: "aurora" });
+    await nino.mutation(api.presentations.save, {
+      presentationId: deckId,
+      slides: [
+        { type: "title", title: "Boxes, **visually**" },
+        { type: "diagram", layout: "stack", nodes: [{ label: "Margin" }, { label: "Border" }, { label: "Padding", detail: "inside the border" }] },
+      ],
+    });
+    // A draft presentation in a published week: not there yet.
+    await expectAppError(t.query(api.study.getPresentation, { token: ana, presentationId: deckId }), "NOT_FOUND");
+    expect((await t.query(api.study.findInCourses, { token: ana, query: "inside the border" }))).toEqual([]);
+
+    await nino.mutation(api.presentations.setStatus, { presentationId: deckId, status: "published" });
+    const deck = await t.query(api.study.getPresentation, { token: ana, presentationId: deckId });
+    expect(deck).toMatchObject({ title: "Boxes, visually", theme: "aurora", course: { title: "Web basics" } });
+    expect(deck.slides).toHaveLength(2);
+    await expectAppError(t.query(api.study.getPresentation, { token: maka, presentationId: deckId }), "NOT_FOUND");
+    const course = await t.query(api.study.getCourse, { token: ana, courseId: env.courseId });
+    expect(course.weeks[0].presentations).toEqual([{ _id: deckId, title: "Boxes, visually", theme: "aurora", slideCount: 2 }]);
+
+    // One search finds both kinds: the lesson's "Margin" callout and the presentation's diagram node.
+    const hits = await t.query(api.study.findInCourses, { token: ana, query: "margin" });
+    expect(hits.map((hit) => hit.kind)).toEqual(["lesson", "presentation"]);
+    expect(hits[1]).toMatchObject({ kind: "presentation", presentationId: deckId, title: "Boxes, visually" });
+    expect(hits[1].snippet.toLowerCase()).toContain("margin");
+    expect(await t.query(api.study.findInCourses, { token: maka, query: "margin" })).toEqual([]);
   });
 });
 

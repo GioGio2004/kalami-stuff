@@ -6,3 +6,8 @@
 export const STUDENT_APP_URL =
   process.env.NEXT_PUBLIC_STUDENT_APP_URL ??
   (process.env.NODE_ENV === "production" ? "https://app.kalami.space" : "http://localhost:3100");
+
+/** A presentation's public link (its editor's Share): the student app's player, open to anyone with it. */
+export function presentationShareUrl(token: string): string {
+  return `${STUDENT_APP_URL.replace(/\/+$/, "")}/p/${token}`;
+}

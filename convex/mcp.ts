@@ -36,7 +36,13 @@ import {
   updateBlock,
   updateLesson,
 } from "./model/lessons";
-import { exportCourseFile } from "./model/kalami";
+import {
+  checkPresentationFile,
+  exportCourseFile,
+  exportPresentationFile,
+  importPresentationFile,
+  presentationFileImportValidator,
+} from "./model/kalami";
 import {
   importResultValidator,
   inspectKalami,
@@ -50,6 +56,8 @@ import {
   createPresentation,
   deletePresentation,
   getPresentation,
+  movePresentation,
+  reorderPresentations,
   savePresentation,
   staffPresentationValidator,
 } from "./model/presentations";
@@ -715,6 +723,35 @@ export const deletePresentationAsAgent = mutation({
   },
 });
 
+export const movePresentationAsAgent = mutation({
+  args: {
+    ...tokenArg,
+    presentationId: v.id("presentations"),
+    weekId: v.optional(v.id("weeks")),
+    direction: v.optional(v.union(v.literal("up"), v.literal("down"))),
+  },
+  returns: v.null(),
+  handler: async (ctx, { token, client, presentationId, weekId, direction }) => {
+    const actor = await requireTokenActor(ctx, token, client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    if (weekId !== undefined) await movePresentation(ctx, actor, presentationId, { weekId });
+    else if (direction !== undefined) await movePresentation(ctx, actor, presentationId, { direction });
+    else throw appError("INVALID_INPUT", "Say where to: a weekId, or a direction (up or down).");
+    return null;
+  },
+});
+
+export const reorderPresentationsAsAgent = mutation({
+  args: { ...tokenArg, weekId: v.id("weeks"), presentationIds: v.array(v.id("presentations")) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await reorderPresentations(ctx, actor, args.weekId, args.presentationIds);
+    return null;
+  },
+});
+
 // --- .kalami course files -----------------------------------------------------------
 //
 // An agent can hand the lecturer a whole course as a file (export), or write
@@ -728,6 +765,34 @@ export const exportCourseForAgent = query({
   handler: async (ctx, args) => {
     const actor = await requireTokenActor(ctx, args.token, args.client);
     return await exportCourseFile(ctx, actor, args.courseId);
+  },
+});
+
+export const exportPresentationForAgent = query({
+  args: { ...tokenArg, presentationId: v.id("presentations") },
+  returns: v.object({ fileName: v.string(), content: v.string() }),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    return await exportPresentationFile(ctx, actor, args.presentationId);
+  },
+});
+
+export const importPresentationForAgent = mutation({
+  args: { ...tokenArg, ...requestArg, weekId: v.id("weeks"), text: v.string() },
+  returns: presentationFileImportValidator,
+  handler: async (ctx, { token, client, requestId, weekId, text }) => {
+    const actor = await requireTokenActor(ctx, token, client);
+    const check = await checkPresentationFile(text);
+    if (!check.ok) return check;
+    // A retried call with the same request id gives back the presentation it made.
+    const earlier = await remembered(ctx, actor, requestId);
+    if (typeof earlier === "string") {
+      return { ok: true as const, presentationId: earlier as Id<"presentations">, summary: check.summary, verified: check.verified };
+    }
+    await enforceLimit(ctx, "agent", actor.user._id);
+    const result = await importPresentationFile(ctx, actor, weekId, text);
+    if (result.ok) await remember(ctx, actor, requestId, result.presentationId);
+    return result;
   },
 });
 

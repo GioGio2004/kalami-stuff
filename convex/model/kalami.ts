@@ -1,3 +1,4 @@
+import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireCourseEditor, type Actor } from "../lib/access";
@@ -8,21 +9,26 @@ import {
   KALAMI_VERSION,
   kalamiFileName,
   parseKalami,
+  parseKalamiPresentation,
+  presentationSignedPart,
   signedPart,
   summarize,
+  summarizePresentation,
   type KalamiAssessment,
   type KalamiFile,
+  type KalamiPresentationFile,
+  type KalamiPresentationSummary,
   type KalamiSummary,
 } from "../lib/kalami";
 import { sign, verify } from "../lib/tokens";
 import { DEFAULT_THEME } from "../lib/presentation";
-import type { AnswerKey, CheckRuleDoc, LessonBlock, QuestionInput, SlideDoc } from "../lib/validators";
+import { deckThemeValidator, type AnswerKey, type CheckRuleDoc, type LessonBlock, type QuestionInput, type SlideDoc } from "../lib/validators";
 import { defaultSettings, validateSettings } from "./assessments";
 import { displayName } from "./audit";
 import { normalizeBlocks } from "./lessons";
 import { normalizeQuestion } from "./questions";
-import { lessonsOf, requireHttpsUrl, weeksOf } from "./weeks";
-import { normalizeSlides, presentationsOf } from "./presentations";
+import { lessonsOf, presentationsOf, requireHttpsUrl, weeksOf } from "./weeks";
+import { createPresentation, getPresentation, normalizeSlides } from "./presentations";
 
 /**
  * Exporting a course to a .kalami file and checking one before import (the
@@ -315,4 +321,98 @@ export async function discardImportedCourse(ctx: MutationCtx, actor: Actor, cour
     await ctx.db.delete("courseStaff", seat._id);
   }
   await ctx.db.delete("courses", courseId);
+}
+
+// --- Presentation files -------------------------------------------------------------------
+//
+// One presentation as a .kalami file (kind "presentation"): exported from a
+// course, imported into any week of any course, on this Kalami or another.
+// Signed like course files, so an unchanged file shows "Verified by Kalami".
+
+const exportedValidator = v.object({ by: v.string(), at: v.string(), from: v.string() });
+
+export const presentationFileSummaryValidator = v.object({
+  title: v.string(),
+  theme: v.optional(deckThemeValidator),
+  slides: v.number(),
+  exported: v.optional(exportedValidator),
+});
+
+const verifiedValidator = v.union(v.null(), v.object({ by: v.string(), at: v.string() }));
+
+export const presentationFileInspectValidator = v.union(
+  v.object({ ok: v.literal(true), summary: presentationFileSummaryValidator, verified: verifiedValidator }),
+  v.object({ ok: v.literal(false), errors: v.array(v.string()) }),
+);
+export type PresentationFileInspect = Infer<typeof presentationFileInspectValidator>;
+
+export const presentationFileImportValidator = v.union(
+  v.object({
+    ok: v.literal(true),
+    presentationId: v.id("presentations"),
+    summary: presentationFileSummaryValidator,
+    verified: verifiedValidator,
+  }),
+  v.object({ ok: v.literal(false), errors: v.array(v.string()) }),
+);
+export type PresentationFileImport = Infer<typeof presentationFileImportValidator>;
+
+/** A presentation as a signed .kalami file. Anyone on the course's staff may export one (there are no answer keys in it). */
+export async function exportPresentationFile(ctx: QueryCtx, actor: Actor, presentationId: Id<"presentations">) {
+  const deck = await getPresentation(ctx, actor, presentationId);
+  const file = {
+    $schema: KALAMI_SCHEMA_URL,
+    format: KALAMI_FORMAT,
+    version: KALAMI_VERSION,
+    kind: "presentation" as const,
+    exported: { by: displayName(actor.user), at: new Date().toISOString(), from: "Kalami" },
+    signature: undefined as string | undefined,
+    presentation: { title: deck.title, theme: deck.theme, slides: deck.slides.map(slideToFile) },
+  };
+  // The signature covers exactly what JSON.parse will give back for this text.
+  const plain = JSON.parse(JSON.stringify(file)) as KalamiPresentationFile;
+  file.signature = (await sign(presentationSignedPart(plain))) ?? undefined;
+  return { fileName: kalamiFileName(deck.title, "presentation"), content: JSON.stringify(file, null, 2) };
+}
+
+export type PresentationFileCheck =
+  | { ok: true; file: KalamiPresentationFile; summary: KalamiPresentationSummary; verified: { by: string; at: string } | null }
+  | { ok: false; errors: string[] };
+
+/** Everything short of writing: the format, then the deck through the same rules as the editor and agents. */
+export async function checkPresentationFile(raw: string): Promise<PresentationFileCheck> {
+  const parsed = parseKalamiPresentation(raw);
+  if (!parsed.ok) return parsed;
+  const { file } = parsed;
+  try {
+    normalizeSlides(file.presentation.slides, file.presentation.theme ?? DEFAULT_THEME);
+  } catch (error) {
+    return { ok: false, errors: [`presentation: ${messageOf(error)}`] };
+  }
+  // The signature is checked on the file exactly as written, before zod normalised it.
+  const original = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw) as KalamiPresentationFile;
+  const verified =
+    original.signature && original.exported && (await verify(presentationSignedPart(original), original.signature))
+      ? { by: original.exported.by, at: original.exported.at }
+      : null;
+  return { ok: true, file, summary: summarizePresentation(file), verified };
+}
+
+/** Checks the file and, if it's fine, creates its presentation as a new draft at the end of the week. */
+export async function importPresentationFile(
+  ctx: MutationCtx,
+  actor: Actor,
+  weekId: Id<"weeks">,
+  raw: string,
+): Promise<PresentationFileImport> {
+  const check = await checkPresentationFile(raw);
+  if (!check.ok) return check;
+  const { file, summary, verified } = check;
+  const presentationId = await createPresentation(ctx, actor, {
+    weekId,
+    title: file.presentation.title,
+    theme: file.presentation.theme,
+    slides: file.presentation.slides,
+  });
+  return { ok: true as const, presentationId, summary, verified };
 }

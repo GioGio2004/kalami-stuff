@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { AdminUniversity } from "@/components/admin/types";
 import { adminPage, adminViews, renderAdminView, uniAdminMe } from "@/components/dev/AdminGallery";
 import { PanelHeader } from "@/components/admin/panel/ui";
@@ -323,6 +323,51 @@ async function pause(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 600));
 }
 
+/** The presentation editor on the sample deck; Share works on a made-up link. */
+function GalleryPresentationEditor({ shared, open, canShare = true }: { shared: boolean; open: boolean; canShare?: boolean }) {
+  const [share, setShare] = useState<PresentationDetail["share"]>(
+    shared ? { token: "Hk3vQ9xL2mP7rT5wZ8yA", notes: false, by: "Nino Beridze", at: NOW - 2 * DAY } : null,
+  );
+  return (
+    <PresentationEditor
+      deck={{
+        _id: "sample_deck_web" as PresentationDetail["_id"],
+        courseId: webBasics._id,
+        courseTitle: webBasics.title,
+        weekId: outlineWeeks[0]._id,
+        weekTitle: outlineWeeks[0].title,
+        weekStatus: "published",
+        title: "How the web works",
+        theme: SAMPLE_DECK.theme,
+        slides: SAMPLE_DECK.slides,
+        status: "draft",
+        canEdit: canShare,
+        canShare,
+        share,
+        createdVia: "mcp",
+        updatedAt: NOW - DAY,
+      }}
+      initialSharing={open}
+      onRename={pause}
+      onExport={pause}
+      onShare={async ({ notes, newLink }) => {
+        await pause();
+        const fresh = Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789_-"[b % 56]).join("");
+        setShare((current) =>
+          current && !newLink ? { ...current, notes } : { token: fresh, notes, by: "Nino Beridze", at: Date.now() },
+        );
+      }}
+      onStopSharing={async () => {
+        await pause();
+        setShare(null);
+      }}
+      onSave={async () => SAMPLE_DECK.slides.map((slide) => slide.id)}
+      onSetStatus={pause}
+      onDelete={pause}
+    />
+  );
+}
+
 // --- Groups and materials samples ----------------------------------------------
 
 // A university group the signed-in lecturer teaches (made by the university's admin).
@@ -518,6 +563,7 @@ const outlineWeeks: OutlineWeek[] = [
         status: "published",
         theme: "ink",
         slideCount: 15,
+        shared: true,
         createdVia: "mcp",
         updatedAt: NOW - 2 * DAY,
       },
@@ -527,6 +573,7 @@ const outlineWeeks: OutlineWeek[] = [
         status: "draft",
         theme: "aurora",
         slideCount: 8,
+        shared: false,
         createdVia: "web",
         updatedAt: NOW - DAY,
       },
@@ -596,6 +643,13 @@ const outlineActions: OutlineActions = {
   onCreateLesson: pause,
   onMoveLesson: pause,
   onCreatePresentation: pause,
+  onMovePresentation: pause,
+  onInspectPresentationFile: async () => ({
+    ok: true as const,
+    summary: { title: "How the web works", theme: "aurora" as const, slides: 15, exported: { by: "Nino Beridze", at: "2026-10-06T18:30:00.000Z", from: "Kalami" } },
+    verified: { by: "Nino Beridze", at: "2026-10-06T18:30:00.000Z" },
+  }),
+  onImportPresentationFile: async () => ({ ok: false as const, errors: ["This is the gallery: nothing is imported here."] }),
   onCreateAssessment: pause,
   onPlace: pause,
 };
@@ -857,6 +911,9 @@ const views: Record<string, string> = {
   "lesson-editor": "Studio · lesson editor",
   "lesson-preview": "Studio · lesson preview",
   "presentation-editor": "Studio · presentation editor",
+  "presentation-share": "Studio · presentation editor, Share (no link yet)",
+  "presentation-shared": "Studio · presentation editor, Share (link on; try notes, New link, Stop)",
+  "presentation-shared-assistant": "Studio · presentation editor, Share as an assistant (view only)",
   "deck-ink": "Presentation · player (Ink)",
   "deck-paper": "Presentation · player (Paper)",
   "deck-aurora": "Presentation · player (Aurora)",
@@ -964,29 +1021,13 @@ export function StaffGallery({ view }: { view?: string }) {
     case "lesson-preview":
       return staffPage(lessonPage("preview"));
     case "presentation-editor":
-      return staffPage(
-        <PresentationEditor
-          deck={{
-            _id: "sample_deck_web" as PresentationDetail["_id"],
-            courseId: webBasics._id,
-            courseTitle: webBasics.title,
-            weekId: outlineWeeks[0]._id,
-            weekTitle: outlineWeeks[0].title,
-            weekStatus: "published",
-            title: "How the web works",
-            theme: SAMPLE_DECK.theme,
-            slides: SAMPLE_DECK.slides,
-            status: "draft",
-            canEdit: true,
-            createdVia: "mcp",
-            updatedAt: NOW - DAY,
-          }}
-          onRename={pause}
-          onSave={async () => SAMPLE_DECK.slides.map((slide) => slide.id)}
-          onSetStatus={pause}
-          onDelete={pause}
-        />,
-      );
+      return staffPage(<GalleryPresentationEditor shared={false} open={false} />);
+    case "presentation-share":
+      return staffPage(<GalleryPresentationEditor shared={false} open />);
+    case "presentation-shared":
+      return staffPage(<GalleryPresentationEditor shared open />);
+    case "presentation-shared-assistant":
+      return staffPage(<GalleryPresentationEditor shared open canShare={false} />);
     case "deck-ink":
     case "deck-paper":
     case "deck-aurora":

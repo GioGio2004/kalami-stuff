@@ -21,6 +21,8 @@ const outlinePresentationValidator = v.object({
   status: publishStatusValidator,
   theme: deckThemeValidator,
   slideCount: v.number(),
+  /** It has a public link (the editor's Share). */
+  shared: v.boolean(),
   createdVia: v.union(v.literal("web"), v.literal("mcp")),
   updatedAt: v.number(),
 });

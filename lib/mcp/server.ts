@@ -15,8 +15,9 @@ import {
   settingsSchema,
 } from "@/convex/lib/contentSchemas";
 import type { Id } from "@/convex/_generated/dataModel";
-import { KALAMI_GUIDE_URL, KALAMI_SCHEMA_URL, kalamiFileSchema } from "@/convex/lib/kalami";
+import { anyKalamiFileSchema, KALAMI_GUIDE_URL, KALAMI_SCHEMA_URL } from "@/convex/lib/kalami";
 import { KALAMI_GUIDE } from "@/lib/kalami/guide";
+import { presentationShareUrl } from "@/lib/urls";
 
 /**
  * Kalami's MCP connector: lets a lecturer's own AI agent (Claude, ChatGPT,
@@ -134,11 +135,12 @@ Turning a syllabus, notes or slides into a course:
 4. Midterms and finals: create_assessment with kind midterm or final and no weekId; they appear in the Exams section.
 5. Tell the lecturer what you drafted, week by week, with the reviewUrls. They publish each week themselves.
 
-Tidying up an outline: update_week (title, description), reorder_weeks, reorder_lessons, move_lesson (to another week), update_week_link, reorder_week_links, remove_week_link, place_assessment, delete_week / delete_lesson / delete_assessment (drafts only), update_course (a draft course's title, description, semester or language).
+Tidying up an outline: update_week (title, description), reorder_weeks, reorder_lessons, move_lesson (to another week), reorder_presentations, move_presentation (to another week), update_week_link, reorder_week_links, remove_week_link, place_assessment, delete_week / delete_lesson / delete_presentation / delete_assessment (drafts only), update_course (a draft course's title, description, semester or language).
 
 .kalami course files (a whole course in one JSON file):
 - To give the lecturer their course as a file (to keep, share with a colleague, reuse next semester): export_course_file, then hand them the content as a file named fileName. It contains every answer key: only share it with staff.
 - To build a whole course in one go: call get_kalami_format first and follow it exactly, write the file, check_kalami_file and fix every problem it lists, then import_kalami_file. It always creates a NEW draft course, so only do this when the lecturer wants a new course; to add to an existing course use create_week / create_lesson / create_assessment instead.
+- A .kalami file can also hold one presentation (kind "presentation"): export_presentation_file gives one as a file, to move it to another course or another Kalami; import_presentation_file puts a presentation file into a week as a new draft.
 - Never invent a "signature" field: only Kalami signs files.
 
 Writing lessons (in the course's language):
@@ -147,6 +149,7 @@ Writing lessons (in the course's language):
 - code blocks for every example; for HTML and CSS set preview: true so students see the result.
 - steps for procedures students follow in order.
 - Presentations are their own item in a week, next to its lessons: use create_presentation (typed slides in a theme) whenever the lecturer asks for slides, a deck or a presentation, and ask which week it goes in if that isn't clear. Never build a presentation out of lesson blocks.
+- A presentation can have a public link that anyone can watch it with, no account needed. Only the lecturer turns it on or off, with Share in the presentation's editor (drafts can be shared too). While it's on, get_presentation returns it as shareLink: give that url when the lecturer asks for the link.
 - A scene block (type "scene") is for one custom animation inside a lesson (a diagram that builds up step by step); get_kalami_format has its vocabulary.
 - A check every few blocks (single, multiple or short) so students test themselves; add an explanation.
 - Images only from https URLs you are sure of, always with alt text. YouTube or Vimeo links play inside the lesson.
@@ -767,13 +770,21 @@ const handler = createMcpHandler(
       "get_presentation",
       {
         title: "Get presentation",
-        description: "A presentation with its theme and every slide (with its id), its week and status.",
+        description:
+          "A presentation with its theme and every slide (with its id), its week and status, and shareLink: its public link while the lecturer shares it (null otherwise).",
         inputSchema: z.object({ presentationId }),
       },
       async (args, ctx) =>
-        run(() =>
-          convex.query(api.mcp.getPresentationAsAgent, { ...auth(ctx), presentationId: args.presentationId as Id<"presentations"> }),
-        ),
+        run(async () => {
+          const { share, canShare, ...deck } = await convex.query(api.mcp.getPresentationAsAgent, {
+            ...auth(ctx),
+            presentationId: args.presentationId as Id<"presentations">,
+          });
+          void canShare;
+          // The link, not its token: anyone with it can watch, no account needed.
+          const shareLink = share && { url: presentationShareUrl(share.token), speakerNotes: share.notes, sharedBy: share.by };
+          return { ...deck, shareLink };
+        }),
     );
 
     server.registerTool(
@@ -799,6 +810,49 @@ const handler = createMcpHandler(
             slides: args.slides,
           });
           return { slideIds: ids };
+        }),
+    );
+
+    server.registerTool(
+      "move_presentation",
+      {
+        title: "Move presentation",
+        description:
+          "Moves a draft presentation up or down within its week, or to the end of another week of the same course (weekId). Published presentations, and drafts next to them, are the lecturer's to move.",
+        inputSchema: z.object({
+          presentationId,
+          weekId: weekId.optional().describe("Move it to the end of this week"),
+          direction: z.enum(["up", "down"]).optional(),
+        }),
+      },
+      async (args, ctx) =>
+        run(async () => {
+          await convex.mutation(api.mcp.movePresentationAsAgent, {
+            ...auth(ctx),
+            presentationId: args.presentationId as Id<"presentations">,
+            weekId: args.weekId as Id<"weeks"> | undefined,
+            direction: args.direction,
+          });
+          return { ok: true };
+        }),
+    );
+
+    server.registerTool(
+      "reorder_presentations",
+      {
+        title: "Reorder presentations",
+        description:
+          "Sets the order of a week's presentations. Pass every presentation id of the week exactly once. Published presentations must keep their order; move drafts around them.",
+        inputSchema: z.object({ weekId, presentationIds: z.array(z.string()).min(1).max(20) }),
+      },
+      async (args, ctx) =>
+        run(async () => {
+          await convex.mutation(api.mcp.reorderPresentationsAsAgent, {
+            ...auth(ctx),
+            weekId: args.weekId as Id<"weeks">,
+            presentationIds: args.presentationIds as Id<"presentations">[],
+          });
+          return { ok: true };
         }),
     );
 
@@ -1005,7 +1059,7 @@ const handler = createMcpHandler(
           guide: KALAMI_GUIDE,
           guideUrl: KALAMI_GUIDE_URL,
           schemaUrl: KALAMI_SCHEMA_URL,
-          schema: z.toJSONSchema(kalamiFileSchema, { io: "input", unrepresentable: "any" }),
+          schema: z.toJSONSchema(anyKalamiFileSchema, { io: "input", unrepresentable: "any" }),
         })),
     );
 
@@ -1019,6 +1073,45 @@ const handler = createMcpHandler(
       },
       async (args, ctx) =>
         run(() => convex.query(api.mcp.exportCourseForAgent, { ...auth(ctx), courseId: args.courseId as Id<"courses"> })),
+    );
+
+    server.registerTool(
+      "export_presentation_file",
+      {
+        title: "Export presentation file",
+        description:
+          "One presentation as a signed .kalami file (fileName and content), to move it to another course, another lecturer or another Kalami site. Give it to the lecturer as a file named fileName.",
+        inputSchema: z.object({ presentationId }),
+      },
+      async (args, ctx) =>
+        run(() =>
+          convex.query(api.mcp.exportPresentationForAgent, {
+            ...auth(ctx),
+            presentationId: args.presentationId as Id<"presentations">,
+          }),
+        ),
+    );
+
+    server.registerTool(
+      "import_presentation_file",
+      {
+        title: "Import presentation file",
+        description:
+          "Puts the presentation in a .kalami presentation file (kind \"presentation\") into a week, at its end, as a new draft. If the file has problems nothing is created and every problem is listed. A course file is refused: use import_kalami_file for those.",
+        inputSchema: z.object({ requestId, weekId, content: fileContent }),
+      },
+      async (args, ctx) =>
+        run(async () => {
+          const result = await convex.mutation(api.mcp.importPresentationForAgent, {
+            ...auth(ctx),
+            requestId: args.requestId,
+            weekId: args.weekId as Id<"weeks">,
+            text: asText(args.content),
+          });
+          if (!result.ok) return result;
+          const deck = await convex.query(api.mcp.getPresentationAsAgent, { ...auth(ctx), presentationId: result.presentationId });
+          return { ...result, reviewUrl: dashboardUrl(ctx, `/courses/${deck.courseId}/presentations/${result.presentationId}`) };
+        }),
     );
 
     server.registerTool(
@@ -1053,7 +1146,7 @@ const handler = createMcpHandler(
     );
   },
   {
-    serverInfo: { name: "kalami", version: "0.8.0" },
+    serverInfo: { name: "kalami", version: "0.11.0" },
     instructions: INSTRUCTIONS,
   },
 );

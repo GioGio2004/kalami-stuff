@@ -7,6 +7,9 @@ import { deckThemeSchema, lessonBlockSchema, linkSchema, questionSchema, setting
  *   { "$schema", "format": "kalami", "version": 1, "kind": "course",
  *     "exported"?: { by, at, from }, "signature"?: "…", "course": { … } }
  *
+ * A file holds a course, or (kind "presentation") a single presentation to
+ * move between courses, lecturers or Kalami sites; see presentationKalamiFileSchema.
+ *
  * The course is its outline: weeks (lessons, presentations, links, tasks and quizzes) and the
  * exams. Files carry no students, attempts, grades, groups, join codes, dates
  * or Drive permissions; importing always creates a new draft course.
@@ -95,26 +98,66 @@ export const courseFileSchema = z.object({
     .describe("Tasks and quizzes not placed in a week"),
 });
 
+const exportedSchema = z
+  .object({
+    by: z.string().max(200).describe("Who exported it"),
+    at: z.string().max(40).describe("ISO 8601 time"),
+    from: z.string().max(200).describe('"Kalami", or the tool that wrote the file'),
+  })
+  .optional()
+  .describe("Set by Kalami on export; an AI may set from to its own name");
+const signatureSchema = z.string().max(200).optional().describe("Set by Kalami on export only. Leave it out when you write a file.");
+
 export const kalamiFileSchema = z
   .object({
     $schema: z.string().optional(),
     format: z.literal(KALAMI_FORMAT).describe('Always "kalami"'),
     version: z.literal(KALAMI_VERSION).describe("Always 1 for this format"),
     kind: z.literal("course"),
-    exported: z
-      .object({
-        by: z.string().max(200).describe("Who exported it"),
-        at: z.string().max(40).describe("ISO 8601 time"),
-        from: z.string().max(200).describe('"Kalami", or the tool that wrote the file'),
-      })
-      .optional()
-      .describe("Set by Kalami on export; an AI may set from to its own name"),
-    signature: z.string().max(200).optional().describe("Set by Kalami on export only. Leave it out when you write a file."),
+    exported: exportedSchema,
+    signature: signatureSchema,
     course: courseFileSchema,
   })
   .describe("A Kalami course file (.kalami), version 1");
 
+/**
+ * A single presentation, to move it between courses, lecturers or Kalami
+ * sites: the same envelope as a course file with kind "presentation". It is
+ * imported into a week the lecturer picks, always as a new draft.
+ */
+export const presentationKalamiFileSchema = z
+  .object({
+    $schema: z.string().optional(),
+    format: z.literal(KALAMI_FORMAT).describe('Always "kalami"'),
+    version: z.literal(KALAMI_VERSION).describe("Always 1 for this format"),
+    kind: z.literal("presentation"),
+    exported: exportedSchema,
+    signature: signatureSchema,
+    presentation: presentationFileSchema,
+  })
+  .describe("A Kalami presentation file (.kalami), version 1");
+
+/** Either kind of .kalami file, for the published JSON Schema. */
+export const anyKalamiFileSchema = z.union([kalamiFileSchema, presentationKalamiFileSchema]);
+
 export type KalamiFile = z.infer<typeof kalamiFileSchema>;
+export type KalamiPresentationFile = z.infer<typeof presentationKalamiFileSchema>;
+
+export type KalamiPresentationSummary = {
+  title: string;
+  theme: KalamiPresentationFile["presentation"]["theme"];
+  slides: number;
+  exported?: { by: string; at: string; from: string };
+};
+
+export function summarizePresentation(file: KalamiPresentationFile): KalamiPresentationSummary {
+  return {
+    title: file.presentation.title,
+    theme: file.presentation.theme,
+    slides: file.presentation.slides.length,
+    exported: file.exported,
+  };
+}
 export type KalamiCourse = KalamiFile["course"];
 export type KalamiAssessment = z.infer<typeof assessmentFileSchema>;
 
@@ -176,7 +219,8 @@ export type KalamiParse =
  * solutions that pass their checks, image alt text…) are checked again when
  * the content is created, exactly as for the web app.
  */
-export function parseKalami(raw: string): KalamiParse {
+/** The JSON in a .kalami file's text, with the checks every kind shares (size, packages, version). */
+function readKalamiJson(raw: string): { ok: true; json: unknown } | { ok: false; errors: string[] } {
   if (raw.length > MAX_KALAMI_BYTES) {
     return { ok: false, errors: [`The file is larger than ${MAX_KALAMI_BYTES / 1024 / 1024} MB.`] };
   }
@@ -196,7 +240,50 @@ export function parseKalami(raw: string): KalamiParse {
       return { ok: false, errors: [`This file uses .kalami version ${version}; this Kalami reads version ${KALAMI_VERSION}.`] };
     }
   }
+  return { ok: true, json };
+}
+
+/** What a parsed .kalami file says it holds. */
+function kindOf(json: unknown): unknown {
+  return typeof json === "object" && json !== null ? (json as { kind?: unknown }).kind : undefined;
+}
+
+export function parseKalami(raw: string): KalamiParse {
+  const read = readKalamiJson(raw);
+  if (!read.ok) return read;
+  const { json } = read;
+  if (kindOf(json) === "presentation") {
+    return {
+      ok: false,
+      errors: ["This file holds one presentation, not a course. Open a course and import it into a week, under Presentations."],
+    };
+  }
   const result = kalamiFileSchema.safeParse(json);
+  if (!result.success) {
+    return {
+      ok: false,
+      errors: result.error.issues.slice(0, 20).map((issue) => `${where(issue.path)}: ${issue.message}`),
+    };
+  }
+  return { ok: true, file: result.data };
+}
+
+export type KalamiPresentationParse =
+  | { ok: true; file: KalamiPresentationFile }
+  | { ok: false; errors: string[] };
+
+/** Reads a presentation file's text, like parseKalami does a course file's. */
+export function parseKalamiPresentation(raw: string): KalamiPresentationParse {
+  const read = readKalamiJson(raw);
+  if (!read.ok) return read;
+  const { json } = read;
+  if (kindOf(json) === "course") {
+    return {
+      ok: false,
+      errors: ["This file holds a whole course, not one presentation. Import it from Courses, with Import .kalami."],
+    };
+  }
+  const result = presentationKalamiFileSchema.safeParse(json);
   if (!result.success) {
     return {
       ok: false,
@@ -215,13 +302,18 @@ export function signedPart(file: Pick<KalamiFile, "kind" | "exported" | "course"
   return `kalami-file:v${KALAMI_VERSION}:${JSON.stringify({ kind: file.kind, exported: file.exported, course: file.course })}`;
 }
 
-/** A file name for a course: "web-basics.kalami". Georgian titles keep their letters. */
-export function kalamiFileName(title: string): string {
+/** The part of a presentation file Kalami's signature covers (its kind included). */
+export function presentationSignedPart(file: Pick<KalamiPresentationFile, "kind" | "exported" | "presentation">): string {
+  return `kalami-file:v${KALAMI_VERSION}:${JSON.stringify({ kind: file.kind, exported: file.exported, presentation: file.presentation })}`;
+}
+
+/** A file name for a course or a presentation: "web-basics.kalami". Georgian titles keep their letters. */
+export function kalamiFileName(title: string, fallback = "course"): string {
   const slug = title
     .normalize("NFKC")
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
-  return `${slug || "course"}${KALAMI_EXTENSION}`;
+  return `${slug || fallback}${KALAMI_EXTENSION}`;
 }

@@ -25,7 +25,7 @@ import { THEME_INFO, type DeckTheme } from "@/lib/presentation";
 import { errorMessage } from "@/lib/errors";
 import { AssessmentRow, compactSelectClass } from "./AssessmentRow";
 import { DriveMark, driveBusy, folderStatus } from "./DriveStatus";
-import type { Assessment, AssessmentId, LessonId, OutlineWeek, WeekId, WeekLink } from "./types";
+import type { AssessmentId, LessonId, OutlineWeek, PresentationId, WeekId, WeekLink } from "./types";
 
 /** What a week card can do; the outline fills these in (dialogs) or passes them through (mutations). */
 export type WeekCardActions = {
@@ -38,6 +38,9 @@ export type WeekCardActions = {
   onMove: (direction: "up" | "down") => Promise<void>;
   onNewLesson: () => void;
   onNewPresentation: () => void;
+  onImportPresentation: () => void;
+  /** Up or down within the week, or to the end of another week. */
+  onMovePresentation: (presentationId: PresentationId, to: { direction: "up" | "down" } | { weekId: WeekId }) => Promise<void>;
   onMoveLesson: (lessonId: LessonId, direction: "up" | "down") => Promise<void>;
   onAddLink: () => void;
   onEditLink: (link: WeekLink) => void;
@@ -103,6 +106,8 @@ export function WeekCard({
   }
 
   const materials = week.links.length + (week.drive ? 1 : 0);
+  // Presentations always live in a week: the same targets as tasks and quizzes, without Unplaced.
+  const weekTargets = moveTargets.filter((target) => target.value !== null);
   const summary = [
     count(week.lessons.length, "lesson"),
     ...(week.presentations.length > 0 ? [count(week.presentations.length, "presentation")] : []),
@@ -304,10 +309,15 @@ export function WeekCard({
             count={week.presentations.length}
             action={
               canEdit && (
-                <Button size="sm" variant={week.presentations.length === 0 ? "outline" : "ghost"} onClick={actions.onNewPresentation}>
-                  <Plus className="size-4" />
-                  Presentation
-                </Button>
+                <span className="flex flex-wrap items-center gap-1">
+                  <Button size="sm" variant="ghost" onClick={actions.onImportPresentation}>
+                    Import
+                  </Button>
+                  <Button size="sm" variant={week.presentations.length === 0 ? "outline" : "ghost"} onClick={actions.onNewPresentation}>
+                    <Plus className="size-4" />
+                    Presentation
+                  </Button>
+                </span>
               )
             }
           >
@@ -319,17 +329,24 @@ export function WeekCard({
               </Empty>
             ) : (
               <ul className="space-y-2">
-                {week.presentations.map((deck) => (
-                  <li key={deck._id}>
+                {week.presentations.map((deck, i) => (
+                  <li key={deck._id} className="flex items-center gap-1">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center rounded-2xl border border-line bg-paper transition focus-within:border-ink/30 hover:border-ink/30">
                     <Link
                       href={`/courses/${courseId}/presentations/${deck._id}`}
-                      className="flex min-w-0 items-center gap-3 rounded-2xl border border-line bg-paper px-4 py-3 transition hover:border-ink/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+                      className="flex min-w-0 flex-1 basis-64 items-center gap-3 rounded-2xl px-4 py-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
                     >
                       <ThemeChip theme={deck.theme} />
                       <span className="min-w-0 flex-1">
                         <span className="flex flex-wrap items-center gap-2">
                           <span className="min-w-0 break-words font-medium">{deck.title}</span>
                           <Pill tone={statusTone(deck.status)}>{statusLabel(deck.status)}</Pill>
+                          {deck.shared && (
+                            <Pill tone="ok">
+                              <LinkChain className="size-3.5" />
+                              Shared by link
+                            </Pill>
+                          )}
                           {deck.createdVia === "mcp" && (
                             <Pill tone="lime">
                               <Robot className="size-3.5" />
@@ -343,6 +360,41 @@ export function WeekCard({
                       </span>
                       <ArrowRight className="size-5 shrink-0 text-graphite" />
                     </Link>
+                    {canEdit && weekTargets.length > 0 && (
+                      <div className="w-full px-4 pb-3 sm:w-auto sm:py-2 sm:pl-0 sm:pr-3">
+                        <MoveToSelect
+                          name={deck.title}
+                          targets={weekTargets}
+                          disabled={busy}
+                          onPick={(weekId) => {
+                            if (weekId !== null) void run(() => actions.onMovePresentation(deck._id, { weekId }));
+                          }}
+                        />
+                      </div>
+                    )}
+                    </div>
+                    {canEdit && week.presentations.length > 1 && (
+                      <span className="flex flex-col">
+                        <button
+                          type="button"
+                          aria-label={`Move “${deck.title}” up`}
+                          disabled={i === 0 || busy}
+                          className={iconButton}
+                          onClick={() => run(() => actions.onMovePresentation(deck._id, { direction: "up" }))}
+                        >
+                          <ArrowUp className="size-4" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Move “${deck.title}” down`}
+                          disabled={i === week.presentations.length - 1 || busy}
+                          className={iconButton}
+                          onClick={() => run(() => actions.onMovePresentation(deck._id, { direction: "down" }))}
+                        >
+                          <ArrowDown className="size-4" />
+                        </button>
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -433,7 +485,7 @@ export function WeekCard({
                       aside={
                         canEdit && moveTargets.length > 0 ? (
                           <MoveToSelect
-                            assessment={assessment}
+                            name={assessment.title}
                             targets={moveTargets}
                             disabled={busy}
                             onPick={(weekId) => run(() => actions.onPlace(assessment._id, weekId))}
@@ -610,12 +662,13 @@ function LinkRow({
 
 /** "Move to…": puts a task or quiz in another week, or among the unplaced. Resets after each pick. */
 export function MoveToSelect({
-  assessment,
+  name,
   targets,
   disabled,
   onPick,
 }: {
-  assessment: Assessment;
+  /** What it moves, for screen readers: "Move “Quiz 1” to another week". */
+  name: string;
   targets: MoveTarget[];
   disabled?: boolean;
   onPick: (weekId: WeekId | null) => void;
@@ -623,7 +676,7 @@ export function MoveToSelect({
   return (
     <div className="relative inline-flex max-w-full">
       <select
-        aria-label={`Move “${assessment.title}” to another week`}
+        aria-label={`Move “${name}” to another week`}
         value=""
         disabled={disabled}
         onChange={(event) => {

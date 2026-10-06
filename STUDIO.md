@@ -139,8 +139,8 @@ student; staff get 401 there, as students do here).
 
 | Tool | Does |
 |---|---|
-| `whoami`, `list_courses`, `get_course` | the student, their courses, a course's weeks with lessons, materials and work |
-| `get_lesson`, `find_in_lessons` | a lesson's blocks; where a phrase appears across their published lessons |
+| `whoami`, `list_courses`, `get_course` | the student, their courses, a course's weeks with lessons, presentations, materials and work |
+| `get_lesson`, `get_presentation`, `find_in_courses` | a lesson's blocks; a presentation's slides and speaker notes; where a phrase appears across their published lessons and presentations |
 | `my_progress`, `whats_next` | every piece of work with status and visible score; open work by deadline |
 | `get_my_work` | a **finished** task, quiz or exam: questions as seen, own answers, score, feedback and comments, as far as `resultsVisibility` allows |
 

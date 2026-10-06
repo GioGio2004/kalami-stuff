@@ -8,6 +8,7 @@ import { publicOrigin, serviceCredential, verifyOAuthToken } from "./oauth";
 import {
   codeQuestion,
   lessonBlockSchema,
+  sceneSchema,
   linkSchema,
   questionSchema,
   settingsSchema,
@@ -143,6 +144,7 @@ Writing lessons (in the course's language):
 - callout "definition" for each key term (title = the term), "tip" for practical advice, "warning" for a common mistake.
 - code blocks for every example; for HTML and CSS set preview: true so students see the result.
 - steps for procedures students follow in order.
+- A presentation is a lesson made only of scenes: use create_presentation for one (ask which week it goes in).
 - A scene block (type "scene") for anything that is better watched than read: a process, a diagram that builds up, a comparison, a code walkthrough. Elements on a 1200 × 675 stage plus steps of named animations (enter, exit, emphasize, focus, move, camera); get_kalami_format has the full vocabulary and an example. One idea per step, big short text, three to six steps. A lesson made only of scenes is a presentation.
 - A check every few blocks (single, multiple or short) so students test themselves; add an explanation.
 - Images only from https URLs you are sure of, always with alt text. YouTube or Vimeo links play inside the lesson.
@@ -717,6 +719,42 @@ const handler = createMcpHandler(
             lessonId: id,
             status: "draft",
             blockIds: lesson.blocks.map((block) => block.id),
+            reviewUrl: dashboardUrl(ctx, `/courses/${lesson.courseId}/lessons/${id}`),
+          };
+        }),
+    );
+
+    server.registerTool(
+      "create_presentation",
+      {
+        title: "Create presentation",
+        description:
+          "Creates a draft presentation: a lesson made of animated scenes, one scene per idea, at the end of a week. Each scene is elements on a 1200 x 675 stage plus steps of named animations (enter, exit, emphasize, focus, move, camera); students click through the steps. Call get_kalami_format first and follow its 'Lessons: animated scenes' section for the vocabulary and an example. Up to 30 scenes here; add more with add_lesson_blocks (type \"scene\"). Returns the lesson id, one block id per scene and a reviewUrl.",
+        inputSchema: z.object({
+          requestId,
+          weekId,
+          title: z.string().min(1).max(160).describe("The presentation's title, shown as the lesson's name"),
+          scenes: z
+            .array(sceneSchema)
+            .min(1)
+            .max(30)
+            .describe("The scenes in order. Give each a title (the slide's label) and three to six steps with one idea each"),
+        }),
+      },
+      async (args, ctx) =>
+        run(async () => {
+          const id = await convex.mutation(api.mcp.createLessonAsAgent, {
+            ...auth(ctx),
+            requestId: args.requestId,
+            weekId: args.weekId as Id<"weeks">,
+            title: args.title,
+            blocks: args.scenes.map((scene) => ({ type: "scene" as const, scene })),
+          });
+          const lesson = await convex.query(api.mcp.getLessonAsAgent, { ...auth(ctx), lessonId: id });
+          return {
+            lessonId: id,
+            status: "draft",
+            sceneBlockIds: lesson.blocks.map((block) => block.id),
             reviewUrl: dashboardUrl(ctx, `/courses/${lesson.courseId}/lessons/${id}`),
           };
         }),

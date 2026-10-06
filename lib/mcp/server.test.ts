@@ -60,6 +60,7 @@ describe("MCP server", () => {
       "create_assessment",
       "create_course",
       "create_lesson",
+      "create_presentation",
       "create_reading_document",
       "create_week",
       "delete_assessment",
@@ -98,6 +99,40 @@ describe("MCP server", () => {
     expect(names.some((name) => /publish/.test(name))).toBe(false);
     // Agents never delete whole courses.
     expect(names).not.toContain("delete_course");
+  });
+
+  test("create_presentation takes scenes, documents the vocabulary, and refuses a broken scene before Convex", async () => {
+    const listed = await body(await server.handleVerified(rpc(5, "tools/list"), authInfo));
+    const tool = (listed.result?.tools as { name: string; description: string; inputSchema: Record<string, unknown> }[]).find(
+      (t) => t.name === "create_presentation",
+    );
+    expect(tool?.description).toContain("Lessons: animated scenes");
+    const schema = JSON.stringify(tool?.inputSchema);
+    for (const word of ["heading", "arrow", "camera", "emphasize", "cascade", "1200"]) expect(schema).toContain(word);
+
+    // A step that names an element the scene doesn't have: the scene rules stop it in the tool, before any Convex call.
+    const response = await server.handleVerified(
+      rpc(6, "tools/call", {
+        name: "create_presentation",
+        arguments: {
+          requestId: "r1",
+          weekId: "w1",
+          title: "How the web works",
+          scenes: [
+            {
+              title: "Two machines",
+              elements: [{ id: "browser", kind: "shape", shape: "pill", label: "Browser", x: 100, y: 300 }],
+              steps: [{ actions: [{ do: "enter", targets: ["server"] }] }],
+            },
+          ],
+        },
+      }),
+      authInfo,
+    );
+    const { result } = await body(response);
+    expect(result?.isError).toBe(true);
+    const text = (result?.content as { text: string }[]).map((part) => part.text).join(" ");
+    expect(text).toContain("scenes.0: steps[0].actions[0].targets: no element with id \"server\".");
   });
 
   test("the header route refuses a request without a token", async () => {

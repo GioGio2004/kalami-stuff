@@ -33,6 +33,7 @@ async function leftovers(t: TestBackend, courseId: Id<"courses">, assessmentId: 
       "assessments",
       "weeks",
       "lessons",
+      "presentations",
       "enrollments",
       "courseStaff",
       "courseGroups",

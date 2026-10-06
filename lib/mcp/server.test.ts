@@ -66,6 +66,7 @@ describe("MCP server", () => {
       "delete_assessment",
       "delete_lesson",
       "delete_lesson_block",
+      "delete_presentation",
       "delete_question",
       "delete_week",
       "export_course_file",
@@ -74,6 +75,7 @@ describe("MCP server", () => {
       "get_course_outline",
       "get_kalami_format",
       "get_lesson",
+      "get_presentation",
       "import_kalami_file",
       "list_courses",
       "list_reading_documents",
@@ -90,6 +92,7 @@ describe("MCP server", () => {
       "update_course",
       "update_lesson",
       "update_lesson_block",
+      "update_presentation",
       "update_question",
       "update_week",
       "update_week_link",
@@ -101,16 +104,16 @@ describe("MCP server", () => {
     expect(names).not.toContain("delete_course");
   });
 
-  test("create_presentation takes scenes, documents the vocabulary, and refuses a broken scene before Convex", async () => {
+  test("create_presentation takes typed slides in a theme, documents them, and refuses a broken deck before Convex", async () => {
     const listed = await body(await server.handleVerified(rpc(5, "tools/list"), authInfo));
     const tool = (listed.result?.tools as { name: string; description: string; inputSchema: Record<string, unknown> }[]).find(
       (t) => t.name === "create_presentation",
     );
-    expect(tool?.description).toContain("Lessons: animated scenes");
+    expect(tool?.description).toContain("one idea per slide");
     const schema = JSON.stringify(tool?.inputSchema);
-    for (const word of ["heading", "arrow", "camera", "emphasize", "cascade", "1200"]) expect(schema).toContain(word);
+    for (const word of ["statement", "diagram", "compare", "closing", "aurora", "chalk", "build", "notes"]) expect(schema).toContain(word);
 
-    // A step that names an element the scene doesn't have: the scene rules stop it in the tool, before any Convex call.
+    // A hub needs at least three nodes: the deck rules stop it in the tool, before any Convex call.
     const response = await server.handleVerified(
       rpc(6, "tools/call", {
         name: "create_presentation",
@@ -118,12 +121,10 @@ describe("MCP server", () => {
           requestId: "r1",
           weekId: "w1",
           title: "How the web works",
-          scenes: [
-            {
-              title: "Two machines",
-              elements: [{ id: "browser", kind: "shape", shape: "pill", label: "Browser", x: 100, y: 300 }],
-              steps: [{ actions: [{ do: "enter", targets: ["server"] }] }],
-            },
+          theme: "aurora",
+          slides: [
+            { type: "title", title: "How the **web** works" },
+            { type: "diagram", layout: "hub", nodes: [{ label: "Page" }, { label: "CSS" }] },
           ],
         },
       }),
@@ -132,7 +133,7 @@ describe("MCP server", () => {
     const { result } = await body(response);
     expect(result?.isError).toBe(true);
     const text = (result?.content as { text: string }[]).map((part) => part.text).join(" ");
-    expect(text).toContain("scenes.0: steps[0].actions[0].targets: no element with id \"server\".");
+    expect(text).toContain("slides[1].nodes: 3 to 8 nodes for a hub.");
   });
 
   test("the header route refuses a request without a token", async () => {

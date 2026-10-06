@@ -18,6 +18,7 @@ export const ACTIVITY_FILTERS: { value: string; label: string }[] = [
   { value: "questions", label: "Questions" },
   { value: "weeks", label: "Weeks" },
   { value: "lessons", label: "Lessons" },
+  { value: "presentations", label: "Presentations" },
   { value: "groups", label: "Groups" },
   { value: "enrollments", label: "Enrollments" },
   { value: "users", label: "People and roles" },

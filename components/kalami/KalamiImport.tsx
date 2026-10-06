@@ -231,6 +231,7 @@ function SummaryCard({
   const counts = [
     [summary.weeks, "week", "weeks"],
     [summary.lessons, "lesson", "lessons"],
+    [summary.presentations, "presentation", "presentations"],
     [summary.assessments.quiz, "quiz", "quizzes"],
     [summary.assessments.task, "task", "tasks"],
     [summary.assessments.midterm + summary.assessments.final, "exam", "exams"],

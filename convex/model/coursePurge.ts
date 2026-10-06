@@ -136,6 +136,15 @@ export async function purgeCourseStep(ctx: MutationCtx, courseId: Id<"courses">)
       budget,
       (n) =>
         ctx.db
+          .query("presentations")
+          .withIndex("by_courseId", (q) => q.eq("courseId", courseId))
+          .take(n),
+      (row) => ctx.db.delete("presentations", row._id),
+    )) &&
+    (await drain(
+      budget,
+      (n) =>
+        ctx.db
           .query("weeks")
           .withIndex("by_courseId_and_order", (q) => q.eq("courseId", courseId))
           .take(n),

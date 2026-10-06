@@ -27,6 +27,10 @@ import { StaffGate } from "@/components/StaffGate";
 import { StaffNav } from "@/components/StaffNav";
 import { AssessmentBuilder } from "@/components/studio/AssessmentBuilder";
 import { LessonEditor } from "@/components/lessons-editor/LessonEditor";
+import { DeckPlayer } from "@/components/presentations/DeckPlayer";
+import { PresentationEditor } from "@/components/presentations-editor/PresentationEditor";
+import { SAMPLE_DECK } from "@/components/presentations/samples";
+import type { DeckTheme } from "@/lib/presentation";
 import { SCENE_TEMPLATES } from "@/components/lessons/scene/templates";
 import { CourseGroups } from "@/components/studio/CourseGroups";
 import { CourseOutline, type OutlineActions } from "@/components/studio/CourseOutline";
@@ -40,6 +44,7 @@ import type {
   CourseSummary,
   DriveConnection,
   LessonDetail,
+  PresentationDetail,
   OutlineWeek,
   QuestionWithKey,
 } from "@/components/studio/types";
@@ -485,6 +490,7 @@ const outlineWeek = (fields: Partial<OutlineWeek> & Pick<OutlineWeek, "title" | 
   links: [],
   drive: null,
   lessons: [],
+  presentations: [],
   assessments: [],
   ...fields,
 });
@@ -504,6 +510,26 @@ const outlineWeeks: OutlineWeek[] = [
     lessons: [
       sampleLesson({ title: "What happens when you open a page", status: "published", blockCount: 12 }),
       sampleLesson({ title: "Your first HTML document", status: "published", blockCount: 9 }),
+    ],
+    presentations: [
+      {
+        _id: "sample_deck_web" as OutlineWeek["presentations"][number]["_id"],
+        title: "How the web works",
+        status: "published",
+        theme: "ink",
+        slideCount: 15,
+        createdVia: "mcp",
+        updatedAt: NOW - 2 * DAY,
+      },
+      {
+        _id: "sample_deck_dns" as OutlineWeek["presentations"][number]["_id"],
+        title: "DNS in five minutes",
+        status: "draft",
+        theme: "aurora",
+        slideCount: 8,
+        createdVia: "web",
+        updatedAt: NOW - DAY,
+      },
     ],
     assessments: [
       sampleAssessment({ kind: "quiz", title: "HTML basics", status: "published", publishedAt: NOW - 10 * DAY }),
@@ -569,6 +595,7 @@ const outlineActions: OutlineActions = {
   onRetryDrive: pause,
   onCreateLesson: pause,
   onMoveLesson: pause,
+  onCreatePresentation: pause,
   onCreateAssessment: pause,
   onPlace: pause,
 };
@@ -769,6 +796,7 @@ const kalamiSummary = {
   language: "en" as const,
   weeks: 12,
   lessons: 31,
+  presentations: 4,
   assessments: { task: 6, quiz: 11, midterm: 1, final: 1 },
   questions: 214,
   links: 24,
@@ -828,6 +856,12 @@ const views: Record<string, string> = {
   "course-view-only": "Studio · course outline (view only)",
   "lesson-editor": "Studio · lesson editor",
   "lesson-preview": "Studio · lesson preview",
+  "presentation-editor": "Studio · presentation editor",
+  "deck-ink": "Presentation · player (Ink)",
+  "deck-paper": "Presentation · player (Paper)",
+  "deck-aurora": "Presentation · player (Aurora)",
+  "deck-ember": "Presentation · player (Ember)",
+  "deck-chalk": "Presentation · player (Chalk)",
   inbox: "Inbox · lecturer and team messages",
   "inbox-empty": "Inbox · nothing yet",
   thread: "Inbox · one conversation",
@@ -929,6 +963,40 @@ export function StaffGallery({ view }: { view?: string }) {
       return staffPage(lessonPage("edit"));
     case "lesson-preview":
       return staffPage(lessonPage("preview"));
+    case "presentation-editor":
+      return staffPage(
+        <PresentationEditor
+          deck={{
+            _id: "sample_deck_web" as PresentationDetail["_id"],
+            courseId: webBasics._id,
+            courseTitle: webBasics.title,
+            weekId: outlineWeeks[0]._id,
+            weekTitle: outlineWeeks[0].title,
+            weekStatus: "published",
+            title: "How the web works",
+            theme: SAMPLE_DECK.theme,
+            slides: SAMPLE_DECK.slides,
+            status: "draft",
+            canEdit: true,
+            createdVia: "mcp",
+            updatedAt: NOW - DAY,
+          }}
+          onRename={pause}
+          onSave={async () => SAMPLE_DECK.slides.map((slide) => slide.id)}
+          onSetStatus={pause}
+          onDelete={pause}
+        />,
+      );
+    case "deck-ink":
+    case "deck-paper":
+    case "deck-aurora":
+    case "deck-ember":
+    case "deck-chalk":
+      return staffPage(
+        <div className="mx-auto max-w-6xl">
+          <DeckPlayer deck={{ ...SAMPLE_DECK, theme: view.slice(5) as DeckTheme }} title="How the web works" />
+        </div>,
+      );
     case "kalami-import":
       return staffPage(kalamiDialog(null));
     case "kalami-verified":

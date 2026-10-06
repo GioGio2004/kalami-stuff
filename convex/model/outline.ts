@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { publishStatusValidator, weekLinkValidator } from "../lib/validators";
+import { deckThemeValidator, publishStatusValidator, weekLinkValidator } from "../lib/validators";
 import { assessmentValidator } from "./assessments";
 
 // The course outline as the staff app and agents see it (model/weeks.ts getOutline).
@@ -11,6 +11,16 @@ const outlineLessonValidator = v.object({
   title: v.string(),
   status: publishStatusValidator,
   blockCount: v.number(),
+  createdVia: v.union(v.literal("web"), v.literal("mcp")),
+  updatedAt: v.number(),
+});
+
+const outlinePresentationValidator = v.object({
+  _id: v.id("presentations"),
+  title: v.string(),
+  status: publishStatusValidator,
+  theme: deckThemeValidator,
+  slideCount: v.number(),
   createdVia: v.union(v.literal("web"), v.literal("mcp")),
   updatedAt: v.number(),
 });
@@ -37,6 +47,7 @@ export const outlineWeekValidator = v.object({
     }),
   ),
   lessons: v.array(outlineLessonValidator),
+  presentations: v.array(outlinePresentationValidator),
   assessments: v.array(assessmentValidator),
 });
 

@@ -19,13 +19,16 @@ export type UniversityOption = FunctionReturnType<typeof api.courses.universitie
 export type CourseOutline = FunctionReturnType<typeof api.weeks.outline>;
 export type OutlineWeek = CourseOutline["weeks"][number];
 export type OutlineLesson = OutlineWeek["lessons"][number];
+export type OutlinePresentation = OutlineWeek["presentations"][number];
 export type WeekLink = OutlineWeek["links"][number];
 export type WeekId = OutlineWeek["_id"];
 export type LessonId = OutlineLesson["_id"];
+export type PresentationId = OutlinePresentation["_id"];
 export type AssessmentId = Assessment["_id"];
 export type DriveConnection = FunctionReturnType<typeof api.drive.connection>;
 export type LessonDetail = FunctionReturnType<typeof api.lessons.get>;
 export type LessonBlockInput = FunctionArgs<typeof api.lessons.saveBlocks>["blocks"][number];
+export type PresentationDetail = FunctionReturnType<typeof api.presentations.get>;
 
 export type NewCourseArgs = FunctionArgs<typeof api.courses.create>;
 export type UpdateCourseArgs = Omit<FunctionArgs<typeof api.courses.update>, "courseId">;

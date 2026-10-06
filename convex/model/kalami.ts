@@ -15,12 +15,14 @@ import {
   type KalamiSummary,
 } from "../lib/kalami";
 import { sign, verify } from "../lib/tokens";
-import type { AnswerKey, CheckRuleDoc, LessonBlock, QuestionInput } from "../lib/validators";
+import { DEFAULT_THEME } from "../lib/presentation";
+import type { AnswerKey, CheckRuleDoc, LessonBlock, QuestionInput, SlideDoc } from "../lib/validators";
 import { defaultSettings, validateSettings } from "./assessments";
 import { displayName } from "./audit";
 import { normalizeBlocks } from "./lessons";
 import { normalizeQuestion } from "./questions";
 import { lessonsOf, requireHttpsUrl, weeksOf } from "./weeks";
+import { normalizeSlides, presentationsOf } from "./presentations";
 
 /**
  * Exporting a course to a .kalami file and checking one before import (the
@@ -118,6 +120,11 @@ function blockToFile({ id: _id, ...rest }: LessonBlock) {
   return rest;
 }
 
+function slideToFile({ id: _id, ...rest }: SlideDoc) {
+  void _id;
+  return rest;
+}
+
 /**
  * The course as a .kalami file, signed. Only course editors may export: the
  * file carries every answer key. Archived assessments are left out.
@@ -138,6 +145,7 @@ export async function exportCourseFile(ctx: QueryCtx, actor: Actor, courseId: Id
   const fileWeeks = [];
   for (const week of weeks) {
     const lessons = await lessonsOf(ctx, week._id);
+    const decks = await presentationsOf(ctx, week._id);
     const placed = [];
     for (const a of assessments) {
       if (a.weekId === week._id && (a.kind === "task" || a.kind === "quiz")) {
@@ -148,6 +156,10 @@ export async function exportCourseFile(ctx: QueryCtx, actor: Actor, courseId: Id
       title: week.title,
       description: week.description,
       lessons: lessons.map((lesson) => ({ title: lesson.title, blocks: lesson.blocks.map(blockToFile) })),
+      // Left out when a week has none, so files of courses without presentations stay as they were.
+      ...(decks.length > 0
+        ? { presentations: decks.map((deck) => ({ title: deck.title, theme: deck.theme, slides: deck.slides.map(slideToFile) })) }
+        : {}),
       links: week.links.map((link) => ({ title: link.title, url: link.url })),
       driveFolder: week.folderId ? `https://drive.google.com/drive/folders/${week.folderId}` : undefined,
       assessments: placed,
@@ -229,6 +241,9 @@ export async function checkKalami(raw: string): Promise<KalamiCheck> {
   file.course.weeks.forEach((week, w) => {
     week.links.forEach((link, i) => attempt(`course › weeks[${w}] › links[${i}]`, () => requireHttpsUrl(link.url)));
     week.lessons.forEach((lesson, l) => attempt(`course › weeks[${w}] › lessons[${l}]`, () => normalizeBlocks(lesson.blocks)));
+    week.presentations.forEach((deck, p) =>
+      attempt(`course › weeks[${w}] › presentations[${p}]`, () => normalizeSlides(deck.slides, deck.theme ?? DEFAULT_THEME)),
+    );
     week.assessments.forEach((a, i) => checkAssessment(`course › weeks[${w}] › assessments[${i}]`, a));
   });
   file.course.exams.forEach((a, i) => checkAssessment(`course › exams[${i}]`, a));
@@ -287,6 +302,9 @@ export async function discardImportedCourse(ctx: MutationCtx, actor: Actor, cour
   for (const week of await weeksOf(ctx, courseId)) {
     for (const lesson of await lessonsOf(ctx, week._id)) {
       await ctx.db.delete("lessons", lesson._id);
+    }
+    for (const deck of await presentationsOf(ctx, week._id)) {
+      await ctx.db.delete("presentations", deck._id);
     }
     await ctx.db.delete("weeks", week._id);
   }

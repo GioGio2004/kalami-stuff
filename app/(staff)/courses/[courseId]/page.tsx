@@ -53,6 +53,7 @@ export default function CoursePage() {
   const moveToMyDrive = useMutation(api.weeks.moveToMyDrive);
   const place = useMutation(api.weeks.place);
   const createLesson = useMutation(api.lessons.create);
+  const createPresentation = useMutation(api.presentations.create);
   const moveLesson = useMutation(api.lessons.move);
   const createAssessment = useMutation(api.assessments.create);
 
@@ -173,6 +174,10 @@ export default function CoursePage() {
             onCreateLesson: async (weekId, title) => {
               const lessonId = await createLesson({ weekId, title });
               router.push(`/courses/${id}/lessons/${lessonId}`);
+            },
+            onCreatePresentation: async (weekId, title) => {
+              const presentationId = await createPresentation({ weekId, title });
+              router.push(`/courses/${id}/presentations/${presentationId}`);
             },
             onMoveLesson: async (lessonId, direction) => {
               await moveLesson({ lessonId, direction });

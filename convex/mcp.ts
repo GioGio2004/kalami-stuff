@@ -17,6 +17,8 @@ import {
   codeQuestionInputValidator,
   lessonBlockInputValidator,
   viaValidator,
+  deckThemeValidator,
+  slideInputValidator,
 } from "./lib/validators";
 import { assessmentValidator, createAssessment, deleteAssessment, updateAssessment } from "./model/assessments";
 import { remember, remembered } from "./model/agentRequests";
@@ -44,6 +46,13 @@ import {
   type InspectResult,
 } from "./model/kalamiImport";
 import { outlineValidator } from "./model/outline";
+import {
+  createPresentation,
+  deletePresentation,
+  getPresentation,
+  savePresentation,
+  staffPresentationValidator,
+} from "./model/presentations";
 import { addDriveFolder } from "./model/weeks";
 import { codeTaskReportValidator, testCodeTask } from "./model/codeTasks";
 import {
@@ -635,6 +644,73 @@ export const deleteLessonAsAgent = mutation({
     const actor = await requireTokenActor(ctx, args.token, args.client);
     await enforceLimit(ctx, "agent", actor.user._id);
     await deleteLesson(ctx, actor, args.lessonId);
+    return null;
+  },
+});
+
+// --- Presentations ----------------------------------------------------------------------
+//
+// Agents draft whole decks (typed slides in a theme, lib/presentation) and may
+// rewrite drafts; publishing stays with the lecturer.
+
+export const getPresentationAsAgent = query({
+  args: { ...tokenArg, presentationId: v.id("presentations") },
+  returns: staffPresentationValidator,
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    return await getPresentation(ctx, actor, args.presentationId);
+  },
+});
+
+export const createPresentationAsAgent = mutation({
+  args: {
+    ...tokenArg,
+    ...requestArg,
+    weekId: v.id("weeks"),
+    title: v.string(),
+    theme: v.optional(deckThemeValidator),
+    slides: v.array(slideInputValidator),
+  },
+  returns: v.id("presentations"),
+  handler: async (ctx, { token, client, requestId, ...args }) => {
+    const actor = await requireTokenActor(ctx, token, client);
+    const earlier = await remembered(ctx, actor, requestId);
+    if (typeof earlier === "string") {
+      return earlier as Id<"presentations">;
+    }
+    await enforceLimit(ctx, "agent", actor.user._id);
+    if (args.slides.length === 0) {
+      throw appError("INVALID_INPUT", "A presentation needs at least one slide.");
+    }
+    const presentationId = await createPresentation(ctx, actor, args);
+    await remember(ctx, actor, requestId, presentationId);
+    return presentationId;
+  },
+});
+
+export const updatePresentationAsAgent = mutation({
+  args: {
+    ...tokenArg,
+    presentationId: v.id("presentations"),
+    title: v.optional(v.string()),
+    theme: v.optional(deckThemeValidator),
+    slides: v.optional(v.array(slideInputValidator)),
+  },
+  returns: v.array(v.string()),
+  handler: async (ctx, { token, client, presentationId, ...patch }) => {
+    const actor = await requireTokenActor(ctx, token, client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    return await savePresentation(ctx, actor, presentationId, patch);
+  },
+});
+
+export const deletePresentationAsAgent = mutation({
+  args: { ...tokenArg, presentationId: v.id("presentations") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await deletePresentation(ctx, actor, args.presentationId);
     return null;
   },
 });

@@ -36,6 +36,7 @@ export const summaryValidator = v.object({
   language: v.union(v.literal("ka"), v.literal("en")),
   weeks: v.number(),
   lessons: v.number(),
+  presentations: v.number(),
   assessments: v.object({ task: v.number(), quiz: v.number(), midterm: v.number(), final: v.number() }),
   questions: v.number(),
   links: v.number(),
@@ -105,6 +106,7 @@ export async function runImport(
         description: week.description,
         links: week.links,
         lessons: week.lessons,
+        presentations: week.presentations,
       });
       for (const assessment of week.assessments) {
         await ctx.runMutation(internal.kalami.importAssessment, { as, courseId, weekId, assessment });

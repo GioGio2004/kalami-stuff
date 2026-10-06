@@ -1,0 +1,1041 @@
+/*
+ * The deck player's styles. Every size is in the stage's container units
+ * (cqmin), so a slide looks the same at any size: the full screen, a page, the
+ * editor's preview or a thumbnail in the overview. Colours, typefaces and
+ * textures come from the theme's CSS variables (themes.ts). Accent marks are
+ * drawn with masks and revealed through `--mark` (0 → 1), which the
+ * choreography animates; without it they're fully drawn.
+ *
+ * This folder is copied into the student app by scripts/sync-student.mjs; edit it here.
+ */
+
+/* --- The stage ---------------------------------------------------------------------- */
+
+.stage {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  container: deck / size;
+  background: var(--deck-bg);
+  color: var(--deck-fg);
+  font-family: var(--deck-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-kerning: normal;
+  font-feature-settings: "ss01", "cv11";
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+.slide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 7.2cqmin 8.2cqmin 9.4cqmin;
+  color: var(--deck-fg);
+}
+
+.slide[data-tone="accent"] {
+  --deck-fg: var(--deck-accent-fg);
+  --deck-muted: var(--deck-accent-muted);
+  --deck-line: var(--deck-accent-line);
+  --deck-strong: var(--deck-accent-fg);
+  --deck-mark-bg: var(--deck-accent-fg);
+  --deck-surface: color-mix(in oklab, var(--deck-accent-fg) 7%, transparent);
+  --deck-surface-line: var(--deck-accent-line);
+}
+
+/* SplitText's line masks clip what slides up from below; the padding keeps
+   tall letters (Georgian has many), descenders and the underline marks inside. */
+.stage :global(.deck-line-mask) {
+  padding-block: 0.16em 0.26em;
+  margin-block: -0.16em -0.26em;
+  padding-inline: 0.08em;
+  margin-inline: -0.08em;
+}
+
+.stage :global(.deck-word),
+.stage :global(.deck-char) {
+  will-change: transform, opacity;
+}
+
+/* --- Type --------------------------------------------------------------------------- */
+
+.display {
+  margin: 0;
+  font-family: var(--deck-display);
+  font-weight: var(--deck-display-weight);
+  letter-spacing: var(--deck-tracking);
+  line-height: 0.98;
+  text-wrap: balance;
+}
+
+.titleXL {
+  font-size: calc(var(--fs, 10.5cqmin) * var(--deck-display-scale));
+  line-height: 0.95;
+}
+
+.titleL {
+  font-size: calc(var(--fs, 8.4cqmin) * var(--deck-display-scale));
+}
+
+.heading {
+  font-size: calc(var(--fs, 5.4cqmin) * var(--deck-display-scale));
+  line-height: 1.02;
+}
+
+.body {
+  margin: 0;
+  font-size: var(--fs, 3.3cqmin);
+  line-height: 1.34;
+  font-weight: 450;
+  letter-spacing: -0.012em;
+  text-wrap: pretty;
+}
+
+.small {
+  margin: 0;
+  font-size: 2.3cqmin;
+  line-height: 1.45;
+  color: var(--deck-muted);
+  text-wrap: pretty;
+}
+
+.muted {
+  color: var(--deck-muted);
+}
+
+.kicker {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 1.3cqmin;
+  font-family: var(--deck-mono);
+  font-size: 1.55cqmin;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--deck-muted);
+  white-space: nowrap;
+}
+
+.kickerDot {
+  width: 1.1cqmin;
+  height: 1.1cqmin;
+  flex: none;
+  border-radius: 50%;
+  background: var(--deck-strong);
+}
+
+.code {
+  font-family: var(--deck-mono);
+  font-size: 0.84em;
+  font-weight: 500;
+  letter-spacing: 0;
+  padding: 0.04em 0.3em;
+  border-radius: 0.28em;
+  background: var(--deck-surface);
+  box-shadow: inset 0 0 0 1px var(--deck-surface-line);
+}
+
+/* --- Accent marks ------------------------------------------------------------------- */
+
+.mark {
+  position: relative;
+  isolation: isolate;
+}
+
+.slide[data-mark="scribble"] .mark,
+.slide[data-mark="chalk"] .mark {
+  color: var(--deck-strong);
+}
+
+/* Splitting text into lines can leave an empty copy of a marked span; it draws nothing. */
+.mark:empty::before,
+.mark:empty::after {
+  content: none;
+}
+
+/* A hand-drawn underline, drawn left to right. */
+.slide[data-mark="scribble"] .mark::after {
+  content: "";
+  position: absolute;
+  left: -0.04em;
+  right: -0.04em;
+  /* From the bottom of the font's content box, which hangs well below a tight line box. */
+  bottom: 0.08em;
+  height: 0.2em;
+  background: var(--deck-mark-bg);
+  pointer-events: none;
+  -webkit-mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 24' preserveAspectRatio='none'%3E%3Cpath d='M3 15 C 30 8 58 9 86 13 S 140 19 168 10 S 192 9 197 12' fill='none' stroke='black' stroke-width='5.5' stroke-linecap='round'/%3E%3C/svg%3E")
+      0 0 / 100% 100% no-repeat,
+    linear-gradient(#000 0 0) 0 0 / calc(var(--mark, 1) * 100%) 100% no-repeat;
+  -webkit-mask-composite: source-in;
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 24' preserveAspectRatio='none'%3E%3Cpath d='M3 15 C 30 8 58 9 86 13 S 140 19 168 10 S 192 9 197 12' fill='none' stroke='black' stroke-width='5.5' stroke-linecap='round'/%3E%3C/svg%3E")
+      0 0 / 100% 100% no-repeat,
+    linear-gradient(#000 0 0) 0 0 / calc(var(--mark, 1) * 100%) 100% no-repeat;
+  mask-composite: intersect;
+}
+
+/* A highlighter stroke behind the words, swept left to right. */
+.slide[data-mark="marker"] .mark::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: -0.12em;
+  right: -0.12em;
+  top: 0.4em;
+  bottom: 0.14em;
+  background: var(--deck-mark-bg);
+  pointer-events: none;
+  -webkit-mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 40' preserveAspectRatio='none'%3E%3Cpath d='M4 9 C 50 4 120 7 196 5 L 197 33 C 140 37 70 34 3 36 Z' fill='black'/%3E%3C/svg%3E")
+      0 0 / 100% 100% no-repeat,
+    linear-gradient(#000 0 0) 0 0 / calc(var(--mark, 1) * 100%) 100% no-repeat;
+  -webkit-mask-composite: source-in;
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 40' preserveAspectRatio='none'%3E%3Cpath d='M4 9 C 50 4 120 7 196 5 L 197 33 C 140 37 70 34 3 36 Z' fill='black'/%3E%3C/svg%3E")
+      0 0 / 100% 100% no-repeat,
+    linear-gradient(#000 0 0) 0 0 / calc(var(--mark, 1) * 100%) 100% no-repeat;
+  mask-composite: intersect;
+}
+
+/* A chalk loop around the words, drawn round like a hand would. */
+.slide[data-mark="chalk"] .mark::after {
+  content: "";
+  position: absolute;
+  left: -0.3em;
+  right: -0.3em;
+  top: 0.06em;
+  bottom: 0.04em;
+  background: var(--deck-mark-bg);
+  pointer-events: none;
+  opacity: 0.92;
+  -webkit-mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 60' preserveAspectRatio='none'%3E%3Cpath d='M106 6 C 160 5 196 15 195 31 C 194 47 150 56 100 55 C 46 54 5 46 6 30 C 7 14 48 6 112 9' fill='none' stroke='black' stroke-width='3.4' stroke-linecap='round'/%3E%3C/svg%3E")
+      0 0 / 100% 100% no-repeat,
+    conic-gradient(from -80deg, #000 calc(var(--mark, 1) * 360deg), #0000 0);
+  -webkit-mask-composite: source-in;
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 60' preserveAspectRatio='none'%3E%3Cpath d='M106 6 C 160 5 196 15 195 31 C 194 47 150 56 100 55 C 46 54 5 46 6 30 C 7 14 48 6 112 9' fill='none' stroke='black' stroke-width='3.4' stroke-linecap='round'/%3E%3C/svg%3E")
+      0 0 / 100% 100% no-repeat,
+    conic-gradient(from -80deg, #000 calc(var(--mark, 1) * 360deg), #0000 0);
+  mask-composite: intersect;
+}
+
+/* --- Backdrop ----------------------------------------------------------------------- */
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.glow {
+  position: absolute;
+  width: 95cqmax;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  will-change: transform, left, top;
+}
+
+.glowA {
+  background: radial-gradient(closest-side, var(--deck-glow-a), transparent);
+}
+
+.glowB {
+  background: radial-gradient(closest-side, var(--deck-glow-b), transparent);
+}
+
+.glowC {
+  background: radial-gradient(closest-side, var(--deck-glow-c), transparent);
+}
+
+.pattern {
+  position: absolute;
+  inset: 0;
+}
+
+.pattern[data-pattern="dots"] {
+  background-image: radial-gradient(color-mix(in oklab, var(--deck-fg) 14%, transparent) 0.13cqmin, transparent 0.15cqmin);
+  background-size: 3.4cqmin 3.4cqmin;
+  background-position: 1.7cqmin 1.7cqmin;
+}
+
+.pattern[data-pattern="grid"] {
+  background-image:
+    linear-gradient(var(--deck-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--deck-line) 1px, transparent 1px);
+  background-size: 9cqmin 9cqmin;
+  background-position: -1px -1px;
+  opacity: 0.35;
+  -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 45%, #000 20%, transparent 85%);
+  mask-image: radial-gradient(ellipse 75% 70% at 50% 45%, #000 20%, transparent 85%);
+}
+
+.pattern[data-pattern="chalk"] {
+  background:
+    radial-gradient(55% 38% at 18% 28%, color-mix(in oklab, var(--deck-fg) 7%, transparent), transparent 70%),
+    radial-gradient(45% 32% at 82% 74%, color-mix(in oklab, var(--deck-fg) 6%, transparent), transparent 70%),
+    radial-gradient(30% 22% at 62% 18%, color-mix(in oklab, var(--deck-fg) 4%, transparent), transparent 70%),
+    repeating-linear-gradient(-14deg, color-mix(in oklab, var(--deck-fg) 2.2%, transparent) 0 0.25cqmin, transparent 0.25cqmin 1.3cqmin);
+}
+
+.accentLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: var(--deck-accent-bg);
+  clip-path: circle(0% at 100% 50%);
+}
+
+.grain {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  opacity: var(--deck-grain);
+  mix-blend-mode: var(--deck-grain-blend);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 220px 220px;
+}
+
+/* --- Title ---------------------------------------------------------------------------- */
+
+.orb {
+  position: absolute;
+  right: -9cqmin;
+  top: -12cqmin;
+  width: 58cqmin;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  pointer-events: none;
+  background: conic-gradient(from 210deg, var(--deck-strong), transparent 32%, transparent 55%, var(--deck-strong) 78%, transparent 92%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1.25cqmin), #000 calc(100% - 1.15cqmin));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 1.25cqmin), #000 calc(100% - 1.15cqmin));
+  opacity: 0.9;
+}
+
+.slide[data-mark="marker"] .orb {
+  background: var(--deck-mark-bg);
+  -webkit-mask: none;
+  mask: none;
+  opacity: 0.85;
+}
+
+.slide[data-mark="chalk"] .orb {
+  background: none;
+  -webkit-mask: none;
+  mask: none;
+  border: 0.45cqmin dashed color-mix(in oklab, var(--deck-strong) 70%, transparent);
+  opacity: 0.8;
+}
+
+/* --- Section ---------------------------------------------------------------------------- */
+
+.sectionNumber {
+  margin: 0;
+  font-family: var(--deck-display);
+  font-weight: var(--deck-display-weight);
+  font-size: calc(30cqmin * var(--deck-display-scale));
+  line-height: 0.82;
+  letter-spacing: -0.06em;
+  color: transparent;
+  -webkit-text-stroke: max(1px, 0.26cqmin) var(--deck-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.rule {
+  display: block;
+  height: max(1px, 0.2cqmin);
+  background: currentColor;
+  opacity: 0.45;
+  transform-origin: 0 50%;
+}
+
+/* --- Points --------------------------------------------------------------------------- */
+
+.points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.point {
+  position: relative;
+  display: grid;
+  grid-template-columns: 7.5cqmin minmax(0, 1fr);
+  align-items: baseline;
+  padding-block: calc(var(--fs, 3.3cqmin) * 0.52);
+}
+
+.pointRule {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--deck-line);
+  transform-origin: 0 50%;
+}
+
+.pointNum {
+  font-family: var(--deck-mono);
+  font-size: 1.6cqmin;
+  letter-spacing: 0.1em;
+  color: var(--deck-strong);
+}
+
+/* --- Number --------------------------------------------------------------------------- */
+
+.bigNumber {
+  margin: 0;
+  font-family: var(--deck-display);
+  font-weight: var(--deck-display-weight);
+  font-size: calc(var(--fs, 26cqmin) * var(--deck-display-scale));
+  line-height: 0.86;
+  letter-spacing: -0.055em;
+  font-variant-numeric: tabular-nums;
+  color: var(--deck-strong);
+  white-space: nowrap;
+}
+
+.affix {
+  font-size: 0.5em;
+  letter-spacing: -0.02em;
+  vertical-align: 0.62em;
+  margin-inline: 0.04em;
+}
+
+/* --- Compare ------------------------------------------------------------------------- */
+
+.compare {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 2.6cqmin;
+  align-items: center;
+  align-content: center;
+  margin-top: 4cqmin;
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 2.2cqmin;
+  padding: 4cqmin 4.2cqmin;
+  border-radius: 3cqmin;
+  background: var(--deck-surface);
+  box-shadow: inset 0 0 0 1px var(--deck-surface-line);
+}
+
+.sideTitle {
+  margin: 0;
+  font-family: var(--deck-mono);
+  font-size: 1.7cqmin;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--deck-muted);
+}
+
+.sidePoints {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1.8cqmin;
+}
+
+.sidePoint {
+  display: grid;
+  grid-template-columns: 2.6cqmin minmax(0, 1fr);
+  align-items: baseline;
+}
+
+.bullet {
+  width: 1cqmin;
+  height: 1cqmin;
+  border-radius: 50%;
+  background: var(--deck-strong);
+  transform: translateY(-0.3cqmin);
+}
+
+.vs {
+  align-self: center;
+  width: 7.2cqmin;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--deck-mono);
+  font-size: 1.7cqmin;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: var(--deck-fg);
+  color: var(--deck-bg);
+}
+
+.slide[data-tone="accent"] .vs {
+  color: var(--deck-fg);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--deck-line);
+}
+
+.verdict {
+  margin: 3.6cqmin 0 0;
+  display: flex;
+  align-items: center;
+  gap: 2.4cqmin;
+}
+
+.verdictBar {
+  flex: none;
+  width: 6cqmin;
+  height: max(2px, 0.45cqmin);
+  border-radius: 99px;
+  background: var(--deck-strong);
+  transform-origin: 0 50%;
+}
+
+/* --- Quote ---------------------------------------------------------------------------- */
+
+.quoteGlyph {
+  display: block;
+  height: 0.42em;
+  font-family: var(--deck-display);
+  font-weight: var(--deck-display-weight);
+  font-size: calc(24cqmin * var(--deck-display-scale));
+  line-height: 0.9;
+  color: var(--deck-strong);
+}
+
+.quote {
+  margin: 0;
+  font-family: var(--deck-display);
+  font-weight: calc(var(--deck-display-weight) - 120);
+  font-size: calc(var(--fs, 5.6cqmin) * var(--deck-display-scale));
+  line-height: 1.14;
+  letter-spacing: calc(var(--deck-tracking) * 0.55);
+  text-wrap: balance;
+}
+
+.author {
+  margin: 4.2cqmin 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.2cqmin 2.2cqmin;
+  font-size: 2.5cqmin;
+  font-weight: 550;
+}
+
+.authorRule {
+  display: block;
+  width: 6cqmin;
+  height: max(1px, 0.24cqmin);
+  background: currentColor;
+  transform-origin: 0 50%;
+}
+
+/* --- Code ----------------------------------------------------------------------------- */
+
+.codeWrap {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 4.4cqmin;
+  align-items: center;
+  margin-top: 3.4cqmin;
+}
+
+.codeWrap[data-notes="false"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.codeWindow {
+  min-width: 0;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 2.4cqmin;
+  background: var(--deck-code-bg);
+  color: #e8e8e1;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 4cqmin 10cqmin -6cqmin rgba(0, 0, 0, 0.55);
+}
+
+.codeBar {
+  display: flex;
+  align-items: center;
+  gap: 2cqmin;
+  padding: 1.5cqmin 2.4cqmin;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-family: var(--deck-mono);
+  font-size: 1.45cqmin;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.codeDots {
+  display: flex;
+  gap: 0.9cqmin;
+}
+
+.codeDots span {
+  width: 1.1cqmin;
+  height: 1.1cqmin;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.codeBody {
+  position: relative;
+  padding: 1.8cqmin 0;
+  font-family: var(--deck-mono);
+  line-height: 1.62;
+  overflow: hidden;
+}
+
+.codeLine {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  white-space: pre;
+  padding-right: 3cqmin;
+}
+
+.gutter {
+  flex: none;
+  width: 6.2cqmin;
+  padding-right: 2.2cqmin;
+  text-align: right;
+  color: rgba(255, 255, 255, 0.26);
+  user-select: none;
+}
+
+.band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 0;
+  z-index: 0;
+  background: color-mix(in oklab, var(--deck-code-accent) 15%, transparent);
+  box-shadow: inset max(2px, 0.4cqmin) 0 0 var(--deck-code-accent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.codeNotes {
+  position: relative;
+  align-self: stretch;
+  min-height: 18cqmin;
+}
+
+.codeNote {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2cqmin;
+  opacity: 0;
+}
+
+/* --- Image ---------------------------------------------------------------------------- */
+
+.imageSplit {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.3fr);
+  gap: 5cqmin;
+}
+
+.imageFrame {
+  position: relative;
+  margin: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 3cqmin;
+  background: var(--deck-surface);
+}
+
+.kb {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
+
+.kb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.imageFull {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.74), rgba(0, 0, 0, 0.18) 46%, transparent 72%);
+}
+
+.fullText {
+  position: relative;
+  margin-top: auto;
+  --deck-fg: #ffffff;
+  --deck-muted: rgba(255, 255, 255, 0.8);
+  --deck-strong: #ffffff;
+  color: #ffffff;
+}
+
+/* --- Diagram -------------------------------------------------------------------------- */
+
+.diagram {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin-top: 3cqmin;
+}
+
+.edges {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.edgeLine {
+  fill: none;
+  stroke: var(--deck-strong);
+  stroke-width: max(1.5px, 0.3cqmin);
+  stroke-linecap: round;
+}
+
+.edgeHead {
+  fill: var(--deck-strong);
+}
+
+.edgeLabel {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 0.5cqmin 1.3cqmin;
+  border-radius: 99px;
+  font-family: var(--deck-mono);
+  font-size: 1.65cqmin;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  color: var(--deck-fg);
+  background: var(--deck-bg);
+  box-shadow: inset 0 0 0 1px var(--deck-surface-line);
+}
+
+.slide[data-tone="accent"] .edgeLabel {
+  background: var(--deck-accent-bg);
+}
+
+.node {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8cqmin;
+  padding: 2.6cqmin 2.8cqmin;
+  border-radius: 2.6cqmin;
+  text-align: center;
+  background: var(--deck-surface);
+  box-shadow: inset 0 0 0 1px var(--deck-surface-line);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.nodeLabel {
+  font-size: var(--node-fs, 2.8cqmin);
+  font-weight: 620;
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+.nodeDetail {
+  font-size: calc(var(--node-fs, 2.8cqmin) * 0.62);
+  line-height: 1.35;
+  color: var(--deck-muted);
+  text-wrap: balance;
+}
+
+.hub {
+  background: var(--deck-accent-bg);
+  color: var(--deck-accent-fg);
+  box-shadow: none;
+}
+
+.hub .nodeDetail {
+  color: var(--deck-accent-muted);
+}
+
+/* --- Closing ------------------------------------------------------------------------- */
+
+.checks {
+  list-style: none;
+  margin: 4.6cqmin 0 0;
+  padding: 0;
+  display: grid;
+  gap: 2.2cqmin;
+}
+
+.check {
+  display: grid;
+  grid-template-columns: 4.4cqmin minmax(0, 1fr);
+  align-items: center;
+  gap: 2.2cqmin;
+}
+
+.tick {
+  width: 4.4cqmin;
+  height: 4.4cqmin;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--deck-strong);
+  color: var(--deck-bg);
+}
+
+.slide[data-tone="accent"] .tick {
+  color: var(--deck-accent-bg);
+}
+
+.tick svg {
+  width: 60%;
+  height: 60%;
+  overflow: visible;
+}
+
+.next {
+  margin-top: auto;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 2.4cqmin;
+  padding: 1.8cqmin 2.2cqmin 1.8cqmin 3.2cqmin;
+  border-radius: 99px;
+  background: var(--deck-fg);
+  color: var(--deck-bg);
+}
+
+.next .kicker {
+  color: inherit;
+  opacity: 0.6;
+}
+
+.nextText {
+  font-size: 2.6cqmin;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.nextArrow {
+  width: 5cqmin;
+  height: 5cqmin;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--deck-bg);
+  color: var(--deck-fg);
+}
+
+.nextArrow svg {
+  width: 45%;
+  height: 45%;
+}
+
+/* --- Small and tall stages (phones) ---------------------------------------------------- */
+
+@container deck (aspect-ratio < 1) {
+  .slide {
+    padding: 10cqmin 7cqmin 17cqmin;
+  }
+
+  .kicker {
+    font-size: max(10px, 2.6cqmin);
+  }
+
+  .body {
+    font-size: max(15px, calc(var(--fs, 3.3cqmin) * 1.45));
+  }
+
+  .small {
+    font-size: max(13px, 3.4cqmin);
+  }
+
+  .heading {
+    font-size: max(22px, calc(7.2cqmin * var(--deck-display-scale)));
+  }
+
+  .pointNum,
+  .sideTitle,
+  .codeBar,
+  .edgeLabel {
+    font-size: max(10px, 2.6cqmin);
+  }
+
+  .point {
+    grid-template-columns: 10cqmin minmax(0, 1fr);
+  }
+
+  .compare {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    gap: 3cqmin;
+  }
+
+  .vs {
+    justify-self: center;
+    width: 10cqmin;
+    font-size: max(10px, 2.6cqmin);
+  }
+
+  .imageSplit {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .imageSplit > :first-child {
+    order: 2;
+  }
+
+  .author,
+  .nextText {
+    font-size: max(14px, 3.6cqmin);
+  }
+
+  .nodeLabel {
+    font-size: max(13px, calc(var(--node-fs, 2.8cqmin) * 1.35));
+  }
+
+  .orb {
+    width: 70cqmin;
+    top: -18cqmin;
+    right: -22cqmin;
+  }
+}
+
+@container deck (aspect-ratio < 1.25) {
+  .codeWrap {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, auto);
+    align-items: start;
+  }
+}
+
+/* --- Ambient motion (loops outside the timelines; off for reduced motion and in thumbnails) --- */
+
+.glowInner {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  animation: deck-drift 19s ease-in-out infinite alternate;
+}
+
+@keyframes deck-drift {
+  0% {
+    translate: 0 0;
+    scale: 1;
+  }
+  50% {
+    translate: 6% -4%;
+    scale: 1.08;
+  }
+  100% {
+    translate: -5% 5%;
+    scale: 0.94;
+  }
+}
+
+.orb {
+  animation: deck-spin 48s linear infinite;
+}
+
+@keyframes deck-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+.kb {
+  animation: deck-kenburns 18s ease-in-out infinite alternate;
+}
+
+@keyframes deck-kenburns {
+  from {
+    scale: 1;
+    translate: 0 0;
+  }
+  to {
+    scale: 1.08;
+    translate: -1.5% -1%;
+  }
+}
+
+.nextArrow svg {
+  animation: deck-nudge 1.8s ease-in-out infinite;
+}
+
+@keyframes deck-nudge {
+  0%,
+  60%,
+  100% {
+    translate: 0 0;
+  }
+  30% {
+    translate: 18% 0;
+  }
+}
+
+.thumb {
+  pointer-events: none;
+}
+
+.thumb .orb,
+.thumb .kb,
+.thumb .nextArrow svg,
+.thumb .glowInner {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glowInner,
+  .orb,
+  .kb,
+  .nextArrow svg {
+    animation: none;
+  }
+}

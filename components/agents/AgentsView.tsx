@@ -7,6 +7,7 @@ import { ConnectSnippets } from "./ConnectSnippets";
 const EXAMPLE_PROMPTS = [
   "Turn my syllabus into weeks for “Web basics”, with a lesson and a quiz each.",
   "Write a lesson on CSS selectors for Week 3, with examples and a quick check.",
+  "Make a presentation for Week 2 on how the web works, about 12 slides, in the Aurora theme.",
   "Draft a 10-question quiz on CSS selectors for “Web basics”, in Georgian.",
   "Create a midterm for “Web basics” with 20 questions covering weeks 1 to 6.",
   "List my courses and tell me which ones have no final yet.",
@@ -24,7 +25,7 @@ export function AgentsView() {
         <h1 className="mt-3 text-5xl font-medium leading-[0.95] tracking-[-0.045em] sm:text-7xl">Connect an agent</h1>
         <p className="mt-5 text-lg leading-relaxed text-graphite">
           Kalami is an MCP server. Add it to your own AI assistant, sign in with your Kalami account, and it can draft
-          courses, weekly lessons, quizzes and exams as you. It can’t publish, and it never sees students.
+          courses, weekly lessons, presentations, quizzes and exams as you. It can’t publish, and it never sees students.
         </p>
       </div>
 
@@ -49,9 +50,10 @@ export function AgentsView() {
             {[
               ["Can", "list and create courses, quizzes, midterms and finals you own"],
               ["Can", "plan draft weeks, write lessons in them, add links, and put tasks and quizzes in a week"],
+              ["Can", "build animated presentations in a week: typed slides in one of five themes"],
               ["Can", "add, edit, delete and reorder questions in drafts, with answer keys"],
-              ["Can’t", "publish anything: assessments, weeks and lessons wait for you"],
-              ["Can’t", "change a week, lesson or assessment once it’s published, or create Drive folders"],
+              ["Can’t", "publish anything: assessments, weeks, lessons and presentations wait for you"],
+              ["Can’t", "change a week, lesson, presentation or assessment once it’s published, or create Drive folders"],
               ["Can’t", "see students, attempts, grades or integrity flags"],
               ["Can’t", "touch courses you only assist on"],
             ].map(([verb, what]) => (

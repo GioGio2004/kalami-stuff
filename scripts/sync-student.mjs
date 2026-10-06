@@ -9,6 +9,9 @@ const shared = [
   ["convex/lib/checks", "../kalami/lib/checks"],
   // The scene rules the backend validates animated lesson scenes with; the player and editor share them.
   ["convex/lib/scene", "../kalami/lib/scene"],
+  // Presentations: the deck rules (checked by the backend too) and the player students watch decks in.
+  ["convex/lib/presentation", "../kalami/lib/presentation"],
+  ["components/presentations", "../kalami/components/presentations"],
   ["components/sandbox", "../kalami/components/sandbox"],
   ["components/lessons", "../kalami/components/lessons"],
   // The MCP connector's OAuth side (Clerk tokens, the service credential); each app has its own server.ts.

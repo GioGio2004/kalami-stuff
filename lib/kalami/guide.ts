@@ -81,6 +81,7 @@ dates. Opening and closing times are set by the lecturer after import.
 
 - \`title\`: "Week 2", or any title ("Unit 2 · Forms"). Up to 120 characters.
 - \`lessons\`: up to 30, in order. Each has a \`title\` (up to 160) and \`blocks\`.
+- \`presentations\`: up to 20 decks of slides; see **Presentations**.
 - \`links\`: up to 20; \`url\` must start with \`https://\`.
 - \`assessments\`: the week's **tasks and quizzes** only (\`kind\` \`"task"\` or \`"quiz"\`).
 - \`driveFolder\` may appear in exported files; it's informational and ignored on import.
@@ -132,7 +133,8 @@ blocks (10 to 20 minutes of reading), with a \`check\` every few blocks.
 
 ## Lessons: animated scenes
 
-A \`scene\` block is a small animated presentation inside a lesson: elements
+A \`scene\` block is one custom animation inside a lesson (for whole decks,
+see **Presentations**): elements
 placed on a stage of **1200 × 675** units (x to the right, y down, from the
 top-left corner; the stage scales to the screen), and **steps** a student clicks
 through, each running a few named animations. Nothing in a scene is code, so
@@ -193,6 +195,60 @@ one step that does everything.
     { "actions": [ { "do": "camera" }, { "do": "enter", "targets": ["aside"] }, { "do": "emphasize", "targets": ["request"], "effect": "pulse", "at": 0.6 } ] }
   ]
 } }
+~~~
+
+## Presentations
+
+A week can hold presentations next to its lessons: decks of typed slides in a
+theme, which students watch in Kalami's player and lecturers present full
+screen. Every slide type has its own designed layout and animation (headings
+rise line by line, statements arrive word by word, numbers count up, code
+types itself, diagrams draw their arrows), so a slide is only its \`type\` and
+its words. Nothing is positioned or coloured by hand.
+
+\`{ "title", "theme"?, "slides": [...] }\`. Themes: \`ink\` (dark with neon lime,
+the default), \`paper\` (light, highlighter marks), \`aurora\` (night sky with
+drifting colour), \`ember\` (warm cream and orange), \`chalk\` (a chalkboard).
+
+Every slide may also have \`tone\` (\`"accent"\` fills the slide with the theme's
+colour; sections are accent unless set to \`"default"\`) and \`notes\` (speaker
+notes; students can open them too). In slide text, \`**double asterisks**\` draw
+the theme's accent mark on a few words, and backticks make \`code\`.
+
+| type | fields | notes |
+|---|---|---|
+| \`title\` | \`title\`, \`subtitle?\`, \`kicker?\` | the opening slide |
+| \`section\` | \`title\`, \`kicker?\` | a chapter break with a big running number |
+| \`statement\` | \`text\`, \`kicker?\` | one very large sentence |
+| \`points\` | \`title?\`, \`points\` (2 to 6), \`build?\` | \`build: true\`: one point per Next |
+| \`number\` | \`value\`, \`label\`, \`prefix?\`, \`suffix?\`, \`decimals?\`, \`detail?\` | counts up to the value |
+| \`compare\` | \`title?\`, \`left\` and \`right\` ({ \`title\`, \`points\` 1 to 5 }), \`verdict?\` | two sides |
+| \`quote\` | \`quote\`, \`author?\`, \`role?\` | quote real sources accurately |
+| \`code\` | \`title?\`, \`language\`, \`code\` (up to 22 lines), \`highlights?\` [{ \`from\`, \`to?\`, \`note?\` }] | each Next highlights lines |
+| \`image\` | \`url\` (https), \`alt\`, \`title?\`, \`caption?\`, \`layout?\` (\`split\` or \`full\`) | |
+| \`diagram\` | \`title?\`, \`layout\` (\`flow\`, \`cycle\`, \`stack\`, \`hub\`), \`nodes\` (2 to 8: \`label\`, \`detail?\`, \`edge?\`), \`build?\` | arrows are drawn for you; \`edge\` labels the arrow into a node |
+| \`closing\` | \`title\`, \`points?\` (up to 5), \`next?\` | the end |
+
+Write like a speaker, not a document: one idea per slide, very few words
+(a statement under 15 words, points under 10 words each), 8 to 20 slides. Open
+with \`title\`, put a \`section\` before each part, end with \`closing\`. Mix types
+(statement, number, diagram, compare, quote, code) rather than many points
+slides, and mark one or two words per slide.
+
+~~~json
+{
+  "title": "How the web works",
+  "theme": "aurora",
+  "slides": [
+    { "type": "title", "kicker": "Week 1 · Web basics", "title": "How the **web** works" },
+    { "type": "statement", "text": "Every page is a **conversation** between two computers." },
+    { "type": "diagram", "title": "What happens when you press Enter", "layout": "flow", "build": true,
+      "nodes": [ { "label": "Browser" }, { "label": "DNS", "edge": "kalami.space?" }, { "label": "Server", "edge": "GET /" } ] },
+    { "type": "number", "value": 200, "label": "means **OK**: the server found the page" },
+    { "type": "closing", "title": "Now you can **see** the web", "points": [ "Requests ask, responses answer" ],
+      "next": "Next week: your first HTML page" }
+  ]
+}
 ~~~
 
 ## Assessments (tasks, quizzes, midterms, finals)

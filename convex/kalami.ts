@@ -8,8 +8,10 @@ import { enforceLimit } from "./lib/limits";
 import {
   assessmentKindValidator,
   assessmentSettingsValidator,
+  deckThemeValidator,
   lessonBlockInputValidator,
   questionInputValidator,
+  slideInputValidator,
 } from "./lib/validators";
 import { createAssessment } from "./model/assessments";
 import { createCourse } from "./model/courses";
@@ -26,6 +28,7 @@ import {
   runImport,
 } from "./model/kalamiImport";
 import { createLesson } from "./model/lessons";
+import { createPresentation } from "./model/presentations";
 import { addQuestions, MAX_QUESTIONS_PER_CALL } from "./model/questions";
 import { createWeek } from "./model/weeks";
 
@@ -124,6 +127,9 @@ export const importWeek = internalMutation({
     description: v.optional(v.string()),
     links: v.array(v.object({ title: v.string(), url: v.string() })),
     lessons: v.array(v.object({ title: v.string(), blocks: v.array(lessonBlockInputValidator) })),
+    presentations: v.optional(
+      v.array(v.object({ title: v.string(), theme: v.optional(deckThemeValidator), slides: v.array(slideInputValidator) })),
+    ),
   },
   returns: v.id("weeks"),
   handler: async (ctx, args) => {
@@ -136,6 +142,9 @@ export const importWeek = internalMutation({
     });
     for (const lesson of args.lessons) {
       await createLesson(ctx, actor, { weekId, title: lesson.title, blocks: lesson.blocks });
+    }
+    for (const deck of args.presentations ?? []) {
+      await createPresentation(ctx, actor, { weekId, title: deck.title, theme: deck.theme, slides: deck.slides });
     }
     return weekId;
   },

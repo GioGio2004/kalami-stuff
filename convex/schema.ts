@@ -21,6 +21,8 @@ import {
   courseStatusValidator,
   inviteRoleValidator,
   lessonBlockValidator,
+  deckThemeValidator,
+  slideValidator,
   publishStatusValidator,
   weekLinkValidator,
   localeValidator,
@@ -407,6 +409,25 @@ export default defineSchema({
     status: publishStatusValidator,
     publishedAt: v.optional(v.number()),
     blocks: v.array(lessonBlockValidator),
+    createdBy: v.id("users"),
+    createdVia: viaValidator,
+    updatedAt: v.number(),
+  })
+    .index("by_weekId_and_order", ["weekId", "order"])
+    .index("by_courseId", ["courseId"]),
+
+  // Presentations: a deck of typed slides in a curated theme, inside a week
+  // next to its lessons (lib/presentation has the vocabulary and the rules;
+  // components/presentations plays it). Its own draft/published state, like a lesson.
+  presentations: defineTable({
+    courseId: v.id("courses"),
+    weekId: v.id("weeks"),
+    order: v.number(),
+    title: v.string(),
+    theme: deckThemeValidator,
+    slides: v.array(slideValidator),
+    status: publishStatusValidator,
+    publishedAt: v.optional(v.number()),
     createdBy: v.id("users"),
     createdVia: viaValidator,
     updatedAt: v.number(),

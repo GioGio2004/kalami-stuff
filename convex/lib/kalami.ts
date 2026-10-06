@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { lessonBlockSchema, linkSchema, questionSchema, settingsSchema } from "./contentSchemas";
+import { deckThemeSchema, lessonBlockSchema, linkSchema, questionSchema, settingsSchema, slidesSchema } from "./contentSchemas";
 
 /**
  * The .kalami file format, version 1: a whole course in one UTF-8 JSON file.
@@ -7,7 +7,7 @@ import { lessonBlockSchema, linkSchema, questionSchema, settingsSchema } from ".
  *   { "$schema", "format": "kalami", "version": 1, "kind": "course",
  *     "exported"?: { by, at, from }, "signature"?: "…", "course": { … } }
  *
- * The course is its outline: weeks (lessons, links, tasks and quizzes) and the
+ * The course is its outline: weeks (lessons, presentations, links, tasks and quizzes) and the
  * exams. Files carry no students, attempts, grades, groups, join codes, dates
  * or Drive permissions; importing always creates a new draft course.
  *
@@ -49,10 +49,21 @@ const lessonFileSchema = z.object({
   blocks: z.array(lessonBlockSchema).max(150).describe("The lesson, in order"),
 });
 
+const presentationFileSchema = z.object({
+  title: text(160),
+  theme: deckThemeSchema.optional().describe("Defaults to ink"),
+  slides: slidesSchema,
+});
+
 const weekFileSchema = z.object({
   title: text(120).describe('"Week 1", or any title: "Unit 2 · Forms"'),
   description: z.string().max(2000).optional().describe("One or two sentences students see under the title"),
   lessons: z.array(lessonFileSchema).max(30).default([]),
+  presentations: z
+    .array(presentationFileSchema)
+    .max(20)
+    .default([])
+    .describe("The week's presentations: decks of typed slides in a theme"),
   links: z.array(linkSchema).max(20).default([]).describe("Readings, videos, websites for the week"),
   driveFolder: z
     .string()
@@ -112,6 +123,7 @@ export type KalamiSummary = {
   language: "ka" | "en";
   weeks: number;
   lessons: number;
+  presentations: number;
   assessments: { task: number; quiz: number; midterm: number; final: number };
   questions: number;
   links: number;
@@ -132,6 +144,7 @@ export function summarize(file: KalamiFile): KalamiSummary {
     language: file.course.language,
     weeks: file.course.weeks.length,
     lessons: file.course.weeks.reduce((n, week) => n + week.lessons.length, 0),
+    presentations: file.course.weeks.reduce((n, week) => n + week.presentations.length, 0),
     assessments,
     questions: all.reduce((n, a) => n + a.questions.length, 0),
     links: file.course.weeks.reduce((n, week) => n + week.links.length, 0),

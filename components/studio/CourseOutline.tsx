@@ -43,6 +43,8 @@ export type OutlineActions = {
   /** Creates a draft lesson; the page then opens its editor. */
   onCreateLesson: (weekId: WeekId, title: string) => Promise<void>;
   onMoveLesson: (lessonId: LessonId, direction: "up" | "down") => Promise<void>;
+  /** Creates a draft presentation; the page then opens its editor. */
+  onCreatePresentation: (weekId: WeekId, title: string) => Promise<void>;
   /** Creates a draft assessment (tasks and quizzes in a week); the page then opens the builder. */
   onCreateAssessment: (args: { kind: AssessmentKind; title: string; weekId?: WeekId }) => Promise<void>;
   onPlace: (assessmentId: AssessmentId, weekId: WeekId | null) => Promise<void>;
@@ -54,6 +56,7 @@ type Dialogs =
   | { kind: "remove-week"; week: OutlineWeek }
   | { kind: "publish-week"; week: OutlineWeek }
   | { kind: "new-lesson"; week: OutlineWeek }
+  | { kind: "new-presentation"; week: OutlineWeek }
   | { kind: "link"; week: OutlineWeek; link?: WeekLink }
   | { kind: "new-assessment"; assessmentKind: AssessmentKind; week?: OutlineWeek };
 
@@ -264,6 +267,7 @@ export function CourseOutline({
                 onUnpublish: () => actions.onUnpublishWeek(selected._id),
                 onMove: (to) => actions.onMoveWeek(selected._id, to),
                 onNewLesson: () => setDialog({ kind: "new-lesson", week: selected }),
+                onNewPresentation: () => setDialog({ kind: "new-presentation", week: selected }),
                 onMoveLesson: actions.onMoveLesson,
                 onAddLink: () => setDialog({ kind: "link", week: selected }),
                 onEditLink: (link) => setDialog({ kind: "link", week: selected, link }),
@@ -413,6 +417,8 @@ function dialogLabel(dialog: Dialogs | null): string {
       return "Publish week";
     case "new-lesson":
       return "New lesson";
+    case "new-presentation":
+      return "New presentation";
     case "link":
       return dialog.link ? "Edit link" : "Add a link";
     case "new-assessment":
@@ -502,6 +508,23 @@ function OutlineDialog({
           submitLabel="Create and open"
           onSubmit={async (title) => {
             await actions.onCreateLesson(dialog.week._id, title);
+            onDone();
+          }}
+          onCancel={onDone}
+        />
+      );
+    case "new-presentation":
+      return (
+        <TitleForm
+          hand="Lights, slides"
+          heading="New presentation"
+          blurb={`It goes into “${dialog.week.title}” as a draft, and the editor opens next: pick a theme and add slides (titles, points, numbers, comparisons, code, diagrams). Every slide animates on its own.`}
+          label="Presentation title"
+          placeholder="How the web works"
+          maxLength={160}
+          submitLabel="Create and open"
+          onSubmit={async (title) => {
+            await actions.onCreatePresentation(dialog.week._id, title);
             onDone();
           }}
           onCancel={onDone}
@@ -784,11 +807,12 @@ function TitleForm({
 function RemoveWeek({ week, onRemove, onCancel }: { week: OutlineWeek; onRemove: () => Promise<void>; onCancel: () => void }) {
   const { busy, error, submit } = useSubmit();
   const lessons = week.lessons.length;
+  const decks = week.presentations.length;
   const placed = week.assessments.length;
   return (
     <div className="p-6 sm:p-10">
       <h2 className="text-3xl font-medium tracking-[-0.03em]">Remove “{week.title}”?</h2>
-      {lessons === 0 && placed === 0 && !week.drive ? (
+      {lessons === 0 && decks === 0 && placed === 0 && !week.drive ? (
         <p className="mt-4 text-[15px] leading-relaxed text-graphite">
           It&apos;s empty{week.links.length > 0 ? " apart from its links" : ""}, so nothing else is affected.
         </p>
@@ -800,6 +824,12 @@ function RemoveWeek({ week, onRemove, onCancel }: { week: OutlineWeek; onRemove:
               ? "It has no lessons."
               : `Its ${lessons === 1 ? "lesson is" : `${lessons} lessons are`} deleted. This can’t be undone.`}
           </li>
+          {decks > 0 && (
+            <li className="flex gap-2.5">
+              <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-red-pen" />
+              {`Its ${decks === 1 ? "presentation is" : `${decks} presentations are`} deleted. This can’t be undone.`}
+            </li>
+          )}
           <li className="flex gap-2.5">
             <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-ink" />
             {placed === 0
@@ -826,6 +856,7 @@ function RemoveWeek({ week, onRemove, onCancel }: { week: OutlineWeek; onRemove:
 function PublishWeek({ week, onPublish, onCancel }: { week: OutlineWeek; onPublish: () => Promise<void>; onCancel: () => void }) {
   const { busy, error, submit } = useSubmit();
   const drafts = week.lessons.filter((l) => l.status === "draft").length;
+  const draftDecks = week.presentations.filter((p) => p.status === "draft").length;
   const empty = week.lessons.filter((l) => l.status === "draft" && l.blockCount === 0);
   const sharing = week.drive?.url !== undefined && !week.drive.shared;
   return (
@@ -838,6 +869,14 @@ function PublishWeek({ week, onPublish, onCancel }: { week: OutlineWeek; onPubli
           <li className="flex gap-2.5">
             <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-highlighter-deep" />
             {drafts === 1 ? "its draft lesson, published along with it" : `its ${drafts} draft lessons, published along with it`}
+          </li>
+        )}
+        {draftDecks > 0 && (
+          <li className="flex gap-2.5">
+            <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-highlighter-deep" />
+            {draftDecks === 1
+              ? "its draft presentation, published along with it"
+              : `its ${draftDecks} draft presentations, published along with it`}
           </li>
         )}
         {week.links.length > 0 && (

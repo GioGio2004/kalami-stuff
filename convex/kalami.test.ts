@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { KALAMI_GUIDE } from "../lib/kalami/guide";
-import { lessonBlockSchema } from "./lib/contentSchemas";
+import { lessonBlockSchema, slidesSchema } from "./lib/contentSchemas";
 import { kalamiFileName, parseKalami } from "./lib/kalami";
 import { expectAppError, person, seed } from "./test.setup";
 
@@ -59,6 +59,14 @@ async function richCourse() {
       { type: "check", check: { kind: "single", prompt: "Which tag is a heading?", options: [{ text: "<h1>", correct: true }, { text: "<p>", correct: false }] } },
     ],
   });
+  const deck = await nino.mutation(api.presentations.create, { weekId: week, title: "Pages, briefly", theme: "paper" });
+  await nino.mutation(api.presentations.save, {
+    presentationId: deck,
+    slides: [
+      { type: "title", title: "Pages, **briefly**", kicker: "Week 1" },
+      { type: "diagram", layout: "flow", nodes: [{ label: "Browser" }, { label: "Server", edge: "GET /" }], notes: "Two machines." },
+    ],
+  });
   const quiz = await nino.mutation(api.assessments.create, { courseId, kind: "quiz", title: "Quiz 1", weekId: week });
   await nino.mutation(api.questions.add, {
     assessmentId: quiz,
@@ -96,6 +104,16 @@ describe(".kalami files", () => {
     const { course } = parsed.file;
     expect(course.weeks).toHaveLength(1);
     expect(course.weeks[0].assessments.map((a) => a.title)).toEqual(["Quiz 1"]);
+    expect(course.weeks[0].presentations).toEqual([
+      {
+        title: "Pages, briefly",
+        theme: "paper",
+        slides: [
+          { type: "title", title: "Pages, **briefly**", kicker: "Week 1" },
+          { type: "diagram", layout: "flow", nodes: [{ label: "Browser" }, { label: "Server", edge: "GET /" }], notes: "Two machines." },
+        ],
+      },
+    ]);
     expect(course.other.map((a) => a.title)).toEqual(["Heading task"]);
     expect(course.exams[0].settings).toMatchObject({ timeLimitMin: 45 });
     // Dates and ids never travel in files.
@@ -106,7 +124,7 @@ describe(".kalami files", () => {
     const inspected = await nino.action(api.kalami.inspect, { text: content });
     expect(inspected).toMatchObject({
       ok: true,
-      summary: { weeks: 1, lessons: 1, questions: 6, assessments: { task: 1, quiz: 1, midterm: 1, final: 0 } },
+      summary: { weeks: 1, lessons: 1, presentations: 1, questions: 6, assessments: { task: 1, quiz: 1, midterm: 1, final: 0 } },
       verified: { by: "nino" },
     });
 
@@ -270,6 +288,9 @@ describe(".kalami files", () => {
     expect(result).toMatchObject({ ok: true, summary: { weeks: 1, lessons: 1, questions: 2 } });
     const blocks = JSON.parse(fenced("## Lessons: blocks")) as unknown[];
     for (const block of blocks) expect(lessonBlockSchema.safeParse(block).success).toBe(true);
+    const deck = JSON.parse(fenced("## Presentations")) as { slides: unknown[] };
+    const deckParsed = slidesSchema.safeParse(deck.slides);
+    expect(deckParsed.error?.issues.map((issue) => issue.message)).toBeUndefined();
     const scene = JSON.parse(fenced("## Lessons: animated scenes")) as unknown;
     const parsed = lessonBlockSchema.safeParse(scene);
     expect(parsed.error?.issues.map((issue) => issue.message)).toBeUndefined();

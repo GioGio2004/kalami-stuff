@@ -451,14 +451,17 @@ export function LessonEditor({
 
 // --- Header pieces ----------------------------------------------------------------------
 
-function TitleEditor({
+/** The big title at the top of an editor; click to rename. The presentation editor uses it too. */
+export function TitleEditor({
   title,
   canEdit,
   onRename,
+  label = "Lesson title",
 }: {
   title: string;
   canEdit: boolean;
   onRename: (title: string) => Promise<boolean>;
+  label?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(title);
@@ -508,7 +511,7 @@ function TitleEditor({
       }}
     >
       <label htmlFor="lesson-title" className="sr-only">
-        Lesson title
+        {label}
       </label>
       <input
         id="lesson-title"
@@ -759,7 +762,8 @@ function EmptyLesson({ onAdd }: { onAdd: (type: LessonBlockType) => void }) {
 
 // --- Saving and deleting ----------------------------------------------------------------
 
-function SaveBar({
+/** The floating Save bar of an editor; the presentation editor uses it too. */
+export function SaveBar({
   dirty,
   state,
   failed,

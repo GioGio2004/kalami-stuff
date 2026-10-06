@@ -1,4 +1,4 @@
-import { v, type Infer } from "convex/values";
+import { v, type GenericValidator, type Infer } from "convex/values";
 
 export const localeValidator = v.union(v.literal("ka"), v.literal("en"));
 export type Locale = Infer<typeof localeValidator>;
@@ -390,6 +390,87 @@ export type ConversationStatus = Infer<typeof conversationStatusValidator>;
 export const publishStatusValidator = v.union(v.literal("draft"), v.literal("published"));
 export type PublishStatus = Infer<typeof publishStatusValidator>;
 
+// --- Presentations (lib/presentation/index.ts has the rules and limits; keep in step) -------
+
+export const deckThemeValidator = v.union(
+  v.literal("ink"),
+  v.literal("paper"),
+  v.literal("aurora"),
+  v.literal("ember"),
+  v.literal("chalk"),
+);
+const slideToneValidator = v.union(v.literal("default"), v.literal("accent"));
+const compareSideValidator = v.object({ title: v.string(), points: v.array(v.string()) });
+
+/** Every slide type, with `id` as given: required when stored, optional when an editor or agent sends it. */
+function slideVariants<Id extends GenericValidator>(id: Id) {
+  const common = { id, tone: v.optional(slideToneValidator), notes: v.optional(v.string()) };
+  return v.union(
+    v.object({ ...common, type: v.literal("title"), title: v.string(), subtitle: v.optional(v.string()), kicker: v.optional(v.string()) }),
+    v.object({ ...common, type: v.literal("section"), title: v.string(), kicker: v.optional(v.string()) }),
+    v.object({ ...common, type: v.literal("statement"), text: v.string(), kicker: v.optional(v.string()) }),
+    v.object({ ...common, type: v.literal("points"), title: v.optional(v.string()), points: v.array(v.string()), build: v.optional(v.boolean()) }),
+    v.object({
+      ...common,
+      type: v.literal("number"),
+      value: v.number(),
+      prefix: v.optional(v.string()),
+      suffix: v.optional(v.string()),
+      decimals: v.optional(v.number()),
+      label: v.string(),
+      detail: v.optional(v.string()),
+    }),
+    v.object({
+      ...common,
+      type: v.literal("compare"),
+      title: v.optional(v.string()),
+      left: compareSideValidator,
+      right: compareSideValidator,
+      verdict: v.optional(v.string()),
+    }),
+    v.object({ ...common, type: v.literal("quote"), quote: v.string(), author: v.optional(v.string()), role: v.optional(v.string()) }),
+    v.object({
+      ...common,
+      type: v.literal("code"),
+      title: v.optional(v.string()),
+      language: v.string(),
+      code: v.string(),
+      highlights: v.optional(v.array(v.object({ from: v.number(), to: v.optional(v.number()), note: v.optional(v.string()) }))),
+    }),
+    v.object({
+      ...common,
+      type: v.literal("image"),
+      url: v.string(),
+      alt: v.string(),
+      title: v.optional(v.string()),
+      caption: v.optional(v.string()),
+      layout: v.optional(v.union(v.literal("split"), v.literal("full"))),
+    }),
+    v.object({
+      ...common,
+      type: v.literal("diagram"),
+      title: v.optional(v.string()),
+      layout: v.union(v.literal("flow"), v.literal("cycle"), v.literal("stack"), v.literal("hub")),
+      nodes: v.array(v.object({ label: v.string(), detail: v.optional(v.string()), edge: v.optional(v.string()) })),
+      build: v.optional(v.boolean()),
+    }),
+    v.object({
+      ...common,
+      type: v.literal("closing"),
+      title: v.string(),
+      points: v.optional(v.array(v.string())),
+      next: v.optional(v.string()),
+    }),
+  );
+}
+
+/** A slide as stored: every slide has an id (the editor keys and the agents' updates use it). */
+export const slideValidator = slideVariants(v.string());
+export type SlideDoc = Infer<typeof slideValidator>;
+/** A slide as editors and agents send it: the id is optional (new slides get one). */
+export const slideInputValidator = slideVariants(v.optional(v.string()));
+export type SlideInput = Infer<typeof slideInputValidator>;
+
 /** A link in a week's materials (OneDrive, a website, a video playlist…). */
 export const weekLinkValidator = v.object({
   id: v.string(),
@@ -655,4 +736,7 @@ export const studentWeekValidator = v.object({
   /** The week's Drive folder, once it's shared. */
   driveUrl: v.optional(v.string()),
   lessons: v.array(v.object({ _id: v.id("lessons"), title: v.string() })),
+  presentations: v.array(
+    v.object({ _id: v.id("presentations"), title: v.string(), theme: deckThemeValidator, slideCount: v.number() }),
+  ),
 });

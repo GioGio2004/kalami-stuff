@@ -20,6 +20,8 @@ import {
 } from "@/components/ui/icons";
 import { Menu } from "@/components/ui/Menu";
 import { Pill, statusLabel, statusTone } from "@/components/ui/Pill";
+import { THEMES } from "@/components/presentations/themes";
+import { THEME_INFO, type DeckTheme } from "@/lib/presentation";
 import { errorMessage } from "@/lib/errors";
 import { AssessmentRow, compactSelectClass } from "./AssessmentRow";
 import { DriveMark, driveBusy, folderStatus } from "./DriveStatus";
@@ -30,11 +32,12 @@ export type WeekCardActions = {
   onEdit: () => void;
   onRemove: () => void;
   onPublish: () => Promise<void>;
-  /** Publishing also publishes draft lessons and shares the folder; this asks first. */
+  /** Publishing also publishes draft lessons and presentations and shares the folder; this asks first. */
   onConfirmPublish: () => void;
   onUnpublish: () => Promise<void>;
   onMove: (direction: "up" | "down") => Promise<void>;
   onNewLesson: () => void;
+  onNewPresentation: () => void;
   onMoveLesson: (lessonId: LessonId, direction: "up" | "down") => Promise<void>;
   onAddLink: () => void;
   onEditLink: (link: WeekLink) => void;
@@ -102,6 +105,7 @@ export function WeekCard({
   const materials = week.links.length + (week.drive ? 1 : 0);
   const summary = [
     count(week.lessons.length, "lesson"),
+    ...(week.presentations.length > 0 ? [count(week.presentations.length, "presentation")] : []),
     count(materials, "material"),
     count(week.assessments.length, "task or quiz", "tasks and quizzes"),
   ].join(" · ");
@@ -164,7 +168,9 @@ export function WeekCard({
                 disabled={busy || syncing}
                 onClick={() => {
                   const sideEffects =
-                    week.lessons.some((l) => l.status === "draft") || (week.drive?.url !== undefined && !week.drive.shared);
+                    week.lessons.some((l) => l.status === "draft") ||
+                    week.presentations.some((p) => p.status === "draft") ||
+                    (week.drive?.url !== undefined && !week.drive.shared);
                   if (sideEffects) {
                     actions.onConfirmPublish();
                   } else {
@@ -287,6 +293,56 @@ export function WeekCard({
                         </button>
                       </span>
                     )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Subsection>
+
+          <Subsection
+            title="Presentations"
+            count={week.presentations.length}
+            action={
+              canEdit && (
+                <Button size="sm" variant={week.presentations.length === 0 ? "outline" : "ghost"} onClick={actions.onNewPresentation}>
+                  <Plus className="size-4" />
+                  Presentation
+                </Button>
+              )
+            }
+          >
+            {week.presentations.length === 0 ? (
+              <Empty>
+                {canEdit
+                  ? "No presentations yet. Build one from slides (titles, points, diagrams, code), or ask your agent for one."
+                  : "No presentations yet."}
+              </Empty>
+            ) : (
+              <ul className="space-y-2">
+                {week.presentations.map((deck) => (
+                  <li key={deck._id}>
+                    <Link
+                      href={`/courses/${courseId}/presentations/${deck._id}`}
+                      className="flex min-w-0 items-center gap-3 rounded-2xl border border-line bg-paper px-4 py-3 transition hover:border-ink/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+                    >
+                      <ThemeChip theme={deck.theme} />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="min-w-0 break-words font-medium">{deck.title}</span>
+                          <Pill tone={statusTone(deck.status)}>{statusLabel(deck.status)}</Pill>
+                          {deck.createdVia === "mcp" && (
+                            <Pill tone="lime">
+                              <Robot className="size-3.5" />
+                              Agent
+                            </Pill>
+                          )}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-graphite">
+                          {count(deck.slideCount, "slide")} · {THEME_INFO[deck.theme].label}
+                        </span>
+                      </span>
+                      <ArrowRight className="size-5 shrink-0 text-graphite" />
+                    </Link>
                   </li>
                 ))}
               </ul>
@@ -592,6 +648,21 @@ export function MoveToSelect({
 }
 
 const UNPLACED = "__unplaced";
+
+/** A presentation's theme in miniature: its background with its accent, like a tiny slide. */
+function ThemeChip({ theme }: { theme: DeckTheme }) {
+  const t = THEMES[theme];
+  return (
+    <span
+      aria-hidden="true"
+      className="relative grid h-10 w-14 shrink-0 place-items-center overflow-hidden rounded-xl ring-1 ring-ink/10"
+      style={{ background: t.bg }}
+    >
+      <span className="absolute -right-2 -top-3 size-8 rounded-full opacity-80" style={{ background: t.glow[0] }} />
+      <span className="relative h-1.5 w-7 rounded-full" style={{ background: t.markBg }} />
+    </span>
+  );
+}
 
 function count(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;

@@ -7,8 +7,9 @@ import { api } from "@/convex/_generated/api";
 import { publicOrigin, serviceCredential, verifyOAuthToken } from "./oauth";
 import {
   codeQuestion,
+  deckThemeSchema,
   lessonBlockSchema,
-  sceneSchema,
+  slidesSchema,
   linkSchema,
   questionSchema,
   settingsSchema,
@@ -111,6 +112,7 @@ function dashboardUrl(ctx: ToolContext, path: string): string {
 
 const weekId = z.string().describe("Week id from create_week or get_course_outline");
 const lessonId = z.string().describe("Lesson id from create_lesson or get_course_outline");
+const presentationId = z.string().describe("A presentation id, from create_presentation or get_course_outline");
 
 const INSTRUCTIONS = `You are connected to Kalami, a learning and exam platform for universities, schools and private tutors, as a lecturer's assistant.
 
@@ -144,8 +146,8 @@ Writing lessons (in the course's language):
 - callout "definition" for each key term (title = the term), "tip" for practical advice, "warning" for a common mistake.
 - code blocks for every example; for HTML and CSS set preview: true so students see the result.
 - steps for procedures students follow in order.
-- A presentation is a lesson made only of scenes: use create_presentation for one (ask which week it goes in).
-- A scene block (type "scene") for anything that is better watched than read: a process, a diagram that builds up, a comparison, a code walkthrough. Elements on a 1200 × 675 stage plus steps of named animations (enter, exit, emphasize, focus, move, camera); get_kalami_format has the full vocabulary and an example. One idea per step, big short text, three to six steps. A lesson made only of scenes is a presentation.
+- Presentations are their own item in a week, next to its lessons: use create_presentation (typed slides in a theme) whenever the lecturer asks for slides, a deck or a presentation, and ask which week it goes in if that isn't clear. Never build a presentation out of lesson blocks.
+- A scene block (type "scene") is for one custom animation inside a lesson (a diagram that builds up step by step); get_kalami_format has its vocabulary.
 - A check every few blocks (single, multiple or short) so students test themselves; add an explanation.
 - Images only from https URLs you are sure of, always with alt text. YouTube or Vimeo links play inside the lesson.
 - Never invent facts about the lecturer's own course (dates, grading rules); ask.
@@ -728,35 +730,92 @@ const handler = createMcpHandler(
       "create_presentation",
       {
         title: "Create presentation",
-        description:
-          "Creates a draft presentation: a lesson made of animated scenes, one scene per idea, at the end of a week. Each scene is elements on a 1200 x 675 stage plus steps of named animations (enter, exit, emphasize, focus, move, camera); students click through the steps. Call get_kalami_format first and follow its 'Lessons: animated scenes' section for the vocabulary and an example. Up to 30 scenes here; add more with add_lesson_blocks (type \"scene\"). Returns the lesson id, one block id per scene and a reviewUrl.",
+        description: [
+          "Creates a draft presentation in a week: a deck of typed slides in one of five themes. Students watch it in Kalami's player and the lecturer presents it full screen; each slide type has its own designed layout and animation, so you only choose types and write the words (nothing is positioned or coloured by hand).",
+          "Design it like a great speaker, not a document: one idea per slide; very few words (a statement under 15 words, points under 10 words each); 8 to 20 slides; open with a title slide, put a section slide before each part, end with a closing slide; mix types (statement, number, diagram, compare, quote, code, image) rather than many points slides; mark one or two key words per slide with **double asterisks**; give one or two big moments tone \"accent\"; use build: true on points or diagrams the lecturer should reveal one by one; add speaker notes saying what to say.",
+          "Returns the presentation id, its slide ids and a reviewUrl. It starts as a draft: the lecturer reviews and publishes it.",
+        ].join(" "),
         inputSchema: z.object({
           requestId,
           weekId,
-          title: z.string().min(1).max(160).describe("The presentation's title, shown as the lesson's name"),
-          scenes: z
-            .array(sceneSchema)
-            .min(1)
-            .max(30)
-            .describe("The scenes in order. Give each a title (the slide's label) and three to six steps with one idea each"),
+          title: z.string().min(1).max(160).describe("The presentation's name in the course outline"),
+          theme: deckThemeSchema.optional().describe(`Defaults to ink. ${deckThemeSchema.description ?? ""}`),
+          slides: slidesSchema,
         }),
       },
       async (args, ctx) =>
         run(async () => {
-          const id = await convex.mutation(api.mcp.createLessonAsAgent, {
+          const id = await convex.mutation(api.mcp.createPresentationAsAgent, {
             ...auth(ctx),
             requestId: args.requestId,
             weekId: args.weekId as Id<"weeks">,
             title: args.title,
-            blocks: args.scenes.map((scene) => ({ type: "scene" as const, scene })),
+            theme: args.theme,
+            slides: args.slides,
           });
-          const lesson = await convex.query(api.mcp.getLessonAsAgent, { ...auth(ctx), lessonId: id });
+          const deck = await convex.query(api.mcp.getPresentationAsAgent, { ...auth(ctx), presentationId: id });
           return {
-            lessonId: id,
+            presentationId: id,
             status: "draft",
-            sceneBlockIds: lesson.blocks.map((block) => block.id),
-            reviewUrl: dashboardUrl(ctx, `/courses/${lesson.courseId}/lessons/${id}`),
+            slideIds: deck.slides.map((slide) => slide.id),
+            reviewUrl: dashboardUrl(ctx, `/courses/${deck.courseId}/presentations/${id}`),
           };
+        }),
+    );
+
+    server.registerTool(
+      "get_presentation",
+      {
+        title: "Get presentation",
+        description: "A presentation with its theme and every slide (with its id), its week and status.",
+        inputSchema: z.object({ presentationId }),
+      },
+      async (args, ctx) =>
+        run(() =>
+          convex.query(api.mcp.getPresentationAsAgent, { ...auth(ctx), presentationId: args.presentationId as Id<"presentations"> }),
+        ),
+    );
+
+    server.registerTool(
+      "update_presentation",
+      {
+        title: "Update presentation",
+        description:
+          "Changes a draft presentation: its title, its theme and/or its slides. slides replaces every slide at once: to keep a slide as it is, send it with its id from get_presentation; leave slides out to change only the title or theme. Returns the slide ids.",
+        inputSchema: z.object({
+          presentationId,
+          title: z.string().min(1).max(160).optional(),
+          theme: deckThemeSchema.optional(),
+          slides: slidesSchema.optional(),
+        }),
+      },
+      async (args, ctx) =>
+        run(async () => {
+          const ids = await convex.mutation(api.mcp.updatePresentationAsAgent, {
+            ...auth(ctx),
+            presentationId: args.presentationId as Id<"presentations">,
+            title: args.title,
+            theme: args.theme,
+            slides: args.slides,
+          });
+          return { slideIds: ids };
+        }),
+    );
+
+    server.registerTool(
+      "delete_presentation",
+      {
+        title: "Delete presentation",
+        description: "Deletes a draft presentation. Published presentations can only be deleted by the lecturer.",
+        inputSchema: z.object({ presentationId }),
+      },
+      async (args, ctx) =>
+        run(async () => {
+          await convex.mutation(api.mcp.deletePresentationAsAgent, {
+            ...auth(ctx),
+            presentationId: args.presentationId as Id<"presentations">,
+          });
+          return { ok: true };
         }),
     );
 
@@ -994,7 +1053,7 @@ const handler = createMcpHandler(
     );
   },
   {
-    serverInfo: { name: "kalami", version: "0.7.0" },
+    serverInfo: { name: "kalami", version: "0.8.0" },
     instructions: INSTRUCTIONS,
   },
 );

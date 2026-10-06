@@ -1,5 +1,17 @@
 import { z } from "zod";
 import {
+  DECK_CODE_LANGUAGES,
+  DECK_LIMITS,
+  DECK_THEMES,
+  DIAGRAM_LAYOUTS,
+  deckProblems,
+  IMAGE_LAYOUTS,
+  SLIDE_TONES,
+  THEME_INFO,
+  tidySlide,
+  type Slide,
+} from "./presentation";
+import {
   EMPHASIS_EFFECTS,
   ENTER_EFFECTS,
   EXIT_EFFECTS,
@@ -228,6 +240,184 @@ export const markdown = (max: number) =>
     .max(max)
     .describe("Markdown: paragraphs, **bold**, *italic*, `code`, [links](https://…), - lists, 1. lists, ### headings");
 const blockId = z.string().max(40).optional().describe("Only to keep an existing block when replacing blocks");
+
+// --- Presentations (lib/presentation/index.ts has the rules; deckProblems runs on every deck) ----
+
+const slideId = z.string().max(40).optional().describe("Only to keep an existing slide when replacing slides (from get_presentation)");
+const slideCommon = {
+  id: slideId,
+  tone: z
+    .enum(SLIDE_TONES)
+    .optional()
+    .describe("accent fills the slide with the theme's accent colour: for the one or two big moments. Sections are accent unless set to default"),
+  notes: z.string().max(DECK_LIMITS.notes).optional().describe("Speaker notes: what to say on this slide. Students can open them too"),
+};
+const rich = (max: number, what: string) =>
+  z
+    .string()
+    .min(1)
+    .max(max * 2)
+    .describe(`${what}. Up to ${max} characters. Wrap a few key words in **double asterisks** for the theme's accent mark; \`backticks\` for code`);
+
+export const slideSchema = z
+  .discriminatedUnion("type", [
+    z
+      .object({
+        ...slideCommon,
+        type: z.literal("title"),
+        title: rich(DECK_LIMITS.headline, "The presentation's title, 2 to 8 words"),
+        subtitle: z.string().max(DECK_LIMITS.subtitle).optional().describe("One line under the title"),
+        kicker: z.string().max(DECK_LIMITS.kicker).optional().describe('A small label above, e.g. "Week 3 · CSS layout"'),
+      })
+      .describe("The opening slide"),
+    z
+      .object({
+        ...slideCommon,
+        type: z.literal("section"),
+        title: rich(DECK_LIMITS.slideTitle, "The chapter's name, 1 to 5 words"),
+        kicker: z.string().max(DECK_LIMITS.kicker).optional(),
+      })
+      .describe("A chapter break; shows a big running number (01, 02 …) and fills with the accent colour"),
+    z
+      .object({
+        ...slideCommon,
+        type: z.literal("statement"),
+        text: rich(DECK_LIMITS.statement, "One sentence, very large: the idea to remember. 5 to 15 words"),
+        kicker: z.string().max(DECK_LIMITS.kicker).optional(),
+      })
+      .describe("One big sentence"),
+    z
+      .object({
+        ...slideCommon,
+        type: z.literal("points"),
+        title: rich(DECK_LIMITS.slideTitle, "The slide's heading").optional(),
+        points: z.array(rich(DECK_LIMITS.point, "One short point, ideally under 10 words")).min(2).max(DECK_LIMITS.points),
+        build: z.boolean().optional().describe("true: each point waits for Next (the presenter controls the pace). Default: they arrive one after another on their own"),
+      })
+      .describe("Two to six short points"),
+    z
+      .object({
+        ...slideCommon,
+        type: z.literal("number"),
+        value: z.number().describe("Counts up to this"),
+        prefix: z.string().max(DECK_LIMITS.affix).optional().describe('e.g. "$" or "~"'),
+        suffix: z.string().max(DECK_LIMITS.affix).optional().describe('e.g. "%", "×" or " ms"'),
+        decimals: z.number().int().min(0).max(3).optional(),
+        label: rich(DECK_LIMITS.label, "What the number is"),
+        detail: z.string().max(DECK_LIMITS.detail).optional().describe("A line of context or the source"),
+      })
+      .describe("One striking number"),
+    z
+      .object({
+        ...slideCommon,
+        type: z.literal("compare"),
+        title: rich(DECK_LIMITS.slideTitle, "The slide's heading").optional(),
+        left: z.object({
+          title: z.string().min(1).max(DECK_LIMITS.sideTitle),
+          points: z.array(rich(DECK_LIMITS.sidePoint, "A short point")).min(1).max(DECK_LIMITS.sidePoints),
+        }),
+        right: z.object({
+          title: z.string().min(1).max(DECK_LIMITS.sideTitle),
+          points: z.array(rich(DECK_LIMITS.sidePoint, "A short point")).min(1).max(DECK_LIMITS.sidePoints),
+        }),
+        verdict: rich(DECK_LIMITS.verdict, "The conclusion under both sides").optional(),
+      })
+      .describe("Two things side by side: before/after, wrong/right, A vs B"),
+    z
+      .object({
+        ...slideCommon,
+        type: z.literal("quote"),
+        quote: rich(DECK_LIMITS.quote, "The quotation, without quotation marks"),
+        author: z.string().max(DECK_LIMITS.author).optional(),
+        role: z.string().max(DECK_LIMITS.role).optional().describe("Who the author is or where it's from"),
+      })
+      .describe("A quotation. Only quote real sources accurately"),
+    z
+      .object({
+        ...slideCommon,
+        type: z.literal("code"),
+        title: rich(DECK_LIMITS.slideTitle, "The slide's heading").optional(),
+        language: z.enum(DECK_CODE_LANGUAGES),
+        code: z.string().min(1).max(DECK_LIMITS.code).describe(`A fragment, at most ${DECK_LIMITS.codeLines} lines. It types itself in`),
+        highlights: z
+          .array(
+            z.object({
+              from: z.number().int().min(1).describe("First line to highlight (1-based)"),
+              to: z.number().int().min(1).optional().describe("Last line; the same as from if left out"),
+              note: z.string().max(DECK_LIMITS.highlightNote).optional().describe("What to notice in those lines"),
+            }),
+          )
+          .max(DECK_LIMITS.highlights)
+          .optional()
+          .describe("Walk through the code: each Next highlights these lines and shows the note"),
+      })
+      .describe("A code example"),
+    z
+      .object({
+        ...slideCommon,
+        type: z.literal("image"),
+        url: httpsUrl.describe("https link to the picture. Only links you are sure exist"),
+        alt: z.string().min(1).max(DECK_LIMITS.alt).describe("What the picture shows, for screen readers. Required"),
+        title: rich(DECK_LIMITS.slideTitle, "The slide's heading").optional(),
+        caption: z.string().max(DECK_LIMITS.caption).optional(),
+        layout: z.enum(IMAGE_LAYOUTS).optional().describe("split (default): picture beside the words; full: the picture fills the slide"),
+      })
+      .describe("A picture"),
+    z
+      .object({
+        ...slideCommon,
+        type: z.literal("diagram"),
+        title: rich(DECK_LIMITS.slideTitle, "The slide's heading").optional(),
+        layout: z
+          .enum(DIAGRAM_LAYOUTS)
+          .describe("flow: steps left to right; cycle: a loop; stack: layers top to bottom; hub: the first node in the middle, the rest around it"),
+        nodes: z
+          .array(
+            z.object({
+              label: z.string().min(1).max(DECK_LIMITS.nodeLabel).describe("1 to 3 words"),
+              detail: z.string().max(DECK_LIMITS.nodeDetail).optional().describe("A short line under the label"),
+              edge: z
+                .string()
+                .max(DECK_LIMITS.edge)
+                .optional()
+                .describe('Label on the arrow leading into this node, e.g. "GET /". In a cycle, the first node\'s edge labels the arrow that closes the loop'),
+            }),
+          )
+          .min(2)
+          .max(DECK_LIMITS.nodes)
+          .describe("In order; the arrows follow the layout, nobody places anything"),
+        build: z.boolean().optional().describe("true: each node waits for Next. Default: they appear one after another on their own"),
+      })
+      .describe("A process, a cycle, layers or a hub, laid out and animated for you"),
+    z
+      .object({
+        ...slideCommon,
+        type: z.literal("closing"),
+        title: rich(DECK_LIMITS.slideTitle, "The takeaway or a thank-you"),
+        points: z.array(rich(DECK_LIMITS.point, "A recap point")).max(DECK_LIMITS.closingPoints).optional(),
+        next: z.string().max(DECK_LIMITS.next).optional().describe('What comes next, e.g. "Next week: Flexbox"'),
+      })
+      .describe("The last slide"),
+  ])
+  .describe("One slide: a type and its words. The type decides the layout and the animation");
+
+export const deckThemeSchema = z
+  .enum(DECK_THEMES)
+  .describe(
+    `The look of every slide. ${DECK_THEMES.map((theme) => `${theme}: ${THEME_INFO[theme].mood}`).join(" ")}`,
+  );
+
+/** Slides with the deck rules (deckProblems) run over them, as one list. */
+export const slidesSchema = z
+  .array(slideSchema)
+  .min(1)
+  .max(DECK_LIMITS.slides)
+  .superRefine((slides, ctx) => {
+    for (const problem of deckProblems({ theme: "ink", slides: slides.map((slide) => tidySlide({ ...slide, id: slide.id ?? "" } as Slide)) })) {
+      ctx.addIssue({ code: "custom", message: problem });
+    }
+  })
+  .describe("The slides in order. 8 to 20 is typical: one idea per slide");
 
 // --- Animated scenes (lib/scene/index.ts has the rules; sceneProblems runs on every scene) ------
 

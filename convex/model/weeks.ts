@@ -9,6 +9,7 @@ import { optionalText, requireText } from "../lib/input";
 import { type WeekLink } from "../lib/validators";
 import { requireAssessmentAccess, toAssessment } from "./assessments";
 import { displayName, logAudit } from "./audit";
+import { presentationsOf } from "./presentations";
 
 /**
  * The course outline: weeks. A week ("Week 1", or any title: "Unit 2 · Forms")
@@ -87,6 +88,7 @@ export async function getOutline(ctx: QueryCtx, actor: Actor, courseId: Id<"cour
   const outlineWeeks = [];
   for (const week of weeks) {
     const lessons = await lessonsOf(ctx, week._id);
+    const presentations = await presentationsOf(ctx, week._id);
     outlineWeeks.push({
       _id: week._id,
       order: week.order,
@@ -112,6 +114,15 @@ export async function getOutline(ctx: QueryCtx, actor: Actor, courseId: Id<"cour
         blockCount: lesson.blocks.length,
         createdVia: lesson.createdVia,
         updatedAt: lesson.updatedAt,
+      })),
+      presentations: presentations.map((deck) => ({
+        _id: deck._id,
+        title: deck.title,
+        status: deck.status,
+        theme: deck.theme,
+        slideCount: deck.slides.length,
+        createdVia: deck.createdVia,
+        updatedAt: deck.updatedAt,
       })),
       assessments: assessments.filter((a) => a.weekId === week._id && isWeekKind(a)).map(toAssessment),
     });
@@ -359,6 +370,11 @@ export async function publishWeek(ctx: MutationCtx, actor: Actor, weekId: Id<"we
       await ctx.db.patch("lessons", lesson._id, { status: "published", publishedAt: lesson.publishedAt ?? now });
     }
   }
+  for (const deck of await presentationsOf(ctx, weekId)) {
+    if (deck.status === "draft") {
+      await ctx.db.patch("presentations", deck._id, { status: "published", publishedAt: deck.publishedAt ?? now });
+    }
+  }
   if (sharing) {
     await ctx.scheduler.runAfter(0, internal.drive.shareWeek, { weekId, attempt: 0 });
   }
@@ -400,7 +416,7 @@ export async function unpublishWeek(ctx: MutationCtx, actor: Actor, weekId: Id<"
 }
 
 /**
- * Removes a draft week: its lessons go, its tasks and quizzes become unplaced
+ * Removes a draft week: its lessons and presentations go, its tasks and quizzes become unplaced
  * (never deleted), and its Drive folder stays in the lecturer's Drive.
  */
 export async function removeWeek(ctx: MutationCtx, actor: Actor, weekId: Id<"weeks">) {
@@ -410,14 +426,21 @@ export async function removeWeek(ctx: MutationCtx, actor: Actor, weekId: Id<"wee
     throw appError("CONFLICT", "Unpublish this week first, so students stop seeing it.");
   }
   const lessons = await lessonsOf(ctx, weekId);
-  if (actor.via === "mcp" && lessons.some((lesson) => lesson.status === "published")) {
+  const presentations = await presentationsOf(ctx, weekId);
+  if (
+    actor.via === "mcp" &&
+    (lessons.some((lesson) => lesson.status === "published") || presentations.some((deck) => deck.status === "published"))
+  ) {
     throw appError(
       "CONFLICT",
-      `"${week.title}" has lessons the lecturer published. Only the lecturer can delete it, in the Kalami dashboard.`,
+      `"${week.title}" has lessons or presentations the lecturer published. Only the lecturer can delete it, in the Kalami dashboard.`,
     );
   }
   for (const lesson of lessons) {
     await ctx.db.delete("lessons", lesson._id);
+  }
+  for (const deck of presentations) {
+    await ctx.db.delete("presentations", deck._id);
   }
   const placed = await ctx.db
     .query("assessments")
@@ -644,12 +667,13 @@ function hostOf(url: string): string {
   }
 }
 
-/** The published weeks students see, with their published lessons and materials. */
+/** The published weeks students see, with their published lessons, presentations and materials. */
 export async function publishedWeeks(ctx: QueryCtx, courseId: Id<"courses">) {
   const out = [];
   for (const week of await weeksOf(ctx, courseId)) {
     if (week.status !== "published") continue;
     const lessons = (await lessonsOf(ctx, week._id)).filter((lesson) => lesson.status === "published");
+    const presentations = (await presentationsOf(ctx, week._id)).filter((deck) => deck.status === "published");
     out.push({
       _id: week._id,
       title: week.title,
@@ -657,6 +681,7 @@ export async function publishedWeeks(ctx: QueryCtx, courseId: Id<"courses">) {
       links: week.links.map((link) => ({ ...link, host: hostOf(link.url) })),
       driveUrl: week.folderId && week.permissionId ? folderUrl(week.folderId) : undefined,
       lessons: lessons.map((lesson) => ({ _id: lesson._id, title: lesson.title })),
+      presentations: presentations.map((deck) => ({ _id: deck._id, title: deck.title, theme: deck.theme, slideCount: deck.slides.length })),
     });
   }
   return out;

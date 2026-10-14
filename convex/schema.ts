@@ -440,6 +440,34 @@ export default defineSchema({
     .index("by_courseId", ["courseId"])
     .index("by_shareToken", ["share.token"]),
 
+  // Pictures stored on Kalami's ImageKit (convex/mediaActions.ts): every
+  // upload or imported link, compressed to WebP. One row per course that uses
+  // the file: a deck imported into another course gets a row of its own with
+  // the same fileId, so deleting one course never removes a picture another
+  // still shows. `sourceKey`: the link it came from, so importing the same
+  // link into the same course again reuses it.
+  media: defineTable({
+    courseId: v.id("courses"),
+    ownerId: v.id("users"),
+    via: viaValidator,
+    fileId: v.string(),
+    url: v.string(),
+    width: v.number(),
+    height: v.number(),
+    bytes: v.number(),
+    originalBytes: v.number(),
+    source: v.union(
+      v.object({ kind: v.literal("upload"), name: v.optional(v.string()) }),
+      v.object({ kind: v.literal("link"), url: v.string() }),
+      v.object({ kind: v.literal("copy") }),
+    ),
+    sourceKey: v.optional(v.string()),
+  })
+    .index("by_courseId_and_sourceKey", ["courseId", "sourceKey"])
+    .index("by_courseId_and_url", ["courseId", "url"])
+    .index("by_url", ["url"])
+    .index("by_fileId", ["fileId"]),
+
   // -------------------------------------------------------------------------
   // Messages (the contact card)
   // -------------------------------------------------------------------------

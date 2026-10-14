@@ -1,4 +1,6 @@
 // @vitest-environment node
+import { ConvexHttpClient } from "convex/browser";
+import { ConvexError } from "convex/values";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 
 // The real MCP server, driven over HTTP-shaped requests without a network or a
@@ -77,6 +79,7 @@ describe("MCP server", () => {
       "get_kalami_format",
       "get_lesson",
       "get_presentation",
+      "import_image",
       "import_kalami_file",
       "import_presentation_file",
       "list_courses",
@@ -138,6 +141,60 @@ describe("MCP server", () => {
     expect(result?.isError).toBe(true);
     const text = (result?.content as { text: string }[]).map((part) => part.text).join(" ");
     expect(text).toContain("slides[1].nodes: 3 to 8 nodes for a hub.");
+  });
+
+  test("create_presentation copies image slides' pictures into Kalami first, and saves nothing if one fails", async () => {
+    const KALAMI = "https://ik.imagekit.io/kalami/dev/courses/c1/cat_1.webp";
+    const imported: string[] = [];
+    const saved: { slides?: { url?: string }[] }[] = [];
+    const action = vi.spyOn(ConvexHttpClient.prototype, "action").mockImplementation((async (_ref: unknown, args: { url: string }) => {
+      imported.push(args.url);
+      if (args.url.includes("missing")) {
+        throw new ConvexError({ code: "INVALID_INPUT", message: "example.org answered 404: the picture isn't there." });
+      }
+      return { url: KALAMI, width: 1600, height: 900, bytes: 150_000, originalBytes: 2_000_000, reused: false };
+    }) as never);
+    const mutation = vi.spyOn(ConvexHttpClient.prototype, "mutation").mockImplementation((async (_ref: unknown, args: (typeof saved)[number]) => {
+      saved.push(args);
+      return "p1";
+    }) as never);
+    const query = vi.spyOn(ConvexHttpClient.prototype, "query").mockResolvedValue({ courseId: "c1", slides: [{ id: "a" }, { id: "b" }] } as never);
+    const call = (id: number, url: string) =>
+      server
+        .handleVerified(
+          rpc(id, "tools/call", {
+            name: "create_presentation",
+            arguments: {
+              weekId: "w1",
+              title: "Cats",
+              slides: [
+                { type: "title", title: "Cats" },
+                { type: "image", url, alt: "A cat", credit: "Photo: Jane Doe / Unsplash" },
+              ],
+            },
+          }),
+          authInfo,
+        )
+        .then(body);
+    try {
+      const ok = await call(7, "https://example.org/cat.jpg");
+      expect(ok.result?.isError).toBeFalsy();
+      expect(imported).toEqual(["https://example.org/cat.jpg"]);
+      expect(saved[0].slides?.[1]).toMatchObject({ url: KALAMI, credit: "Photo: Jane Doe / Unsplash" });
+      const text = (ok.result?.content as { text: string }[])[0].text;
+      expect(JSON.parse(text)).toMatchObject({ presentationId: "p1", picturesCopiedIn: [{ slide: 1, sizeKB: 146, originalKB: 1953 }] });
+
+      const failed = await call(8, "https://example.org/missing.jpg");
+      expect(failed.result?.isError).toBe(true);
+      expect((failed.result?.content as { text: string }[])[0].text).toContain(
+        "Nothing was saved: these pictures couldn't be copied into Kalami. slides[1] (https://example.org/missing.jpg): example.org answered 404",
+      );
+      expect(saved).toHaveLength(1);
+    } finally {
+      action.mockRestore();
+      mutation.mockRestore();
+      query.mockRestore();
+    }
   });
 
   test("the header route refuses a request without a token", async () => {

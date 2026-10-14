@@ -14,6 +14,7 @@ import {
   type SlideInput,
 } from "../lib/validators";
 import { displayName, lecturerName, logAudit } from "./audit";
+import { deckImageUrls, trackDeckImages } from "./media";
 import type { Student } from "./learn";
 import { keepsPublishedOrder, presentationsOf } from "./weeks";
 
@@ -148,10 +149,16 @@ export async function getPresentation(ctx: QueryCtx, actor: Actor, presentationI
   };
 }
 
+/**
+ * `outsideImages`: "keep" for a deck from a .kalami file, whose pictures may
+ * still be links to other sites (the editor offers to copy them in); everyone
+ * else's image slides must show pictures copied into Kalami.
+ */
 export async function createPresentation(
   ctx: MutationCtx,
   actor: Actor,
   args: { weekId: Id<"weeks">; title: string; theme?: DeckTheme; slides?: SlideInput[] },
+  outsideImages: "refuse" | "keep" = "refuse",
 ): Promise<Id<"presentations">> {
   const week = await ctx.db.get("weeks", args.weekId);
   if (week === null) {
@@ -166,6 +173,7 @@ export async function createPresentation(
   const theme = args.theme ?? DEFAULT_THEME;
   // A new presentation from the editor starts as one title slide; agents send the whole deck.
   const slides = normalizeSlides(args.slides && args.slides.length > 0 ? args.slides : [{ type: "title", title }], theme);
+  await trackDeckImages(ctx, actor, week.courseId, slides, outsideImages === "keep" ? "all" : new Set());
   const presentationId = await ctx.db.insert("presentations", {
     courseId: week.courseId,
     weekId: args.weekId,
@@ -208,6 +216,8 @@ export async function savePresentation(
       throw appError("INVALID_INPUT", "A presentation needs at least one slide.");
     }
     changes.slides = normalizeSlides(patch.slides, theme);
+    // Links to other sites a deck already had may stay; new pictures must be copied into Kalami.
+    await trackDeckImages(ctx, actor, deck.courseId, changes.slides, deckImageUrls(deck.slides));
   }
   await ctx.db.patch("presentations", presentationId, { ...changes, updatedAt: Date.now() });
   return (changes.slides ?? deck.slides).map((slide) => slide.id);

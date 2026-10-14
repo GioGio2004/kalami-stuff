@@ -37,6 +37,8 @@ export const LIMITS = {
   groupInvite: { kind: "token bucket", rate: 300, period: 24 * HOUR, capacity: 200 },
   // Google Drive work (folders, sharing), per lecturer.
   drive: { kind: "token bucket", rate: 60, period: 10 * MINUTE, capacity: 30 },
+  // Pictures copied into Kalami (uploads and links), per lecturer; agents' too.
+  media: { kind: "token bucket", rate: 60, period: HOUR, capacity: 30 },
   // AI agents, per lecturer, across every writing tool
   agent: { kind: "token bucket", rate: 60, period: MINUTE, capacity: 20 },
 } as const satisfies Record<string, RateLimitConfig>;

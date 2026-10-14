@@ -12,6 +12,7 @@
 // The student app keeps a copy of this folder (scripts/sync-student.mjs); edit it here.
 
 export * from "./geometry";
+export * from "./images";
 
 export const DECK_THEMES = ["ink", "paper", "aurora", "ember", "chalk"] as const;
 export type DeckTheme = (typeof DECK_THEMES)[number];
@@ -92,7 +93,7 @@ export type Slide =
   | (Common & { type: "compare"; title?: string; left: CompareSide; right: CompareSide; verdict?: string })
   | (Common & { type: "quote"; quote: string; author?: string; role?: string })
   | (Common & { type: "code"; title?: string; language: string; code: string; highlights?: CodeHighlight[] })
-  | (Common & { type: "image"; url: string; alt: string; title?: string; caption?: string; layout?: ImageLayout })
+  | (Common & { type: "image"; url: string; alt: string; title?: string; caption?: string; credit?: string; layout?: ImageLayout })
   | (Common & { type: "diagram"; title?: string; layout: DiagramLayout; nodes: DiagramNode[]; build?: boolean })
   | (Common & { type: "closing"; title: string; points?: string[]; next?: string });
 
@@ -139,6 +140,7 @@ export const DECK_LIMITS = {
   url: 2_000,
   alt: 300,
   caption: 220,
+  credit: 160,
   sideTitle: 60,
   sidePoints: 5,
   sidePoint: 120,
@@ -405,6 +407,7 @@ export function tidySlide<S extends Slide>(slide: S): S {
         alt: req(s.alt),
         title: trimmed(s.title),
         caption: trimmed(s.caption),
+        credit: trimmed(s.credit),
         layout: s.layout === "split" ? undefined : s.layout,
       };
       break;
@@ -539,6 +542,7 @@ export function deckProblems(deck: Deck): string[] {
         text(slide.alt, "alt", L.alt, true);
         text(slide.title, "title", L.slideTitle);
         text(slide.caption, "caption", L.caption);
+        text(slide.credit, "credit", L.credit);
         if (slide.layout !== undefined && !(IMAGE_LAYOUTS as readonly string[]).includes(slide.layout)) out.push(`${at}.layout: split or full.`);
         break;
       case "diagram": {

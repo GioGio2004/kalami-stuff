@@ -98,6 +98,7 @@ leftover `mcpTokens` rows are inert and can be deleted in the Convex dashboard.
 | `list_courses`, `get_course`, `create_course` | courses the person can edit |
 | `create_assessment`, `update_assessment`, `get_assessment` | drafts; settings; questions with keys |
 | `add_questions` (≤ 50 per call), `update_question`, `delete_question`, `reorder_questions` | the heavy lifting |
+| `import_image` | copies a picture from a link into the course (compressed WebP on ImageKit) and returns its url; `create_presentation` / `update_presentation` do it for image slides by themselves (since 0.12.0) |
 
 Not exposed on purpose: publish, archive, delete, anything about students, attempts or
 grades. The server's `instructions` tell the agent to ask the lecturer to review and

@@ -38,6 +38,7 @@ import {
   type DraftSlide,
 } from "./draft";
 import { SharePresentation } from "./SharePresentation";
+import { PicturesContext, type PictureActions } from "./ImagePicker";
 import { SlideForm } from "./SlideForms";
 
 type Mode = "edit" | "preview";
@@ -59,6 +60,7 @@ export function PresentationEditor({
   onExport,
   onShare,
   onStopSharing,
+  pictures,
   initialMode = "edit",
   initialSharing = false,
 }: {
@@ -74,6 +76,8 @@ export function PresentationEditor({
   onShare?: (options: { notes: boolean; newLink?: boolean }) => Promise<void>;
   /** Turns its public link off. */
   onStopSharing?: () => Promise<void>;
+  /** Uploads and imports pictures for image slides (copied into Kalami, compressed to WebP). */
+  pictures?: PictureActions;
   initialMode?: Mode;
   /** Opens with the Share dialog showing (the dev gallery). */
   initialSharing?: boolean;
@@ -262,229 +266,231 @@ export function PresentationEditor({
   const sections = sectionNumbers(previewDeck.slides);
 
   return (
-    <div className="rounded-[2.75rem] bg-panel px-4 pb-4 pt-8 sm:px-10 sm:pb-8 sm:pt-10 lg:px-12">
-      <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-graphite">
-        <Link href={`/courses/${deck.courseId}`} className="inline-flex items-center gap-2 rounded-full hover:text-ink">
-          <ArrowLeft className="size-4" />
-          {deck.courseTitle}
-        </Link>
-        <span aria-hidden>/</span>
-        <Link href={`/courses/${deck.courseId}#week-${deck.weekId}`} className="rounded-full hover:text-ink">
-          {deck.weekTitle}
-        </Link>
-      </nav>
+    <PicturesContext.Provider value={pictures ?? null}>
+      <div className="rounded-[2.75rem] bg-panel px-4 pb-4 pt-8 sm:px-10 sm:pb-8 sm:pt-10 lg:px-12">
+        <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-graphite">
+          <Link href={`/courses/${deck.courseId}`} className="inline-flex items-center gap-2 rounded-full hover:text-ink">
+            <ArrowLeft className="size-4" />
+            {deck.courseTitle}
+          </Link>
+          <span aria-hidden>/</span>
+          <Link href={`/courses/${deck.courseId}#week-${deck.weekId}`} className="rounded-full hover:text-ink">
+            {deck.weekTitle}
+          </Link>
+        </nav>
 
-      <div className="mt-6 flex flex-wrap items-end justify-between gap-6 px-1">
-        <div className="min-w-0 flex-1 basis-[22rem]">
-          <div className="flex flex-wrap items-center gap-2">
-            <Pill tone="ink">Presentation</Pill>
-            <Pill tone={statusTone(deck.status)}>{statusLabel(deck.status)}</Pill>
-            {deck.createdVia === "mcp" && (
-              <Pill tone="lime">
-                <Robot className="size-3.5" />
-                Drafted by an agent
-              </Pill>
-            )}
-            {deck.share && (
-              <Pill tone="ok">
-                <LinkChain className="size-3.5" />
-                Shared by link
-              </Pill>
-            )}
-            {!canEdit && <Pill>View only</Pill>}
+        <div className="mt-6 flex flex-wrap items-end justify-between gap-6 px-1">
+          <div className="min-w-0 flex-1 basis-[22rem]">
+            <div className="flex flex-wrap items-center gap-2">
+              <Pill tone="ink">Presentation</Pill>
+              <Pill tone={statusTone(deck.status)}>{statusLabel(deck.status)}</Pill>
+              {deck.createdVia === "mcp" && (
+                <Pill tone="lime">
+                  <Robot className="size-3.5" />
+                  Drafted by an agent
+                </Pill>
+              )}
+              {deck.share && (
+                <Pill tone="ok">
+                  <LinkChain className="size-3.5" />
+                  Shared by link
+                </Pill>
+              )}
+              {!canEdit && <Pill>View only</Pill>}
+            </div>
+            <TitleEditor title={deck.title} canEdit={canEdit} label="Presentation title" onRename={(title) => own(() => onRename(title))} />
+            <p className="mt-3 text-[15px] text-graphite">
+              {items.length} slide{items.length === 1 ? "" : "s"} · {THEME_INFO[theme].label}
+              {dirty && " · unsaved changes"}
+            </p>
           </div>
-          <TitleEditor title={deck.title} canEdit={canEdit} label="Presentation title" onRename={(title) => own(() => onRename(title))} />
-          <p className="mt-3 text-[15px] text-graphite">
-            {items.length} slide{items.length === 1 ? "" : "s"} · {THEME_INFO[theme].label}
-            {dirty && " · unsaved changes"}
-          </p>
+          <div className="flex flex-wrap items-center gap-2.5">
+            {canEdit && (
+              <Segmented
+                label="Editor view"
+                value={mode}
+                options={[
+                  { value: "edit", label: "Edit" },
+                  { value: "preview", label: "Preview" },
+                ]}
+                onChange={setMode}
+              />
+            )}
+            <Button variant="outline" onClick={() => setPresenting(true)}>
+              <Play className="size-4" />
+              Present
+            </Button>
+            {shareable && (
+              <Button variant="outline" onClick={() => setSharing(true)}>
+                <LinkChain className="size-4" />
+                Share
+              </Button>
+            )}
+            {onExport && (
+              <Button
+                variant="outline"
+                disabled={exporting}
+                title={dirty ? "Exports the saved version: save first to include your changes" : "Download it as a .kalami file, to import into another course or another Kalami"}
+                onClick={async () => {
+                  setExporting(true);
+                  setActionError(null);
+                  try {
+                    await onExport();
+                  } catch (caught) {
+                    setActionError(errorMessage(caught));
+                  } finally {
+                    setExporting(false);
+                  }
+                }}
+              >
+                <KalamiFileIcon className="h-4 w-auto" decorative />
+                {exporting ? "Exporting…" : "Export .kalami"}
+              </Button>
+            )}
+            {canEdit &&
+              (deck.status === "draft" ? (
+                <Button variant="lime" disabled={statusBusy} onClick={() => setStatus("published")}>
+                  <Check className="size-4" />
+                  {dirty ? "Save and publish" : "Publish"}
+                </Button>
+              ) : (
+                <Button variant="outline" disabled={statusBusy} onClick={() => setStatus("draft")}>
+                  Move back to draft
+                </Button>
+              ))}
+            {canEdit && (
+              <Button variant="danger" onClick={() => setConfirmDelete(true)}>
+                Delete…
+              </Button>
+            )}
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2.5">
-          {canEdit && (
-            <Segmented
-              label="Editor view"
-              value={mode}
-              options={[
-                { value: "edit", label: "Edit" },
-                { value: "preview", label: "Preview" },
-              ]}
-              onChange={setMode}
+
+        <VisibilityBanner deck={deck} />
+
+        <div id="deck-errors" className="scroll-mt-28">
+          {actionError && (
+            <div className="mt-4">
+              <FormError>{actionError}</FormError>
+            </div>
+          )}
+          {saveError && (
+            <div className="mt-4">
+              <FormError>Not saved. {saveError}</FormError>
+            </div>
+          )}
+          {problems.deck.length > 0 && (
+            <div className="mt-4">
+              <FormError>{problems.deck.join(" ")}</FormError>
+            </div>
+          )}
+          {remoteChanged && (
+            <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl bg-card px-4 py-3 text-sm ring-1 ring-line">
+              <span className="min-w-0 flex-1 basis-64">
+                This presentation was changed somewhere else (your agent, or another tab) while you were editing. Saving
+                keeps your version.
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const next = adopt(deck.slides, items);
+                  setItems(next);
+                  setTheme(deck.theme);
+                  setSaved(contentKey(deck.theme, next));
+                  setRemoteChanged(false);
+                }}
+              >
+                Load theirs instead
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {canEdit && <ThemePicker theme={theme} slide={previewDeck.slides[0]} onChange={setTheme} />}
+
+        {mode === "preview" ? (
+          <div className="mx-auto mt-8 max-w-[72rem]">
+            {dirty && <p className="mb-3 font-hand text-xl leading-none text-graphite">Previewing your unsaved changes</p>}
+            <DeckPlayer deck={previewDeck} title={deck.title} followIndex={selectedIndex} onIndexChange={(i) => setSelected(items[i]?.key ?? null)} />
+          </div>
+        ) : (
+          <div className="mt-8 grid gap-4 *:min-w-0 lg:grid-cols-12">
+            <div className="lg:col-span-7">
+              <ol aria-label="Slides" className="space-y-0">
+                <li>
+                  <InsertPoint label="Add a slide at the start" onAdd={(type) => insert(0, type)} />
+                </li>
+                {items.map((item, index) => (
+                  <li key={item.key}>
+                    <SlideCard
+                      item={item}
+                      index={index}
+                      total={items.length}
+                      theme={theme}
+                      sectionNumber={sections.get(index)}
+                      selected={selected === item.key}
+                      problems={problems.slides.get(index) ?? []}
+                      canEdit={canEdit}
+                      onSelect={() => setSelected(item.key)}
+                      onChange={(slide) => update(item.key, slide)}
+                      onMove={(by) => move(index, by)}
+                      onDuplicate={() => copy(index)}
+                      onRemove={() => remove(item.key)}
+                    />
+                    <InsertPoint
+                      label={index < items.length - 1 ? `Add a slide after slide ${index + 1}` : "Add a slide at the end"}
+                      onAdd={(type) => insert(index + 1, type)}
+                      prominent={index === items.length - 1}
+                    />
+                  </li>
+                ))}
+              </ol>
+              {canEdit && <SaveBar dirty={dirty} state={saveState} failed={saveError !== null} floating onSave={() => void save()} />}
+            </div>
+
+            <aside aria-label="Live preview" className="hidden lg:col-span-5 lg:block">
+              <div className="sticky top-24 rounded-[2rem] bg-paper p-5 ring-1 ring-line">
+                <p className="font-hand text-[1.35rem] leading-none text-graphite">As students see it</p>
+                <p className="mt-1 text-xs text-graphite">Click a slide&apos;s card to play it here. Present plays the whole deck full screen.</p>
+                <DeckPlayer
+                  deck={previewDeck}
+                  title={deck.title}
+                  mode="compact"
+                  followIndex={selectedIndex}
+                  onIndexChange={(i) => setSelected(items[i]?.key ?? null)}
+                  className="mt-4"
+                />
+              </div>
+            </aside>
+          </div>
+        )}
+
+        {canEdit && mode === "preview" && (
+          <SaveBar dirty={dirty} state={saveState} failed={saveError !== null} floating={false} onSave={() => void save()} />
+        )}
+
+        {presenting && <Presenter deck={previewDeck} title={deck.title} start={selectedIndex} onDone={() => setPresenting(false)} />}
+
+        <Dialog open={sharing} onClose={() => setSharing(false)} label="Share presentation">
+          {sharing && shareable && (
+            <SharePresentation deck={deck} dirty={dirty} onShare={onShare} onStop={onStopSharing} onClose={() => setSharing(false)} />
+          )}
+        </Dialog>
+
+        <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} label="Delete presentation">
+          {confirmDelete && (
+            <DeletePresentation
+              title={deck.title}
+              slideCount={deck.slides.length}
+              published={deck.status === "published" && deck.weekStatus === "published"}
+              onDelete={onDelete}
+              onCancel={() => setConfirmDelete(false)}
             />
           )}
-          <Button variant="outline" onClick={() => setPresenting(true)}>
-            <Play className="size-4" />
-            Present
-          </Button>
-          {shareable && (
-            <Button variant="outline" onClick={() => setSharing(true)}>
-              <LinkChain className="size-4" />
-              Share
-            </Button>
-          )}
-          {onExport && (
-            <Button
-              variant="outline"
-              disabled={exporting}
-              title={dirty ? "Exports the saved version: save first to include your changes" : "Download it as a .kalami file, to import into another course or another Kalami"}
-              onClick={async () => {
-                setExporting(true);
-                setActionError(null);
-                try {
-                  await onExport();
-                } catch (caught) {
-                  setActionError(errorMessage(caught));
-                } finally {
-                  setExporting(false);
-                }
-              }}
-            >
-              <KalamiFileIcon className="h-4 w-auto" decorative />
-              {exporting ? "Exporting…" : "Export .kalami"}
-            </Button>
-          )}
-          {canEdit &&
-            (deck.status === "draft" ? (
-              <Button variant="lime" disabled={statusBusy} onClick={() => setStatus("published")}>
-                <Check className="size-4" />
-                {dirty ? "Save and publish" : "Publish"}
-              </Button>
-            ) : (
-              <Button variant="outline" disabled={statusBusy} onClick={() => setStatus("draft")}>
-                Move back to draft
-              </Button>
-            ))}
-          {canEdit && (
-            <Button variant="danger" onClick={() => setConfirmDelete(true)}>
-              Delete…
-            </Button>
-          )}
-        </div>
+        </Dialog>
       </div>
-
-      <VisibilityBanner deck={deck} />
-
-      <div id="deck-errors" className="scroll-mt-28">
-        {actionError && (
-          <div className="mt-4">
-            <FormError>{actionError}</FormError>
-          </div>
-        )}
-        {saveError && (
-          <div className="mt-4">
-            <FormError>Not saved. {saveError}</FormError>
-          </div>
-        )}
-        {problems.deck.length > 0 && (
-          <div className="mt-4">
-            <FormError>{problems.deck.join(" ")}</FormError>
-          </div>
-        )}
-        {remoteChanged && (
-          <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl bg-card px-4 py-3 text-sm ring-1 ring-line">
-            <span className="min-w-0 flex-1 basis-64">
-              This presentation was changed somewhere else (your agent, or another tab) while you were editing. Saving
-              keeps your version.
-            </span>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                const next = adopt(deck.slides, items);
-                setItems(next);
-                setTheme(deck.theme);
-                setSaved(contentKey(deck.theme, next));
-                setRemoteChanged(false);
-              }}
-            >
-              Load theirs instead
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {canEdit && <ThemePicker theme={theme} slide={previewDeck.slides[0]} onChange={setTheme} />}
-
-      {mode === "preview" ? (
-        <div className="mx-auto mt-8 max-w-[72rem]">
-          {dirty && <p className="mb-3 font-hand text-xl leading-none text-graphite">Previewing your unsaved changes</p>}
-          <DeckPlayer deck={previewDeck} title={deck.title} followIndex={selectedIndex} onIndexChange={(i) => setSelected(items[i]?.key ?? null)} />
-        </div>
-      ) : (
-        <div className="mt-8 grid gap-4 *:min-w-0 lg:grid-cols-12">
-          <div className="lg:col-span-7">
-            <ol aria-label="Slides" className="space-y-0">
-              <li>
-                <InsertPoint label="Add a slide at the start" onAdd={(type) => insert(0, type)} />
-              </li>
-              {items.map((item, index) => (
-                <li key={item.key}>
-                  <SlideCard
-                    item={item}
-                    index={index}
-                    total={items.length}
-                    theme={theme}
-                    sectionNumber={sections.get(index)}
-                    selected={selected === item.key}
-                    problems={problems.slides.get(index) ?? []}
-                    canEdit={canEdit}
-                    onSelect={() => setSelected(item.key)}
-                    onChange={(slide) => update(item.key, slide)}
-                    onMove={(by) => move(index, by)}
-                    onDuplicate={() => copy(index)}
-                    onRemove={() => remove(item.key)}
-                  />
-                  <InsertPoint
-                    label={index < items.length - 1 ? `Add a slide after slide ${index + 1}` : "Add a slide at the end"}
-                    onAdd={(type) => insert(index + 1, type)}
-                    prominent={index === items.length - 1}
-                  />
-                </li>
-              ))}
-            </ol>
-            {canEdit && <SaveBar dirty={dirty} state={saveState} failed={saveError !== null} floating onSave={() => void save()} />}
-          </div>
-
-          <aside aria-label="Live preview" className="hidden lg:col-span-5 lg:block">
-            <div className="sticky top-24 rounded-[2rem] bg-paper p-5 ring-1 ring-line">
-              <p className="font-hand text-[1.35rem] leading-none text-graphite">As students see it</p>
-              <p className="mt-1 text-xs text-graphite">Click a slide&apos;s card to play it here. Present plays the whole deck full screen.</p>
-              <DeckPlayer
-                deck={previewDeck}
-                title={deck.title}
-                mode="compact"
-                followIndex={selectedIndex}
-                onIndexChange={(i) => setSelected(items[i]?.key ?? null)}
-                className="mt-4"
-              />
-            </div>
-          </aside>
-        </div>
-      )}
-
-      {canEdit && mode === "preview" && (
-        <SaveBar dirty={dirty} state={saveState} failed={saveError !== null} floating={false} onSave={() => void save()} />
-      )}
-
-      {presenting && <Presenter deck={previewDeck} title={deck.title} start={selectedIndex} onDone={() => setPresenting(false)} />}
-
-      <Dialog open={sharing} onClose={() => setSharing(false)} label="Share presentation">
-        {sharing && shareable && (
-          <SharePresentation deck={deck} dirty={dirty} onShare={onShare} onStop={onStopSharing} onClose={() => setSharing(false)} />
-        )}
-      </Dialog>
-
-      <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} label="Delete presentation">
-        {confirmDelete && (
-          <DeletePresentation
-            title={deck.title}
-            slideCount={deck.slides.length}
-            published={deck.status === "published" && deck.weekStatus === "published"}
-            onDelete={onDelete}
-            onCancel={() => setConfirmDelete(false)}
-          />
-        )}
-      </Dialog>
-    </div>
+    </PicturesContext.Provider>
   );
 }
 

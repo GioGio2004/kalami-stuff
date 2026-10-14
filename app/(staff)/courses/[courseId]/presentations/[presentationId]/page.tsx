@@ -1,10 +1,11 @@
 "use client";
 
-import { useConvex, useMutation, useQuery } from "convex/react";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { downloadKalami } from "@/components/kalami/KalamiFile";
 import { PresentationEditor } from "@/components/presentations-editor/PresentationEditor";
+import { postFile } from "@/lib/upload";
 import { LoadingScreen } from "@/components/ui/StatusScreen";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -31,6 +32,9 @@ export default function PresentationPage() {
   const remove = useMutation(api.presentations.remove);
   const share = useMutation(api.presentations.share);
   const stopSharing = useMutation(api.presentations.stopSharing);
+  const uploadUrl = useMutation(api.media.generateUploadUrl);
+  const uploadPicture = useAction(api.mediaActions.upload);
+  const importPicture = useAction(api.mediaActions.importLink);
 
   if (deck === undefined) {
     return <LoadingScreen label="Opening presentation" />;
@@ -56,6 +60,13 @@ export default function PresentationPage() {
       }}
       onStopSharing={async () => {
         await stopSharing({ presentationId });
+      }}
+      pictures={{
+        upload: async (file, onProgress) => {
+          const storageId = await postFile(await uploadUrl({ courseId: deck.courseId }), file, onProgress);
+          return await uploadPicture({ courseId: deck.courseId, storageId: storageId as Id<"_storage">, name: file.name });
+        },
+        importLink: (url) => importPicture({ courseId: deck.courseId, url }),
       }}
       onDelete={async () => {
         setDeleting(true);

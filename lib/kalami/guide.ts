@@ -225,7 +225,7 @@ the theme's accent mark on a few words, and backticks make \`code\`.
 | \`compare\` | \`title?\`, \`left\` and \`right\` ({ \`title\`, \`points\` 1 to 5 }), \`verdict?\` | two sides |
 | \`quote\` | \`quote\`, \`author?\`, \`role?\` | quote real sources accurately |
 | \`code\` | \`title?\`, \`language\`, \`code\` (up to 22 lines), \`highlights?\` [{ \`from\`, \`to?\`, \`note?\` }] | each Next highlights lines |
-| \`image\` | \`url\` (https), \`alt\`, \`title?\`, \`caption?\`, \`layout?\` (\`split\` or \`full\`) | |
+| \`image\` | \`url\` (https), \`alt\`, \`title?\`, \`caption?\`, \`credit?\` (author and licence, shown small), \`layout?\` (\`split\` or \`full\`) | pictures are copied into Kalami as compressed WebP when a lecturer or agent saves the deck |
 | \`diagram\` | \`title?\`, \`layout\` (\`flow\`, \`cycle\`, \`stack\`, \`hub\`), \`nodes\` (2 to 8: \`label\`, \`detail?\`, \`edge?\`), \`build?\` | arrows are drawn for you; \`edge\` labels the arrow into a node |
 | \`closing\` | \`title\`, \`points?\` (up to 5), \`next?\` | the end |
 

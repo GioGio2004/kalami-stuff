@@ -21,7 +21,7 @@ import { choreograph, registerDeckGsap, type Choreography } from "./choreo";
 import s from "./deck.module.css";
 import { pad } from "./format";
 import { themeStyle } from "./themes";
-import { SlideView } from "./views";
+import { pictureFor, SlideView } from "./views";
 
 /** What a page can ask the player to do. */
 export type DeckPlayerHandle = { present: () => void; exit: () => void; replay: () => void };
@@ -151,6 +151,18 @@ export function DeckPlayer({
   function replay() {
     if (slide) go(current, 1, "intro", 0);
   }
+
+  // The next two slides' pictures load while this one plays, so they're there when their slide arrives.
+  useEffect(() => {
+    for (const ahead of slides.slice(current + 1, current + 3)) {
+      if (ahead.type !== "image") continue;
+      const { src, srcSet, sizes } = pictureFor(ahead);
+      const img = new Image();
+      if (sizes) img.sizes = sizes;
+      if (srcSet) img.srcset = srcSet;
+      img.src = src;
+    }
+  }, [slides, current]);
 
   // --- Full screen ------------------------------------------------------------------------
 
@@ -888,7 +900,7 @@ export function SlideThumb({
       className={`${s.stage} ${s.thumb} block ${className}`}
       style={{ ...themeStyle(theme), background: accent ? "var(--deck-accent-bg)" : "var(--deck-bg)" }}
     >
-      <SlideView slide={slide} theme={theme} sectionNumber={sectionNumber} />
+      <SlideView slide={slide} theme={theme} sectionNumber={sectionNumber} thumb />
     </span>
   );
 }

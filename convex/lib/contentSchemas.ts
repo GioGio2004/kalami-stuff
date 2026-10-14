@@ -356,10 +356,17 @@ export const slideSchema = z
       .object({
         ...slideCommon,
         type: z.literal("image"),
-        url: httpsUrl.describe("https link to the picture. Only links you are sure exist"),
+        url: httpsUrl.describe(
+          "The picture's own address (an image file, not the web page it is on). Kalami copies it in and compresses it before saving, or use a url from import_image",
+        ),
         alt: z.string().min(1).max(DECK_LIMITS.alt).describe("What the picture shows, for screen readers. Required"),
         title: rich(DECK_LIMITS.slideTitle, "The slide's heading").optional(),
         caption: z.string().max(DECK_LIMITS.caption).optional(),
+        credit: z
+          .string()
+          .max(DECK_LIMITS.credit)
+          .optional()
+          .describe('Who made the picture and its licence, shown small on the slide, e.g. "Photo: Jane Doe / Unsplash" or "Wikimedia Commons, CC BY-SA 4.0". Required when the licence asks for attribution'),
         layout: z.enum(IMAGE_LAYOUTS).optional().describe("split (default): picture beside the words; full: the picture fills the slide"),
       })
       .describe("A picture"),

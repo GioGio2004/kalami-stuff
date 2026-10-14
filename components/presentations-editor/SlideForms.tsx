@@ -4,6 +4,7 @@ import { useId, type ReactNode } from "react";
 import { SmallIcon } from "@/components/lessons-editor/BlockForms";
 import { CheckCard, Field, Segmented, SelectInput, TextArea, TextInput } from "@/components/ui/form";
 import { ArrowDown, ArrowUp, Cross, Plus } from "@/components/ui/icons";
+import { ImagePicker } from "./ImagePicker";
 import {
   DECK_CODE_LANGUAGES,
   DECK_LIMITS,
@@ -412,12 +413,22 @@ function CodeForm({ slide, onChange }: FormProps<"code">) {
 function ImageForm({ slide, onChange }: FormProps<"image">) {
   return (
     <div className="space-y-4">
-      <Line label="Picture link" value={slide.url} onChange={(url) => onChange({ ...slide, url: url.trim() })} max={DECK_LIMITS.url / 2} placeholder="https://…" />
+      <Field label="Picture">
+        <ImagePicker url={slide.url} onChange={(url) => onChange({ ...slide, url })} />
+      </Field>
       <Line label="What it shows (for screen readers)" value={slide.alt} onChange={(alt) => onChange({ ...slide, alt })} max={DECK_LIMITS.alt} />
       <Grid>
         <Line label="Heading" optional rich value={slide.title} onChange={(title) => onChange({ ...slide, title })} max={DECK_LIMITS.slideTitle} />
         <Line label="Caption" optional value={slide.caption} onChange={(caption) => onChange({ ...slide, caption })} max={DECK_LIMITS.caption} />
       </Grid>
+      <Line
+        label="Credit"
+        optional
+        value={slide.credit}
+        onChange={(credit) => onChange({ ...slide, credit })}
+        max={DECK_LIMITS.credit}
+        placeholder="Photo: Jane Doe / Unsplash"
+      />
       <Field label="Layout">
         <Segmented
           label="Image layout"

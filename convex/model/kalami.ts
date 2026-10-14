@@ -408,11 +408,11 @@ export async function importPresentationFile(
   const check = await checkPresentationFile(raw);
   if (!check.ok) return check;
   const { file, summary, verified } = check;
-  const presentationId = await createPresentation(ctx, actor, {
-    weekId,
-    title: file.presentation.title,
-    theme: file.presentation.theme,
-    slides: file.presentation.slides,
-  });
+  const presentationId = await createPresentation(
+    ctx,
+    actor,
+    { weekId, title: file.presentation.title, theme: file.presentation.theme, slides: file.presentation.slides },
+    "keep",
+  );
   return { ok: true as const, presentationId, summary, verified };
 }

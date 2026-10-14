@@ -697,6 +697,32 @@
   overflow: hidden;
 }
 
+/* Who made the picture: small, on the picture, out of the words' way. */
+.credit {
+  position: absolute;
+  right: 1.6cqmin;
+  bottom: 1.4cqmin;
+  z-index: 1;
+  max-width: 70%;
+  padding: 0.5cqmin 1.2cqmin;
+  border-radius: 99px;
+  background: rgba(0, 0, 0, 0.52);
+  color: rgba(255, 255, 255, 0.92);
+  /* Readable on a phone and in the editor preview, small on a projector. */
+  font-size: max(1.45cqmin, 10px);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  backdrop-filter: blur(6px);
+}
+
+.credit[data-full] {
+  top: 2.4cqmin;
+  right: 2.4cqmin;
+  bottom: auto;
+}
+
 .scrim {
   position: absolute;
   inset: 0;
@@ -1022,6 +1048,10 @@
 
 .thumb {
   pointer-events: none;
+}
+
+.thumb .credit {
+  display: none;
 }
 
 .thumb .orb,

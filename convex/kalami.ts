@@ -187,7 +187,7 @@ export const importWeek = internalMutation({
       await createLesson(ctx, actor, { weekId, title: lesson.title, blocks: lesson.blocks });
     }
     for (const deck of args.presentations ?? []) {
-      await createPresentation(ctx, actor, { weekId, title: deck.title, theme: deck.theme, slides: deck.slides });
+      await createPresentation(ctx, actor, { weekId, title: deck.title, theme: deck.theme, slides: deck.slides }, "keep");
     }
     return weekId;
   },

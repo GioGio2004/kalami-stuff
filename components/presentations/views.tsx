@@ -5,8 +5,10 @@ import { fileNameFor, TOKEN_CLASS } from "@/components/lessons/codeWindow";
 import { tokenize } from "@/components/lessons/highlight";
 import {
   diagramEdges,
+  imageSrcSet,
   parseRich,
   plainText,
+  sizedImage,
   slideTone,
   type DeckTheme,
   type Slide,
@@ -27,19 +29,30 @@ import { THEMES } from "./themes";
  *
  * This folder is copied into the student app by scripts/sync-student.mjs; edit it here.
  */
-export function SlideView({ slide, theme, sectionNumber }: { slide: Slide; theme: DeckTheme; sectionNumber?: number }) {
+export function SlideView({
+  slide,
+  theme,
+  sectionNumber,
+  thumb = false,
+}: {
+  slide: Slide;
+  theme: DeckTheme;
+  sectionNumber?: number;
+  /** A small still (the overview, the editor's list): pictures load small. */
+  thumb?: boolean;
+}) {
   const tone = slideTone(slide);
   const look = THEMES[theme].mark;
   // A marker on an accent fill would vanish; accent slides underline instead.
   const mark = tone === "accent" && look === "marker" ? "scribble" : look;
   return (
     <div className={s.slide} data-type={slide.type} data-tone={tone} data-mark={mark}>
-      <Body slide={slide} sectionNumber={sectionNumber ?? 1} />
+      <Body slide={slide} sectionNumber={sectionNumber ?? 1} thumb={thumb} />
     </div>
   );
 }
 
-function Body({ slide, sectionNumber }: { slide: Slide; sectionNumber: number }) {
+function Body({ slide, sectionNumber, thumb }: { slide: Slide; sectionNumber: number; thumb: boolean }) {
   switch (slide.type) {
     case "title":
       return <TitleSlide slide={slide} />;
@@ -58,7 +71,7 @@ function Body({ slide, sectionNumber }: { slide: Slide; sectionNumber: number })
     case "code":
       return <CodeSlide slide={slide} />;
     case "image":
-      return <ImageSlide slide={slide} />;
+      return <ImageSlide slide={slide} thumb={thumb} />;
     case "diagram":
       return <DiagramSlide slide={slide} />;
     case "closing":
@@ -376,14 +389,36 @@ function CodeSlide({ slide }: { slide: SlideOf<"code"> }) {
 
 // --- Image --------------------------------------------------------------------------------
 
-function ImageSlide({ slide }: { slide: SlideOf<"image"> }) {
+/**
+ * What an image slide loads: a small picture for a thumbnail, otherwise a
+ * srcset ImageKit fills at the width the screen needs. The player uses it to
+ * fetch the next slides' pictures ahead of time too.
+ */
+export function pictureFor(slide: SlideOf<"image">, thumb = false) {
   const full = slide.layout === "full" || (!slide.title && !slide.caption);
+  return {
+    full,
+    src: sizedImage(slide.url, thumb ? 480 : 1280),
+    srcSet: thumb ? undefined : imageSrcSet(slide.url),
+    sizes: thumb ? undefined : full ? "(min-width: 1024px) 75vw, 100vw" : "(min-width: 768px) 45vw, 100vw",
+  };
+}
+
+function ImageSlide({ slide, thumb }: { slide: SlideOf<"image">; thumb: boolean }) {
+  const { full, src, srcSet, sizes } = pictureFor(slide, thumb);
   const picture = (
     <div data-k="kb" className={s.kb}>
-      {/* Lecturers' images come from anywhere; next/image would need every host allowed in advance. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img data-k="img" src={slide.url} alt={slide.alt} draggable={false} />
+      {/* Pictures are on Kalami's ImageKit, which sizes them per screen (lib/presentation/images.ts); next/image would resize them twice. */}
+      {src !== "" && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img data-k="img" src={src} srcSet={srcSet} sizes={sizes} alt={slide.alt} decoding="async" draggable={false} />
+      )}
     </div>
+  );
+  const credit = slide.credit && (
+    <figcaption className={s.credit} data-full={full || undefined}>
+      {slide.credit}
+    </figcaption>
   );
   if (full) {
     return (
@@ -391,6 +426,7 @@ function ImageSlide({ slide }: { slide: SlideOf<"image"> }) {
         <figure data-k="frame" data-full="true" className={s.imageFull}>
           {picture}
           {(slide.title || slide.caption) && <div data-k="scrim" aria-hidden="true" className={s.scrim} />}
+          {credit}
         </figure>
         {(slide.title || slide.caption) && (
           <div className={s.fullText}>
@@ -417,6 +453,7 @@ function ImageSlide({ slide }: { slide: SlideOf<"image"> }) {
       </div>
       <figure data-k="frame" className={s.imageFrame}>
         {picture}
+        {credit}
       </figure>
     </div>
   );

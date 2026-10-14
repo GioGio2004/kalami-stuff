@@ -444,6 +444,7 @@ function slideVariants<Id extends GenericValidator>(id: Id) {
       alt: v.string(),
       title: v.optional(v.string()),
       caption: v.optional(v.string()),
+      credit: v.optional(v.string()),
       layout: v.optional(v.union(v.literal("split"), v.literal("full"))),
     }),
     v.object({

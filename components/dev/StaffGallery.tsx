@@ -323,8 +323,57 @@ async function pause(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 600));
 }
 
+/** A picture already copied into Kalami on the dev ImageKit folder (a 14 MB photo, stored as 339 KB). */
+const KALAMI_PICTURE = "https://ik.imagekit.io/kalami/dev/courses/jx793qwdgy787mczdf9qvbvm7s8fpm93/Fronalpstock_big_DI8gyUXe7.webp";
+
+/** A short deck about pictures: one copied in, one still linked from another site, one not chosen yet. */
+const PICTURE_SLIDES: PresentationDetail["slides"] = [
+  { id: "p1", type: "title", title: "The **Alps** from above", kicker: "Geography · Week 2" },
+  {
+    id: "p2",
+    type: "image",
+    url: KALAMI_PICTURE,
+    alt: "Lake Lucerne and the Alps seen from the Fronalpstock summit",
+    title: "Glaciers **carved** these valleys",
+    caption: "Lake Lucerne from the Fronalpstock, Switzerland.",
+    credit: "Wikimedia Commons, Fronalpstock_big.jpg",
+  },
+  { id: "p3", type: "image", url: "https://upload.wikimedia.org/wikipedia/commons/a/a9/Example.jpg", alt: "An example picture", layout: "full" },
+  { id: "p4", type: "image", url: "", alt: "" },
+];
+
+/** Upload and import without a backend: progress, then the dev picture with real before/after sizes. */
+const galleryPictures = {
+  upload: async (file: File, onProgress: (fraction: number) => void) => {
+    for (const fraction of [0.2, 0.55, 0.9, 1]) {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      onProgress(fraction);
+    }
+    await pause();
+    return { url: KALAMI_PICTURE, width: 2400, height: 1078, bytes: 347_120, originalBytes: file.size, reused: false };
+  },
+  importLink: async (url: string) => {
+    await pause();
+    await pause();
+    if (!url.startsWith("https://")) throw new Error("Only https:// links can be copied in.");
+    return { url: KALAMI_PICTURE, width: 2400, height: 1078, bytes: 347_120, originalBytes: 14_679_474, reused: false };
+  },
+};
+
 /** The presentation editor on the sample deck; Share works on a made-up link. */
-function GalleryPresentationEditor({ shared, open, canShare = true }: { shared: boolean; open: boolean; canShare?: boolean }) {
+function GalleryPresentationEditor({
+  shared,
+  open,
+  canShare = true,
+  pictures = false,
+}: {
+  shared: boolean;
+  open: boolean;
+  canShare?: boolean;
+  /** The deck about pictures instead of the sample deck. */
+  pictures?: boolean;
+}) {
+  const slides = pictures ? PICTURE_SLIDES : SAMPLE_DECK.slides;
   const [share, setShare] = useState<PresentationDetail["share"]>(
     shared ? { token: "Hk3vQ9xL2mP7rT5wZ8yA", notes: false, by: "Nino Beridze", at: NOW - 2 * DAY } : null,
   );
@@ -337,9 +386,9 @@ function GalleryPresentationEditor({ shared, open, canShare = true }: { shared: 
         weekId: outlineWeeks[0]._id,
         weekTitle: outlineWeeks[0].title,
         weekStatus: "published",
-        title: "How the web works",
-        theme: SAMPLE_DECK.theme,
-        slides: SAMPLE_DECK.slides,
+        title: pictures ? "The Alps from above" : "How the web works",
+        theme: pictures ? "aurora" : SAMPLE_DECK.theme,
+        slides,
         status: "draft",
         canEdit: canShare,
         canShare,
@@ -361,7 +410,8 @@ function GalleryPresentationEditor({ shared, open, canShare = true }: { shared: 
         await pause();
         setShare(null);
       }}
-      onSave={async () => SAMPLE_DECK.slides.map((slide) => slide.id)}
+      onSave={async (draft) => draft.slides.map((slide, i) => (slide as { id?: string }).id ?? `new${i}`)}
+      pictures={galleryPictures}
       onSetStatus={pause}
       onDelete={pause}
     />
@@ -911,6 +961,7 @@ const views: Record<string, string> = {
   "lesson-editor": "Studio · lesson editor",
   "lesson-preview": "Studio · lesson preview",
   "presentation-editor": "Studio · presentation editor",
+  "presentation-pictures": "Studio · presentation editor, pictures (upload, import, copy in, credit)",
   "presentation-share": "Studio · presentation editor, Share (no link yet)",
   "presentation-shared": "Studio · presentation editor, Share (link on; try notes, New link, Stop)",
   "presentation-shared-assistant": "Studio · presentation editor, Share as an assistant (view only)",
@@ -1022,6 +1073,8 @@ export function StaffGallery({ view }: { view?: string }) {
       return staffPage(lessonPage("preview"));
     case "presentation-editor":
       return staffPage(<GalleryPresentationEditor shared={false} open={false} />);
+    case "presentation-pictures":
+      return staffPage(<GalleryPresentationEditor shared={false} open={false} pictures />);
     case "presentation-share":
       return staffPage(<GalleryPresentationEditor shared={false} open />);
     case "presentation-shared":

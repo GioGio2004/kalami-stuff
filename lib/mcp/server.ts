@@ -51,6 +51,10 @@ function text(data: unknown): CallToolResult {
 }
 
 function failure(error: unknown): CallToolResult {
+  return { isError: true, content: [{ type: "text", text: errorMessage(error) }] };
+}
+
+function errorMessage(error: unknown): string {
   let message = "Something went wrong.";
   if (error instanceof ConvexError) {
     const data: unknown = error.data;
@@ -63,7 +67,7 @@ function failure(error: unknown): CallToolResult {
   } else if (error instanceof Error) {
     message = error.message;
   }
-  return { isError: true, content: [{ type: "text", text: message }] };
+  return message;
 }
 
 /** Runs a Convex call for a tool and turns its errors into tool errors. */
@@ -115,6 +119,48 @@ const weekId = z.string().describe("Week id from create_week or get_course_outli
 const lessonId = z.string().describe("Lesson id from create_lesson or get_course_outline");
 const presentationId = z.string().describe("A presentation id, from create_presentation or get_course_outline");
 
+type DeckSlides = z.infer<typeof slidesSchema>;
+type PictureTarget = { weekId: Id<"weeks"> } | { presentationId: Id<"presentations"> };
+
+/**
+ * Copies every image slide's picture into Kalami before a deck is saved
+ * (convex/mediaActions.ts: downloaded, compressed to WebP, stored on
+ * ImageKit), so agents never leave links to other sites in a deck. Pictures
+ * that already are Kalami's come back as they are. If any link fails, nothing
+ * is saved and the error names the slide.
+ */
+async function copyPicturesIn(ctx: ToolContext, target: PictureTarget, slides: DeckSlides) {
+  const images = slides.flatMap((slide, index) => (slide.type === "image" ? [{ index, url: slide.url }] : []));
+  const done = new Map<number, { url: string; bytes: number; originalBytes: number; reused: boolean }>();
+  const failed: string[] = [];
+  // A few at a time: each one is a download and a compression.
+  for (let at = 0; at < images.length; at += 4) {
+    await Promise.all(
+      images.slice(at, at + 4).map(async ({ index, url }) => {
+        try {
+          done.set(index, await convex.action(api.mediaActions.importForAgent, { ...auth(ctx), target, url }));
+        } catch (error) {
+          failed.push(`slides[${index}] (${url}): ${errorMessage(error).replace(/^[A-Z_]+: /, "")}`);
+        }
+      }),
+    );
+  }
+  if (failed.length > 0) {
+    throw new Error(
+      `Nothing was saved: these pictures couldn't be copied into Kalami. ${failed.join(" ")} Use the picture file's own address, another picture, or leave the slide out.`,
+    );
+  }
+  return {
+    slides: slides.map((slide, index) => {
+      const copied = done.get(index);
+      return slide.type === "image" && copied ? { ...slide, url: copied.url } : slide;
+    }),
+    pictures: [...done.entries()]
+      .filter(([, copied]) => !copied.reused)
+      .map(([index, copied]) => ({ slide: index, sizeKB: Math.round(copied.bytes / 1024), originalKB: Math.round(copied.originalBytes / 1024) })),
+  };
+}
+
 const INSTRUCTIONS = `You are connected to Kalami, a learning and exam platform for universities, schools and private tutors, as a lecturer's assistant.
 
 How a course is built: a course is a list of weeks (any title works: "Week 3", "Unit 2 · Forms"). Each week holds lessons written in Kalami, materials (links, plus a Google Drive folder the lecturer adds), and that week's tasks and quizzes. Midterms and finals sit in the course's Exams section, not in a week.
@@ -152,7 +198,7 @@ Writing lessons (in the course's language):
 - A presentation can have a public link that anyone can watch it with, no account needed. Only the lecturer turns it on or off, with Share in the presentation's editor (drafts can be shared too). While it's on, get_presentation returns it as shareLink: give that url when the lecturer asks for the link.
 - A scene block (type "scene") is for one custom animation inside a lesson (a diagram that builds up step by step); get_kalami_format has its vocabulary.
 - A check every few blocks (single, multiple or short) so students test themselves; add an explanation.
-- Images only from https URLs you are sure of, always with alt text. YouTube or Vimeo links play inside the lesson.
+- Pictures: find them with your own web search and give the picture file's address (not the page it is on). Kalami copies every picture into the course and compresses it: image slides by themselves; for a lesson's image block call import_image first and use the url it returns. Prefer openly licensed pictures (Wikimedia Commons, Unsplash, Pexels) and put the author and licence in the image slide's credit when the licence asks. Always write alt text. YouTube or Vimeo links play inside the lesson.
 - Never invent facts about the lecturer's own course (dates, grading rules); ask.
 
 Rules:
@@ -748,20 +794,55 @@ const handler = createMcpHandler(
       },
       async (args, ctx) =>
         run(async () => {
+          const weekIdArg = args.weekId as Id<"weeks">;
+          const { slides, pictures } = await copyPicturesIn(ctx, { weekId: weekIdArg }, args.slides);
           const id = await convex.mutation(api.mcp.createPresentationAsAgent, {
             ...auth(ctx),
             requestId: args.requestId,
-            weekId: args.weekId as Id<"weeks">,
+            weekId: weekIdArg,
             title: args.title,
             theme: args.theme,
-            slides: args.slides,
+            slides,
           });
           const deck = await convex.query(api.mcp.getPresentationAsAgent, { ...auth(ctx), presentationId: id });
           return {
             presentationId: id,
             status: "draft",
             slideIds: deck.slides.map((slide) => slide.id),
+            ...(pictures.length > 0 ? { picturesCopiedIn: pictures } : {}),
             reviewUrl: dashboardUrl(ctx, `/courses/${deck.courseId}/presentations/${id}`),
+          };
+        }),
+    );
+
+    server.registerTool(
+      "import_image",
+      {
+        title: "Import image",
+        description: [
+          "Copies a picture from the internet into Kalami for a course: Kalami downloads it, turns it upright, removes its metadata, shrinks it to at most 2400px, compresses it to WebP and stores it. Returns its Kalami url (use it in image slides, lesson image blocks or code-task assets), its width and height, and its size before and after.",
+          "url must be the picture file itself (what \"Copy image address\" gives), not the web page it is on. Prefer pictures you may reuse (Wikimedia Commons, Unsplash, Pexels, other openly licensed or public-domain sources), and put the author and licence in the slide's credit when the licence asks for attribution.",
+          "create_presentation and update_presentation do this for their image slides by themselves; importing the same link into the same course again reuses the first copy.",
+        ].join(" "),
+        inputSchema: z.object({
+          courseId,
+          url: z.string().max(2000).describe("https link to the picture file"),
+        }),
+      },
+      async (args, ctx) =>
+        run(async () => {
+          const picture = await convex.action(api.mediaActions.importForAgent, {
+            ...auth(ctx),
+            target: { courseId: args.courseId as Id<"courses"> },
+            url: args.url,
+          });
+          return {
+            url: picture.url,
+            width: picture.width,
+            height: picture.height,
+            sizeKB: Math.round(picture.bytes / 1024),
+            originalKB: Math.round(picture.originalBytes / 1024),
+            reused: picture.reused,
           };
         }),
     );
@@ -792,7 +873,7 @@ const handler = createMcpHandler(
       {
         title: "Update presentation",
         description:
-          "Changes a draft presentation: its title, its theme and/or its slides. slides replaces every slide at once: to keep a slide as it is, send it with its id from get_presentation; leave slides out to change only the title or theme. Returns the slide ids.",
+          "Changes a draft presentation: its title, its theme and/or its slides. slides replaces every slide at once: to keep a slide as it is, send it with its id from get_presentation; leave slides out to change only the title or theme. Image slides' pictures are copied into Kalami first, like create_presentation. Returns the slide ids.",
         inputSchema: z.object({
           presentationId,
           title: z.string().min(1).max(160).optional(),
@@ -802,14 +883,16 @@ const handler = createMcpHandler(
       },
       async (args, ctx) =>
         run(async () => {
+          const id = args.presentationId as Id<"presentations">;
+          const copied = args.slides && (await copyPicturesIn(ctx, { presentationId: id }, args.slides));
           const ids = await convex.mutation(api.mcp.updatePresentationAsAgent, {
             ...auth(ctx),
-            presentationId: args.presentationId as Id<"presentations">,
+            presentationId: id,
             title: args.title,
             theme: args.theme,
-            slides: args.slides,
+            slides: copied?.slides,
           });
-          return { slideIds: ids };
+          return { slideIds: ids, ...(copied && copied.pictures.length > 0 ? { picturesCopiedIn: copied.pictures } : {}) };
         }),
     );
 
@@ -1146,7 +1229,7 @@ const handler = createMcpHandler(
     );
   },
   {
-    serverInfo: { name: "kalami", version: "0.11.0" },
+    serverInfo: { name: "kalami", version: "0.12.0" },
     instructions: INSTRUCTIONS,
   },
 );

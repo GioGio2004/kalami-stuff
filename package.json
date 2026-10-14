@@ -38,6 +38,7 @@
     "parse5-htmlparser2-tree-adapter": "^8.0.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "sharp": "0.35.5",
     "svix": "^2.6.1",
     "web-push": "^3.6.7",
     "zod": "^4.6.5"

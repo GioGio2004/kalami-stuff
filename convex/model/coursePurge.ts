@@ -1,3 +1,4 @@
+import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 
@@ -95,8 +96,9 @@ async function purgeAssessment(ctx: MutationCtx, assessmentId: Id<"assessments">
 /**
  * One run of removing what belonged to a deleted course: its assessments
  * (with students' attempts, answers and grades), weeks, lessons, legacy
- * materials, notifications, group shares, Drive link, staff seats and
- * enrollments. True when nothing is left; otherwise run it again.
+ * materials, notifications, group shares, Drive link, staff seats,
+ * enrollments and pictures (the ImageKit files go too, unless another course
+ * shows the same file). True when nothing is left; otherwise run it again.
  *
  * Kept on purpose: conversations (they're between people; they lose the
  * course title), the audit log, and the files in the lecturer's Google Drive.
@@ -116,6 +118,29 @@ export async function purgeCourseStep(ctx: MutationCtx, courseId: Id<"courses">)
     }
     await ctx.db.delete("assessments", assessment._id);
     budget.left--;
+  }
+  const unused: string[] = [];
+  const picturesGone = await drain(
+    budget,
+    (n) =>
+      ctx.db
+        .query("media")
+        .withIndex("by_courseId_and_url", (q) => q.eq("courseId", courseId))
+        .take(n),
+    async (row) => {
+      await ctx.db.delete("media", row._id);
+      const shared = await ctx.db
+        .query("media")
+        .withIndex("by_fileId", (q) => q.eq("fileId", row.fileId))
+        .first();
+      if (shared === null && !unused.includes(row.fileId)) unused.push(row.fileId);
+    },
+  );
+  if (unused.length > 0) {
+    await ctx.scheduler.runAfter(0, internal.mediaActions.deleteFiles, { fileIds: unused });
+  }
+  if (!picturesGone) {
+    return false;
   }
   return (
     (await drain(

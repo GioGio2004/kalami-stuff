@@ -22,8 +22,11 @@ Values are never in the repos. Names only:
 | Convex | `STAFF_APP_URL` | Links in message emails to staff; defaults to `https://staff.kalami.space`. Set it on dev to the dev URL. |
 | Convex | `RESEND_TEST_MODE` | `true` to only allow Resend's test addresses (dev) |
 | Convex | `CLERK_SECRET_KEY` | The Clerk secret key of the same Clerk instance (dev key on dev, live key on prod). Only for Google Drive materials: Convex asks Clerk for the lecturer's Google token. Without it Drive weeks are refused and links still work. |
+| Convex | `IMAGEKIT_API_PRIVATE_KEY` | ImageKit's private API key (account `kalami`). Pictures copied into presentations are stored with it. **Convex only**: never on Vercel or in the browser. Without it Upload and Import say pictures aren't set up, and nothing else fails. |
+| Convex | `IMAGEKIT_FOLDER` | The ImageKit folder pictures go in: `/dev` on dev, `/prod` on prod (defaults to `/kalami`), so the two never mix in the one account. |
 | Convex | `CODE_ASSET_URL_PREFIX` | The Kalami ImageKit endpoint, with a trailing slash, e.g. `https://ik.imagekit.io/kalami/`. Without it any ImageKit account passes. |
 | Convex | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Push notifications to the student app (see below). Without them nothing is pushed and nothing fails. Generate a pair with `npx web-push generate-vapid-keys`; the subject is `mailto:` an address you read. **Different pairs on dev and prod**, and never rotate the prod pair casually: every device would have to turn push on again. |
+| Vercel (both apps) | `NEXT_PUBLIC_IMAGEKIT_URL_ENDPOINT` | `https://ik.imagekit.io/kalami` (public). The player asks this address for each picture at the width the screen needs; it is also the default when unset. |
 | Vercel (both apps) | `NEXT_PUBLIC_CODE_ASSET_URL_PREFIX` | Same value as above: the preview's CSP allows images from it |
 | Vercel staff | `MCP_OAUTH_AUDIENCE` | Optional: `https://staff.kalami.space/api/mcp` once confirmed that Clerk binds OAuth tokens to it |
 | Vercel (both) | `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` | As before |
@@ -31,6 +34,23 @@ Values are never in the repos. Names only:
 | GitHub secrets (kalami-stuff) | `CONVEX_DEPLOY_KEY`, `KALAMI_REPO_TOKEN` | CI sync check: a dev deploy key, and a read token if the student repo is private |
 
 Set a Convex value with `npx convex env set NAME value` (add `--prod` for production), never by pasting it into a file that is committed.
+
+## Pictures
+
+Image slides show pictures copied into Kalami, never links to other sites
+(TASK-020). The editor's Upload (choose, drop or paste) and Import a link, and
+agents' image slides and `import_image`, all run `convex/mediaActions.ts`:
+download (https only, public addresses only, 15 MB, 15 s, 3 redirects) or the
+uploaded file → `sharp` (refuses non-pictures and pixel bombs, turns photos
+upright, removes all metadata including GPS, fits 2400 px, WebP) → ImageKit
+`<IMAGEKIT_FOLDER>/courses/<courseId>/` → a `media` row. The player then
+asks ImageKit for the width each screen needs (`?tr=w-…`), so a phone loads
+a few dozen KB. `sharp` runs on Convex as an external package (`convex.json`).
+
+Limits: 60 new pictures an hour per lecturer (burst 30); the same link in the
+same course is reused. Deleting a course deletes its files from ImageKit unless
+another course shows the same file. ImageKit's free plan stops serving when its
+monthly bandwidth or storage runs out: watch the usage page as courses grow.
 
 ## Email
 

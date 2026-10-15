@@ -1,0 +1,155 @@
+/* The crossword grid: letter squares only (no black squares drawn), sized by
+   the width it gets, so one markup serves a phone, a laptop and the editor's
+   preview. Sizes come from --cell, the width of one square. */
+
+.frame {
+  container-type: inline-size;
+  margin-inline: auto;
+  width: 100%;
+}
+
+.grid {
+  --cell: calc(100cqw / var(--cols));
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--rows), minmax(0, 1fr));
+  aspect-ratio: var(--cols) / var(--rows);
+  gap: calc(var(--cell) * 0.07);
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.cell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: calc(var(--cell) * 0.12);
+  background: var(--card);
+  box-shadow: inset 0 0 0 max(1px, calc(var(--cell) * 0.04)) color-mix(in srgb, var(--ink) 78%, transparent);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: calc(var(--cell) * 0.5);
+  line-height: 1;
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+/* Squares as buttons: no browser look, a clear focus ring. */
+.button {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  font-size: calc(var(--cell) * 0.5);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  z-index: 1;
+}
+
+/* The editor's arrange mode: an empty square of the board a word can be moved onto. */
+.slot {
+  border-radius: calc(var(--cell) * 0.12);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+/* A word being moved: where it would land. Red when it can't go there. */
+.ghost {
+  border-radius: calc(var(--cell) * 0.12);
+  background: color-mix(in srgb, var(--highlighter) 70%, transparent);
+  box-shadow: inset 0 0 0 max(2px, calc(var(--cell) * 0.07)) var(--ink);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.ghostBad {
+  background: color-mix(in srgb, var(--red-pen) 22%, transparent);
+  box-shadow: inset 0 0 0 max(2px, calc(var(--cell) * 0.07)) var(--red-pen);
+}
+
+.number {
+  position: absolute;
+  top: calc(var(--cell) * 0.06);
+  left: calc(var(--cell) * 0.1);
+  font-size: max(7px, calc(var(--cell) * 0.24));
+  font-weight: 600;
+  line-height: 1;
+  color: var(--graphite);
+}
+
+.letter {
+  padding-top: calc(var(--cell) * 0.12);
+}
+
+.word {
+  background: color-mix(in srgb, var(--highlighter) 38%, var(--card));
+}
+
+.active {
+  background: var(--highlighter);
+  box-shadow: inset 0 0 0 max(2px, calc(var(--cell) * 0.08)) var(--ink);
+}
+
+.wrong .letter {
+  color: var(--red-pen);
+}
+
+.wrong::after {
+  content: "";
+  position: absolute;
+  inset: 18%;
+  background: linear-gradient(to top right, transparent calc(50% - 1px), var(--red-pen) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px));
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+.revealed .letter {
+  color: var(--graphite);
+}
+
+.revealed::before {
+  content: "";
+  position: absolute;
+  right: calc(var(--cell) * 0.08);
+  top: calc(var(--cell) * 0.08);
+  border-left: calc(var(--cell) * 0.16) solid transparent;
+  border-top: calc(var(--cell) * 0.16) solid var(--ok);
+  border-top-right-radius: calc(var(--cell) * 0.05);
+}
+
+.solved {
+  background: color-mix(in srgb, var(--ok) 14%, var(--card));
+  box-shadow: inset 0 0 0 max(1px, calc(var(--cell) * 0.04)) var(--ok);
+  animation: pop 520ms cubic-bezier(0.3, 1.6, 0.5, 1) both;
+  animation-delay: var(--delay, 0ms);
+}
+
+@keyframes pop {
+  0% {
+    scale: 1;
+  }
+  45% {
+    scale: 1.14;
+  }
+  100% {
+    scale: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .solved {
+    animation: none;
+  }
+  .cell {
+    transition: none;
+  }
+}

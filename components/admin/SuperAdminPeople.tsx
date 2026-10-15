@@ -18,6 +18,7 @@ export function SuperAdminPeople({ universities }: { universities: AdminUniversi
   const people = useQuery(api.people.search, searched.trim().length >= 2 ? { query: searched } : "skip");
   const changeRole = useMutation(api.people.changeStaffRole);
   const removeRole = useMutation(api.people.removeStaffRole);
+  const setFeature = useMutation(api.people.setFeature);
   return (
     <PeoplePanel
       query={query}
@@ -29,6 +30,9 @@ export function SuperAdminPeople({ universities }: { universities: AdminUniversi
       }}
       onRemove={async (membershipId) => {
         await removeRole({ membershipId });
+      }}
+      onSetFeature={async (userId, feature, enabled) => {
+        await setFeature({ userId, feature, enabled });
       }}
     />
   );

@@ -17,6 +17,7 @@ import {
   type AssessmentId,
   type AssessmentKind,
   type CourseOutline as CourseOutlineData,
+  type CrosswordId,
   type DriveConnection,
   type LessonId,
   type OutlineWeek,
@@ -54,6 +55,9 @@ export type OutlineActions = {
   onInspectPresentationFile: (text: string) => Promise<PresentationFileInspect>;
   /** Imports one into the week; on success the page opens it. */
   onImportPresentationFile: (weekId: WeekId, text: string) => Promise<PresentationFileImport>;
+  /** Creates a draft crossword; the page then opens its editor. */
+  onCreateCrossword: (weekId: WeekId, title: string) => Promise<void>;
+  onMoveCrossword: (crosswordId: CrosswordId, to: { direction: "up" | "down" } | { weekId: WeekId }) => Promise<void>;
   /** Creates a draft assessment (tasks and quizzes in a week); the page then opens the builder. */
   onCreateAssessment: (args: { kind: AssessmentKind; title: string; weekId?: WeekId }) => Promise<void>;
   onPlace: (assessmentId: AssessmentId, weekId: WeekId | null) => Promise<void>;
@@ -67,6 +71,7 @@ type Dialogs =
   | { kind: "new-lesson"; week: OutlineWeek }
   | { kind: "new-presentation"; week: OutlineWeek }
   | { kind: "import-presentation"; week: OutlineWeek }
+  | { kind: "new-crossword"; week: OutlineWeek }
   | { kind: "link"; week: OutlineWeek; link?: WeekLink }
   | { kind: "new-assessment"; assessmentKind: AssessmentKind; week?: OutlineWeek };
 
@@ -267,6 +272,7 @@ export function CourseOutline({
               total={weeks.length}
               courseId={courseId}
               canEdit={canEdit}
+              canMakeCrosswords={data.canMakeCrosswords}
               driveUsable={driveUsable}
               moveTargets={[...weekTargets.filter((t) => t.value !== selected._id), { value: null, label: "Unplaced" }]}
               actions={{
@@ -280,6 +286,8 @@ export function CourseOutline({
                 onNewPresentation: () => setDialog({ kind: "new-presentation", week: selected }),
                 onImportPresentation: () => setDialog({ kind: "import-presentation", week: selected }),
                 onMovePresentation: actions.onMovePresentation,
+                onNewCrossword: () => setDialog({ kind: "new-crossword", week: selected }),
+                onMoveCrossword: actions.onMoveCrossword,
                 onMoveLesson: actions.onMoveLesson,
                 onAddLink: () => setDialog({ kind: "link", week: selected }),
                 onEditLink: (link) => setDialog({ kind: "link", week: selected, link }),
@@ -433,6 +441,8 @@ function dialogLabel(dialog: Dialogs | null): string {
       return "New presentation";
     case "import-presentation":
       return "Import a presentation";
+    case "new-crossword":
+      return "New crossword";
     case "link":
       return dialog.link ? "Edit link" : "Add a link";
     case "new-assessment":
@@ -539,6 +549,23 @@ function OutlineDialog({
           submitLabel="Create and open"
           onSubmit={async (title) => {
             await actions.onCreatePresentation(dialog.week._id, title);
+            onDone();
+          }}
+          onCancel={onDone}
+        />
+      );
+    case "new-crossword":
+      return (
+        <TitleForm
+          hand="Seven letters, across"
+          heading="New crossword"
+          blurb={`It goes into “${dialog.week.title}” as a draft, and the editor opens next with a few example words: replace them with the week's words and clues (or paste a list). Kalami lays out the grid.`}
+          label="Crossword title"
+          placeholder="Words of the web"
+          maxLength={120}
+          submitLabel="Create and open"
+          onSubmit={async (title) => {
+            await actions.onCreateCrossword(dialog.week._id, title);
             onDone();
           }}
           onCancel={onDone}
@@ -835,11 +862,12 @@ function RemoveWeek({ week, onRemove, onCancel }: { week: OutlineWeek; onRemove:
   const { busy, error, submit } = useSubmit();
   const lessons = week.lessons.length;
   const decks = week.presentations.length;
+  const crosswords = week.crosswords.length;
   const placed = week.assessments.length;
   return (
     <div className="p-6 sm:p-10">
       <h2 className="text-3xl font-medium tracking-[-0.03em]">Remove “{week.title}”?</h2>
-      {lessons === 0 && decks === 0 && placed === 0 && !week.drive ? (
+      {lessons === 0 && decks === 0 && crosswords === 0 && placed === 0 && !week.drive ? (
         <p className="mt-4 text-[15px] leading-relaxed text-graphite">
           It&apos;s empty{week.links.length > 0 ? " apart from its links" : ""}, so nothing else is affected.
         </p>
@@ -855,6 +883,12 @@ function RemoveWeek({ week, onRemove, onCancel }: { week: OutlineWeek; onRemove:
             <li className="flex gap-2.5">
               <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-red-pen" />
               {`Its ${decks === 1 ? "presentation is" : `${decks} presentations are`} deleted. This can’t be undone.`}
+            </li>
+          )}
+          {crosswords > 0 && (
+            <li className="flex gap-2.5">
+              <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-red-pen" />
+              {`Its ${crosswords === 1 ? "crossword is" : `${crosswords} crosswords are`} deleted, with what students filled in. This can’t be undone.`}
             </li>
           )}
           <li className="flex gap-2.5">
@@ -884,6 +918,7 @@ function PublishWeek({ week, onPublish, onCancel }: { week: OutlineWeek; onPubli
   const { busy, error, submit } = useSubmit();
   const drafts = week.lessons.filter((l) => l.status === "draft").length;
   const draftDecks = week.presentations.filter((p) => p.status === "draft").length;
+  const draftCrosswords = week.crosswords.filter((c) => c.status === "draft").length;
   const empty = week.lessons.filter((l) => l.status === "draft" && l.blockCount === 0);
   const sharing = week.drive?.url !== undefined && !week.drive.shared;
   return (
@@ -904,6 +939,14 @@ function PublishWeek({ week, onPublish, onCancel }: { week: OutlineWeek; onPubli
             {draftDecks === 1
               ? "its draft presentation, published along with it"
               : `its ${draftDecks} draft presentations, published along with it`}
+          </li>
+        )}
+        {draftCrosswords > 0 && (
+          <li className="flex gap-2.5">
+            <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-highlighter-deep" />
+            {draftCrosswords === 1
+              ? "its draft crossword, published along with it"
+              : `its ${draftCrosswords} draft crosswords, published along with it`}
           </li>
         )}
         {week.links.length > 0 && (

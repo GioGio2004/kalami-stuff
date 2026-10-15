@@ -4,6 +4,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { courseAccess, requireCourseContentEditor, type Actor } from "../lib/access";
 import { getMemberships, isStaffRole, isSuperAdmin } from "../lib/auth";
 import { appError } from "../lib/errors";
+import { actorHas } from "../lib/features";
 import { driveConfigured, folderUrl } from "../lib/google";
 import { optionalText, requireText } from "../lib/input";
 import { type WeekLink } from "../lib/validators";
@@ -55,6 +56,14 @@ export async function presentationsOf(ctx: QueryCtx, weekId: Id<"weeks">) {
     .take(100);
 }
 
+/** A week's crosswords, in order (model/crosswords.ts). */
+export async function crosswordsOf(ctx: QueryCtx, weekId: Id<"weeks">) {
+  return await ctx.db
+    .query("crosswords")
+    .withIndex("by_weekId_and_order", (q) => q.eq("weekId", weekId))
+    .take(100);
+}
+
 export async function driveOf(ctx: QueryCtx, courseId: Id<"courses">) {
   return await ctx.db
     .query("courseDrive")
@@ -96,6 +105,7 @@ export async function getOutline(ctx: QueryCtx, actor: Actor, courseId: Id<"cour
   for (const week of weeks) {
     const lessons = await lessonsOf(ctx, week._id);
     const presentations = await presentationsOf(ctx, week._id);
+    const crosswords = await crosswordsOf(ctx, week._id);
     outlineWeeks.push({
       _id: week._id,
       order: week.order,
@@ -132,6 +142,14 @@ export async function getOutline(ctx: QueryCtx, actor: Actor, courseId: Id<"cour
         createdVia: deck.createdVia,
         updatedAt: deck.updatedAt,
       })),
+      crosswords: crosswords.map((crossword) => ({
+        _id: crossword._id,
+        title: crossword.title,
+        status: crossword.status,
+        wordCount: crossword.entries.length,
+        createdVia: crossword.createdVia,
+        updatedAt: crossword.updatedAt,
+      })),
       assessments: assessments.filter((a) => a.weekId === week._id && isWeekKind(a)).map(toAssessment),
     });
   }
@@ -139,6 +157,7 @@ export async function getOutline(ctx: QueryCtx, actor: Actor, courseId: Id<"cour
   return {
     courseId,
     canEdit: access.canEdit && access.course.status !== "archived",
+    canMakeCrosswords: access.canEdit && access.course.status !== "archived" && actorHas(actor, "crosswords"),
     driveAvailable: driveConfigured(),
     drive:
       drive === null
@@ -327,7 +346,7 @@ export async function reorderWeeks(ctx: MutationCtx, actor: Actor, courseId: Id<
 export function keepsPublishedOrder<T extends { _id: string; status: string }>(
   current: T[],
   order: string[],
-  what: "weeks" | "lessons" | "presentations",
+  what: "weeks" | "lessons" | "presentations" | "crosswords",
 ): void {
   const published = new Set(current.filter((item) => item.status === "published").map((item) => item._id));
   const before = current.filter((item) => published.has(item._id)).map((item) => item._id);
@@ -383,6 +402,11 @@ export async function publishWeek(ctx: MutationCtx, actor: Actor, weekId: Id<"we
       await ctx.db.patch("presentations", deck._id, { status: "published", publishedAt: deck.publishedAt ?? now });
     }
   }
+  for (const crossword of await crosswordsOf(ctx, weekId)) {
+    if (crossword.status === "draft") {
+      await ctx.db.patch("crosswords", crossword._id, { status: "published", publishedAt: crossword.publishedAt ?? now });
+    }
+  }
   if (sharing) {
     await ctx.scheduler.runAfter(0, internal.drive.shareWeek, { weekId, attempt: 0 });
   }
@@ -424,7 +448,7 @@ export async function unpublishWeek(ctx: MutationCtx, actor: Actor, weekId: Id<"
 }
 
 /**
- * Removes a draft week: its lessons and presentations go, its tasks and quizzes become unplaced
+ * Removes a draft week: its lessons, presentations and crosswords go, its tasks and quizzes become unplaced
  * (never deleted), and its Drive folder stays in the lecturer's Drive.
  */
 export async function removeWeek(ctx: MutationCtx, actor: Actor, weekId: Id<"weeks">) {
@@ -435,13 +459,16 @@ export async function removeWeek(ctx: MutationCtx, actor: Actor, weekId: Id<"wee
   }
   const lessons = await lessonsOf(ctx, weekId);
   const presentations = await presentationsOf(ctx, weekId);
+  const crosswords = await crosswordsOf(ctx, weekId);
   if (
     actor.via === "mcp" &&
-    (lessons.some((lesson) => lesson.status === "published") || presentations.some((deck) => deck.status === "published"))
+    (lessons.some((lesson) => lesson.status === "published") ||
+      presentations.some((deck) => deck.status === "published") ||
+      crosswords.some((crossword) => crossword.status === "published"))
   ) {
     throw appError(
       "CONFLICT",
-      `"${week.title}" has lessons or presentations the lecturer published. Only the lecturer can delete it, in the Kalami dashboard.`,
+      `"${week.title}" has lessons, presentations or crosswords the lecturer published. Only the lecturer can delete it, in the Kalami dashboard.`,
     );
   }
   for (const lesson of lessons) {
@@ -449,6 +476,15 @@ export async function removeWeek(ctx: MutationCtx, actor: Actor, weekId: Id<"wee
   }
   for (const deck of presentations) {
     await ctx.db.delete("presentations", deck._id);
+  }
+  for (const crossword of crosswords) {
+    for (const progress of await ctx.db
+      .query("crosswordProgress")
+      .withIndex("by_crosswordId_and_userId", (q) => q.eq("crosswordId", crossword._id))
+      .take(2000)) {
+      await ctx.db.delete("crosswordProgress", progress._id);
+    }
+    await ctx.db.delete("crosswords", crossword._id);
   }
   const placed = await ctx.db
     .query("assessments")
@@ -675,13 +711,14 @@ function hostOf(url: string): string {
   }
 }
 
-/** The published weeks students see, with their published lessons, presentations and materials. */
+/** The published weeks students see, with their published lessons, presentations, crosswords and materials. */
 export async function publishedWeeks(ctx: QueryCtx, courseId: Id<"courses">) {
   const out = [];
   for (const week of await weeksOf(ctx, courseId)) {
     if (week.status !== "published") continue;
     const lessons = (await lessonsOf(ctx, week._id)).filter((lesson) => lesson.status === "published");
     const presentations = (await presentationsOf(ctx, week._id)).filter((deck) => deck.status === "published");
+    const crosswords = (await crosswordsOf(ctx, week._id)).filter((crossword) => crossword.status === "published");
     out.push({
       _id: week._id,
       title: week.title,
@@ -690,6 +727,7 @@ export async function publishedWeeks(ctx: QueryCtx, courseId: Id<"courses">) {
       driveUrl: week.folderId && week.permissionId ? folderUrl(week.folderId) : undefined,
       lessons: lessons.map((lesson) => ({ _id: lesson._id, title: lesson.title })),
       presentations: presentations.map((deck) => ({ _id: deck._id, title: deck.title, theme: deck.theme, slideCount: deck.slides.length })),
+      crosswords: crosswords.map((crossword) => ({ _id: crossword._id, title: crossword.title, wordCount: crossword.entries.length })),
     });
   }
   return out;

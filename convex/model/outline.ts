@@ -27,6 +27,15 @@ const outlinePresentationValidator = v.object({
   updatedAt: v.number(),
 });
 
+const outlineCrosswordValidator = v.object({
+  _id: v.id("crosswords"),
+  title: v.string(),
+  status: publishStatusValidator,
+  wordCount: v.number(),
+  createdVia: v.union(v.literal("web"), v.literal("mcp")),
+  updatedAt: v.number(),
+});
+
 export const outlineWeekValidator = v.object({
   _id: v.id("weeks"),
   order: v.number(),
@@ -50,12 +59,15 @@ export const outlineWeekValidator = v.object({
   ),
   lessons: v.array(outlineLessonValidator),
   presentations: v.array(outlinePresentationValidator),
+  crosswords: v.array(outlineCrosswordValidator),
   assessments: v.array(assessmentValidator),
 });
 
 export const outlineValidator = v.object({
   courseId: v.id("courses"),
   canEdit: v.boolean(),
+  /** The viewer may make crosswords here: they can edit the course and have the crosswords feature. */
+  canMakeCrosswords: v.boolean(),
   /** Whether this Kalami server can talk to Google Drive at all. */
   driveAvailable: v.boolean(),
   drive: v.union(

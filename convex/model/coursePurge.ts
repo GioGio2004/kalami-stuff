@@ -93,10 +93,37 @@ async function purgeAssessment(ctx: MutationCtx, assessmentId: Id<"assessments">
   );
 }
 
+/** The course's crosswords, each once the students' progress in it is gone. */
+async function purgeCrosswords(ctx: MutationCtx, courseId: Id<"courses">, budget: Budget): Promise<boolean> {
+  for (;;) {
+    const crossword = await ctx.db
+      .query("crosswords")
+      .withIndex("by_courseId", (q) => q.eq("courseId", courseId))
+      .first();
+    if (crossword === null) {
+      return true;
+    }
+    const progressGone = await drain(
+      budget,
+      (n) =>
+        ctx.db
+          .query("crosswordProgress")
+          .withIndex("by_crosswordId_and_userId", (q) => q.eq("crosswordId", crossword._id))
+          .take(n),
+      (row) => ctx.db.delete("crosswordProgress", row._id),
+    );
+    if (!progressGone) {
+      return false;
+    }
+    await ctx.db.delete("crosswords", crossword._id);
+    budget.left--;
+  }
+}
+
 /**
  * One run of removing what belonged to a deleted course: its assessments
  * (with students' attempts, answers and grades), weeks, lessons, legacy
- * materials, notifications, group shares, Drive link, staff seats,
+ * materials, crosswords (with students' progress), notifications, group shares, Drive link, staff seats,
  * enrollments and pictures (the ImageKit files go too, unless another course
  * shows the same file). True when nothing is left; otherwise run it again.
  *
@@ -157,6 +184,7 @@ export async function purgeCourseStep(ctx: MutationCtx, courseId: Id<"courses">)
           .take(n),
       (row) => ctx.db.delete("lessons", row._id),
     )) &&
+    (await purgeCrosswords(ctx, courseId, budget)) &&
     (await drain(
       budget,
       (n) =>

@@ -32,6 +32,10 @@ export const universityStatusValidator = v.union(
 export const viaValidator = v.union(v.literal("web"), v.literal("mcp"));
 export type Via = Infer<typeof viaValidator>;
 
+/** Tools the super admin switches on per person (lib/features.ts). */
+export const featureValidator = v.union(v.literal("crosswords"));
+export type Feature = Infer<typeof featureValidator>;
+
 export const courseStatusValidator = v.union(
   v.literal("draft"),
   v.literal("published"),
@@ -728,6 +732,30 @@ export const lessonBlockInputValidator = v.union(
 );
 export type LessonBlockInput = Infer<typeof lessonBlockInputValidator>;
 
+// --- Crosswords (lib/crossword has the rules and the layout; keep in step) ------------------
+
+/** A word and its clue as stored. */
+export const crosswordEntryValidator = v.object({ id: v.string(), answer: v.string(), clue: v.string() });
+const crosswordDirectionValidator = v.union(v.literal("across"), v.literal("down"));
+/** Where a word was put by hand: its first letter's square and its direction. */
+export const crosswordPositionValidator = v.object({ row: v.number(), col: v.number(), dir: crosswordDirectionValidator });
+/** As the editor and agents send it: new words have no id yet; `at` places a word by hand. */
+export const crosswordEntryInputValidator = v.object({
+  id: v.optional(v.string()),
+  answer: v.string(),
+  clue: v.string(),
+  at: v.optional(crosswordPositionValidator),
+});
+export type CrosswordEntryInput = Infer<typeof crosswordEntryInputValidator>;
+export const crosswordLayoutValidator = v.object({
+  width: v.number(),
+  height: v.number(),
+  placements: v.array(
+    v.object({ id: v.string(), row: v.number(), col: v.number(), dir: crosswordDirectionValidator, number: v.number() }),
+  ),
+  unplaced: v.array(v.string()),
+});
+
 /** A published week as students see it (model/weeks.ts publishedWeeks). */
 export const studentWeekValidator = v.object({
   _id: v.id("weeks"),
@@ -740,4 +768,5 @@ export const studentWeekValidator = v.object({
   presentations: v.array(
     v.object({ _id: v.id("presentations"), title: v.string(), theme: deckThemeValidator, slideCount: v.number() }),
   ),
+  crosswords: v.array(v.object({ _id: v.id("crosswords"), title: v.string(), wordCount: v.number() })),
 });

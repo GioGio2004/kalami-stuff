@@ -197,6 +197,81 @@ describe("MCP server", () => {
     }
   });
 
+  test("crossword tools are offered only to people with the crosswords feature", async () => {
+    const names = async (info: typeof authInfo) =>
+      ((await body(await server.handleVerified(rpc(9, "tools/list"), info))).result?.tools as { name: string }[]).map((tool) => tool.name);
+    expect((await names(authInfo)).filter((name) => name.includes("crossword"))).toEqual([]);
+    const withFeature = { ...authInfo, extra: { ...authInfo.extra, features: ["crosswords"] } };
+    expect((await names(withFeature)).filter((name) => name.includes("crossword")).sort()).toEqual([
+      "check_crossword",
+      "create_crossword",
+      "delete_crossword",
+      "get_crossword",
+      "move_crossword",
+      "update_crossword",
+    ]);
+    const init = await body(
+      await server.handleVerified(
+        rpc(10, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } }),
+        withFeature,
+      ),
+    );
+    expect(String(init.result?.instructions)).toContain("Kalami lays out the grid");
+
+    // check_crossword lays the grid out without Convex.
+    const checked = await body(
+      await server.handleVerified(
+        rpc(11, "tools/call", {
+          name: "check_crossword",
+          arguments: {
+            entries: [
+              { answer: "Browser", clue: "Draws web pages" },
+              { answer: "Server", clue: "Answers requests" },
+              { answer: "CSS", clue: "Styles a page" },
+              { answer: "Cache", clue: "Keeps copies close" },
+              { answer: "Qqq", clue: "Nothing in common" },
+            ],
+          },
+        }),
+        withFeature,
+      ),
+    );
+    const result = JSON.parse((checked.result?.content as { text: string }[])[0].text) as { ok: boolean; problems: string[]; grid: string; clues: string[] };
+    expect(result.ok).toBe(false);
+    expect(result.problems).toEqual([expect.stringContaining(`entries[4].answer: "Qqq" doesn't fit`)]);
+    expect(result.grid).toContain("B R O W S E R");
+    expect(result.clues[0]).toMatch(/^1 across: /);
+  });
+
+  test("check_crossword keeps the places an agent gives and names a word placed where it can't go", async () => {
+    const withFeature = { ...authInfo, extra: { ...authInfo.extra, features: ["crosswords"] } };
+    const response = await server.handleVerified(
+      rpc(12, "tools/call", {
+        name: "check_crossword",
+        arguments: {
+          entries: [
+            { answer: "CSS", clue: "Styles a page", row: 0, col: 0, dir: "across" },
+            { answer: "Server", clue: "Answers requests", row: 0, col: 1, dir: "down" },
+            { answer: "Browser", clue: "Draws pages", row: 5, col: 0, dir: "across" },
+            // Its A would sit right beside Server's E.
+            { answer: "Cache", clue: "Keeps copies close", row: 0, col: 0, dir: "down" },
+          ],
+        },
+      }),
+      withFeature,
+    );
+    const result = JSON.parse(((await body(response)).result?.content as { text: string }[])[0].text) as {
+      problems: string[];
+      words: { answer: string; row?: number; col?: number; dir?: string }[];
+    };
+    expect(result.problems).toEqual([expect.stringContaining('entries[3].answer: "Cache" can' + String.fromCharCode(39) + "t go where it was put")]);
+    expect(result.words.slice(0, 3).map(({ answer, row, col, dir }) => [answer, row, col, dir])).toEqual([
+      ["CSS", 0, 0, "across"],
+      ["Server", 0, 1, "down"],
+      ["Browser", 5, 0, "across"],
+    ]);
+  });
+
   test("the header route refuses a request without a token", async () => {
     const response = await server.headerAuthHandler(rpc(3, "tools/list"));
     expect(response.status).toBe(401);

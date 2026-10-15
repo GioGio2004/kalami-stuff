@@ -55,6 +55,8 @@ export default function CoursePage() {
   const createLesson = useMutation(api.lessons.create);
   const createPresentation = useMutation(api.presentations.create);
   const movePresentation = useMutation(api.presentations.move);
+  const createCrossword = useMutation(api.crosswords.create);
+  const moveCrossword = useMutation(api.crosswords.move);
   const importPresentation = useMutation(api.kalami.importPresentation);
   const moveLesson = useMutation(api.lessons.move);
   const createAssessment = useMutation(api.assessments.create);
@@ -180,6 +182,13 @@ export default function CoursePage() {
             onCreatePresentation: async (weekId, title) => {
               const presentationId = await createPresentation({ weekId, title });
               router.push(`/courses/${id}/presentations/${presentationId}`);
+            },
+            onCreateCrossword: async (weekId, title) => {
+              const crosswordId = await createCrossword({ weekId, title });
+              router.push(`/courses/${id}/crosswords/${crosswordId}`);
+            },
+            onMoveCrossword: async (crosswordId, to) => {
+              await moveCrossword({ crosswordId, ...to });
             },
             onMovePresentation: async (presentationId, to) => {
               await movePresentation({ presentationId, ...to });

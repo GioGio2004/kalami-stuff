@@ -23,6 +23,9 @@ import {
   lessonBlockValidator,
   deckThemeValidator,
   slideValidator,
+  crosswordEntryValidator,
+  crosswordLayoutValidator,
+  featureValidator,
   publishStatusValidator,
   weekLinkValidator,
   localeValidator,
@@ -69,6 +72,8 @@ export default defineSchema({
     // Set when Clerk deleted the account: the row stays, anonymised, so grades and
     // history keep their references.
     deletedAt: v.optional(v.number()),
+    // Tools the super admin switched on for this person (lib/features.ts).
+    features: v.optional(v.array(featureValidator)),
   })
     .index("by_tokenIdentifier", ["tokenIdentifier"])
     .index("by_clerkUserId", ["clerkUserId"])
@@ -439,6 +444,44 @@ export default defineSchema({
     .index("by_weekId_and_order", ["weekId", "order"])
     .index("by_courseId", ["courseId"])
     .index("by_shareToken", ["share.token"]),
+
+  // Crosswords: practice puzzles in a week, next to its lessons and
+  // presentations (lib/crossword has the rules and lays out the grid from the
+  // words; nobody positions anything). Only people with the "crosswords"
+  // feature make them. `version` fingerprints the grid and its letters, so
+  // students' saved progress belongs to one version of the puzzle.
+  crosswords: defineTable({
+    courseId: v.id("courses"),
+    weekId: v.id("weeks"),
+    order: v.number(),
+    title: v.string(),
+    entries: v.array(crosswordEntryValidator),
+    layout: crosswordLayoutValidator,
+    // The teacher (or an agent) put the words in place by hand; otherwise Kalami laid them out.
+    arranged: v.optional(v.boolean()),
+    version: v.string(),
+    status: publishStatusValidator,
+    publishedAt: v.optional(v.number()),
+    createdBy: v.id("users"),
+    createdVia: viaValidator,
+    updatedAt: v.number(),
+  })
+    .index("by_weekId_and_order", ["weekId", "order"])
+    .index("by_courseId", ["courseId"]),
+
+  // A student's letters in a crossword, one per cell ("" while empty), and the
+  // cells they had revealed. Progress from an older version of the puzzle is ignored.
+  crosswordProgress: defineTable({
+    crosswordId: v.id("crosswords"),
+    userId: v.id("users"),
+    version: v.string(),
+    letters: v.array(v.string()),
+    revealed: v.array(v.number()),
+    solvedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index("by_crosswordId_and_userId", ["crosswordId", "userId"])
+    .index("by_userId", ["userId"]),
 
   // Pictures stored on Kalami's ImageKit (convex/mediaActions.ts): every
   // upload or imported link, compressed to WebP. One row per course that uses

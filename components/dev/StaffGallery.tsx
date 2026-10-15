@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { AdminUniversity } from "@/components/admin/types";
 import { adminPage, adminViews, renderAdminView, uniAdminMe } from "@/components/dev/AdminGallery";
 import { PanelHeader } from "@/components/admin/panel/ui";
@@ -29,6 +29,8 @@ import { AssessmentBuilder } from "@/components/studio/AssessmentBuilder";
 import { LessonEditor } from "@/components/lessons-editor/LessonEditor";
 import { DeckPlayer } from "@/components/presentations/DeckPlayer";
 import { PresentationEditor } from "@/components/presentations-editor/PresentationEditor";
+import { CrosswordEditor } from "@/components/crossword-editor/CrosswordEditor";
+import { arrangeCrossword, type CrosswordPosition } from "@/lib/crossword";
 import { SAMPLE_DECK } from "@/components/presentations/samples";
 import type { DeckTheme } from "@/lib/presentation";
 import { SCENE_TEMPLATES } from "@/components/lessons/scene/templates";
@@ -45,6 +47,7 @@ import type {
   DriveConnection,
   LessonDetail,
   PresentationDetail,
+  CrosswordDetail,
   OutlineWeek,
   QuestionWithKey,
 } from "@/components/studio/types";
@@ -114,18 +117,21 @@ const samplePeople: Person[] = [
     email: "nino.beridze@gtu.ge",
     name: "Nino Beridze",
     memberships: [{ _id: "sample_m1" as PersonMembership["_id"], role: "lecturer", universityId: gori._id, universityName: gori.name }],
+    features: ["crosswords"],
   },
   {
     _id: "sample_p2" as Person["_id"],
     email: "nino.k@gmail.com",
     name: "Nino Kapanadze",
     memberships: [{ _id: "sample_m2" as PersonMembership["_id"], role: "student", universityId: gori._id, universityName: gori.name }],
+    features: [],
   },
   {
     _id: "sample_p3" as Person["_id"],
     email: "nino.tutor@gmail.com",
     name: "",
     memberships: [{ _id: "sample_m3" as PersonMembership["_id"], role: "lecturer", universityId: undefined, universityName: undefined }],
+    features: [],
   },
 ];
 
@@ -360,6 +366,65 @@ const galleryPictures = {
   },
 };
 
+/** A crossword an agent drafted, in the editor; saving lays it out here the way the server would, nothing is stored. */
+function GalleryCrosswordEditor({ viewOnly = false }: { viewOnly?: boolean }) {
+  const [entries, setEntries] = useState(() =>
+    [
+      ["html", "HTML", "The language that gives a page its structure"],
+      ["css", "CSS", "Styles a page: colours, fonts, layout"],
+      ["browser", "Browser", "The program that draws web pages"],
+      ["server", "Server", "The computer that answers a request"],
+      ["domain", "Domain name", "kalami.space is one"],
+      ["link", "Hyperlink", "Click it to go to another page"],
+      ["https", "HTTPS", "The padlock protocol"],
+      ["tag", "Tag", "<p> is one"],
+      ["dns", "DNS", "Turns names into addresses"],
+      ["cache", "Cache", "Keeps copies close so pages load faster"],
+    ].map(([id, answer, clue]) => ({ id, answer, clue })),
+  );
+  const [updatedAt, setUpdatedAt] = useState(NOW - DAY);
+  const [places, setPlaces] = useState<Map<string, CrosswordPosition> | null>(null);
+  const layout = useMemo(() => {
+    const { clashes, ...rest } = arrangeCrossword(entries.map((entry) => ({ ...entry, at: places?.get(entry.id) })));
+    void clashes;
+    return rest;
+  }, [entries, places]);
+  return (
+    <CrosswordEditor
+      crossword={{
+        _id: "sample_crossword_web" as CrosswordDetail["_id"],
+        courseId: webBasics._id,
+        courseTitle: webBasics.title,
+        weekId: outlineWeeks[0]._id,
+        weekTitle: outlineWeeks[0].title,
+        weekStatus: "published",
+        title: "Words of the web",
+        entries,
+        layout,
+        arranged: places !== null,
+        status: "draft",
+        canEdit: !viewOnly,
+        canManage: !viewOnly,
+        createdVia: "mcp",
+        updatedAt,
+        students: { started: 0, solved: 0 },
+      }}
+      onRename={pause}
+      onSave={async (next) => {
+        await pause();
+        const saved = next.map((entry, i) => ({ id: entry.id ?? `new${i}`, answer: entry.answer.trim(), clue: entry.clue.trim() }));
+        setEntries(saved);
+        const placed = next.some((entry) => entry.at);
+        setPlaces(placed ? new Map(next.flatMap((entry, i) => (entry.at ? [[saved[i].id, entry.at] as const] : []))) : null);
+        setUpdatedAt(Date.now());
+        return saved.map((entry) => entry.id);
+      }}
+      onSetStatus={pause}
+      onDelete={pause}
+    />
+  );
+}
+
 /** The presentation editor on the sample deck; Share works on a made-up link. */
 function GalleryPresentationEditor({
   shared,
@@ -586,6 +651,7 @@ const outlineWeek = (fields: Partial<OutlineWeek> & Pick<OutlineWeek, "title" | 
   drive: null,
   lessons: [],
   presentations: [],
+  crosswords: [],
   assessments: [],
   ...fields,
 });
@@ -628,6 +694,16 @@ const outlineWeeks: OutlineWeek[] = [
         updatedAt: NOW - DAY,
       },
     ],
+    crosswords: [
+      {
+        _id: "sample_crossword_web" as OutlineWeek["crosswords"][number]["_id"],
+        title: "Words of the web",
+        status: "draft",
+        wordCount: 10,
+        createdVia: "mcp",
+        updatedAt: NOW - DAY,
+      },
+    ],
     assessments: [
       sampleAssessment({ kind: "quiz", title: "HTML basics", status: "published", publishedAt: NOW - 10 * DAY }),
       sampleAssessment({ kind: "task", title: "Build a recipe page", status: "published", questionCount: 1, totalPoints: 10, publishedAt: NOW - 9 * DAY }),
@@ -659,6 +735,7 @@ const outlineWeeks: OutlineWeek[] = [
 const outlineData: CourseOutlineData = {
   courseId: webBasics._id,
   canEdit: true,
+  canMakeCrosswords: true,
   driveAvailable: true,
   drive: { ownerName: "Nino Beridze", mine: true, canTakeOver: false, folderUrl: "https://drive.google.com/drive/folders/sample-root" },
   weeks: outlineWeeks,
@@ -694,6 +771,8 @@ const outlineActions: OutlineActions = {
   onMoveLesson: pause,
   onCreatePresentation: pause,
   onMovePresentation: pause,
+  onCreateCrossword: pause,
+  onMoveCrossword: pause,
   onInspectPresentationFile: async () => ({
     ok: true as const,
     summary: { title: "How the web works", theme: "aurora" as const, slides: 15, exported: { by: "Nino Beridze", at: "2026-10-06T18:30:00.000Z", from: "Kalami" } },
@@ -961,6 +1040,8 @@ const views: Record<string, string> = {
   "lesson-editor": "Studio · lesson editor",
   "lesson-preview": "Studio · lesson preview",
   "presentation-editor": "Studio · presentation editor",
+  "crossword-editor": "Studio · crossword editor (an agent's draft; try Paste a list, a word that can't fit)",
+  "crossword-editor-view-only": "Studio · crossword editor without the crosswords feature (view only)",
   "presentation-pictures": "Studio · presentation editor, pictures (upload, import, copy in, credit)",
   "presentation-share": "Studio · presentation editor, Share (no link yet)",
   "presentation-shared": "Studio · presentation editor, Share (link on; try notes, New link, Stop)",
@@ -1071,6 +1152,10 @@ export function StaffGallery({ view }: { view?: string }) {
       return staffPage(lessonPage("edit"));
     case "lesson-preview":
       return staffPage(lessonPage("preview"));
+    case "crossword-editor":
+      return staffPage(<GalleryCrosswordEditor />);
+    case "crossword-editor-view-only":
+      return staffPage(<GalleryCrosswordEditor viewOnly />);
     case "presentation-editor":
       return staffPage(<GalleryPresentationEditor shared={false} open={false} />);
     case "presentation-pictures":
@@ -1188,7 +1273,7 @@ export function StaffGallery({ view }: { view?: string }) {
       return adminPage(
         <>
           <PanelHeader note="People" title="Find a person" description="Any account, by the start of its email." />
-          <PeoplePanel query="nino" onQuery={() => undefined} people={samplePeople} universities={[gori, tsu]} onChange={pause} onRemove={pause} />
+          <PeoplePanel query="nino" onQuery={() => undefined} people={samplePeople} universities={[gori, tsu]} onChange={pause} onRemove={pause} onSetFeature={pause} />
         </>,
         "/admin/people",
       );

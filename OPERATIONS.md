@@ -35,6 +35,10 @@ Values are never in the repos. Names only:
 
 Set a Convex value with `npx convex env set NAME value` (add `--prod` for production), never by pasting it into a file that is committed.
 
+## Features per person
+
+Some tools are only for the teachers the super admin chooses: Admin → People → find them → **Features** (today: Crosswords). The super admin always has every feature. Without a feature its buttons don't show, the staff connector doesn't offer its tools (a teacher who just got one reconnects Kalami in their assistant), and the backend refuses its calls; what students already see keeps working, and the course's editors can still unpublish or delete. Nothing to set in Convex or Vercel.
+
 ## Pictures
 
 Image slides show pictures copied into Kalami, never links to other sites

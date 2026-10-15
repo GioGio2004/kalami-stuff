@@ -3,9 +3,11 @@
 import type { FunctionReturnType } from "convex/server";
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/buttons";
-import { FormError, Segmented, SelectInput, TextInput } from "@/components/ui/form";
+import { CheckCard, FormError, Segmented, SelectInput, TextInput } from "@/components/ui/form";
 import { Pill } from "@/components/ui/Pill";
 import type { api } from "@/convex/_generated/api";
+import { FEATURE_INFO, FEATURES } from "@/convex/lib/featureInfo";
+import type { Feature } from "@/convex/lib/validators";
 import { errorMessage } from "@/lib/errors";
 import type { AdminUniversity } from "./types";
 
@@ -26,7 +28,8 @@ const ROLE_LABEL: Record<Membership["role"], string> = {
 /**
  * The super admin's people search: find someone by the start of their email,
  * see their roles, and change a lecturer or university admin role (role and
- * university) or remove it. Students and the platform admin role aren't
+ * university) or remove it, and switch on features (tools only some
+ * teachers get, like crosswords). Students and the platform admin role aren't
  * changed here.
  */
 export function PeoplePanel({
@@ -36,6 +39,7 @@ export function PeoplePanel({
   universities,
   onChange,
   onRemove,
+  onSetFeature,
 }: {
   query: string;
   onQuery: (query: string) => void;
@@ -44,6 +48,7 @@ export function PeoplePanel({
   universities: AdminUniversity[] | undefined;
   onChange: (membershipId: Membership["_id"], role: StaffRole, universityId: UniversityId | undefined) => Promise<void>;
   onRemove: (membershipId: Membership["_id"]) => Promise<void>;
+  onSetFeature: (userId: Person["_id"], feature: Feature, enabled: boolean) => Promise<void>;
 }) {
   const searchId = useId();
   const typed = query.trim().length >= 2;
@@ -52,7 +57,8 @@ export function PeoplePanel({
       <h3 className="text-2xl font-medium tracking-tight">Find a person</h3>
       <p className="mt-1 max-w-2xl text-sm leading-relaxed text-graphite">
         Search by email to see someone&apos;s roles. Lecturers and university admins can be switched, moved to another
-        university or have their staff access removed; their courses always stay.
+        university or have their staff access removed; their courses always stay. Features turn on extra tools for one
+        person at a time.
       </p>
       <div className="mt-4 max-w-xl">
         <label htmlFor={searchId} className="sr-only">
@@ -79,7 +85,14 @@ export function PeoplePanel({
         ) : (
           <ul className="divide-y divide-line rounded-2xl border border-line bg-paper">
             {people.map((person) => (
-              <PersonRow key={person._id} person={person} universities={universities} onChange={onChange} onRemove={onRemove} />
+              <PersonRow
+                key={person._id}
+                person={person}
+                universities={universities}
+                onChange={onChange}
+                onRemove={onRemove}
+                onSetFeature={onSetFeature}
+              />
             ))}
           </ul>
         )}
@@ -93,12 +106,16 @@ function PersonRow({
   universities,
   onChange,
   onRemove,
+  onSetFeature,
 }: {
   person: Person;
   universities: AdminUniversity[] | undefined;
   onChange: (membershipId: Membership["_id"], role: StaffRole, universityId: UniversityId | undefined) => Promise<void>;
   onRemove: (membershipId: Membership["_id"]) => Promise<void>;
+  onSetFeature: (userId: Person["_id"], feature: Feature, enabled: boolean) => Promise<void>;
 }) {
+  const staff = person.memberships.some((m) => m.role !== "student");
+  const superAdmin = person.memberships.some((m) => m.role === "super_admin");
   return (
     <li className="px-4 py-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -125,7 +142,64 @@ function PersonRow({
           ))}
         </ul>
       )}
+      {staff && <Features person={person} superAdmin={superAdmin} onSetFeature={onSetFeature} />}
     </li>
+  );
+}
+
+/** The tools switched on for this person, one switch each. The platform admin has them all. */
+function Features({
+  person,
+  superAdmin,
+  onSetFeature,
+}: {
+  person: Person;
+  superAdmin: boolean;
+  onSetFeature: (userId: Person["_id"], feature: Feature, enabled: boolean) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState<Feature | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="mt-4 rounded-2xl bg-card p-3 ring-1 ring-line sm:p-4">
+      <p className="text-sm font-medium">Features</p>
+      <p className="mt-0.5 text-xs text-graphite">
+        {superAdmin ? "The platform admin has every feature." : "Extra tools for this person. They get them straight away; their AI assistant after reconnecting Kalami."}
+      </p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {FEATURES.map((feature) => {
+          const on = superAdmin || person.features.includes(feature);
+          return (
+            <CheckCard
+              key={feature}
+              checked={on}
+              onChange={async (enabled) => {
+                if (superAdmin || busy) return;
+                setBusy(feature);
+                setError(null);
+                try {
+                  await onSetFeature(person._id, feature, enabled);
+                } catch (caught) {
+                  setError(errorMessage(caught));
+                } finally {
+                  setBusy(null);
+                }
+              }}
+            >
+              <span className="block">
+                {FEATURE_INFO[feature].label}
+                {busy === feature && <span className="text-graphite"> · saving…</span>}
+              </span>
+              <span className="mt-0.5 block text-xs font-normal text-graphite">{FEATURE_INFO[feature].description}</span>
+            </CheckCard>
+          );
+        })}
+      </div>
+      {error && (
+        <div className="mt-3">
+          <FormError>{error}</FormError>
+        </div>
+      )}
+    </div>
   );
 }
 

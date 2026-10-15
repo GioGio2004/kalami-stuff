@@ -4,7 +4,8 @@ import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Actor } from "./lib/access";
 import { getMemberships, requireSuperAdmin } from "./lib/auth";
 import { appError } from "./lib/errors";
-import { localizedTextValidator, roleValidator } from "./lib/validators";
+import { FEATURE_INFO } from "./lib/features";
+import { featureValidator, localizedTextValidator, roleValidator } from "./lib/validators";
 import { displayName, logAudit } from "./model/audit";
 import { stopTeachingAtUniversity } from "./model/groups";
 
@@ -32,6 +33,8 @@ const personValidator = v.object({
       universityName: v.optional(localizedTextValidator),
     }),
   ),
+  /** Tools switched on for them (Admin → People → Features). */
+  features: v.array(featureValidator),
 });
 
 /** People whose email starts with the query (at least two characters), by email. Deleted accounts are left out. */
@@ -68,9 +71,45 @@ export const search = query({
         email: user.email,
         name: [user.firstName, user.lastName].filter(Boolean).join(" "),
         memberships,
+        features: user.features ?? [],
       });
     }
     return out;
+  },
+});
+
+/**
+ * Switches a feature on or off for a staff member (lib/features.ts). Students
+ * never get features: they're tools for making things. The super admin has
+ * every feature anyway.
+ */
+export const setFeature = mutation({
+  args: { userId: v.id("users"), feature: featureValidator, enabled: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const { user } = await requireSuperAdmin(ctx);
+    const person = await ctx.db.get("users", args.userId);
+    if (person === null || person.deletedAt !== undefined) {
+      throw appError("NOT_FOUND", "That person no longer exists.");
+    }
+    const memberships = await getMemberships(ctx, person._id);
+    if (args.enabled && !memberships.some((m) => m.role === "lecturer" || m.role === "uni_admin" || m.role === "super_admin")) {
+      throw appError("CONFLICT", "Features are for teachers and university staff. Give them a staff role first.");
+    }
+    const current = person.features ?? [];
+    if (current.includes(args.feature) === args.enabled) {
+      return null;
+    }
+    const features = args.enabled ? [...current, args.feature] : current.filter((feature) => feature !== args.feature);
+    await ctx.db.patch("users", person._id, { features: features.length > 0 ? features : undefined });
+    const actor: Actor = { user, memberships: await getMemberships(ctx, user._id), via: "web" };
+    await logAudit(ctx, actor, {
+      action: args.enabled ? "people.featureOn" : "people.featureOff",
+      targetTable: "users",
+      targetId: person._id,
+      summary: `${args.enabled ? "Turned on" : "Turned off"} ${FEATURE_INFO[args.feature].label} for ${displayName(person)}`,
+    });
+    return null;
   },
 });
 

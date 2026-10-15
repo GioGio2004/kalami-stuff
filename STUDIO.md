@@ -98,6 +98,7 @@ leftover `mcpTokens` rows are inert and can be deleted in the Convex dashboard.
 | `list_courses`, `get_course`, `create_course` | courses the person can edit |
 | `create_assessment`, `update_assessment`, `get_assessment` | drafts; settings; questions with keys |
 | `add_questions` (≤ 50 per call), `update_question`, `delete_question`, `reorder_questions` | the heavy lifting |
+| `check_crossword`, `create_crossword`, `get_crossword`, `update_crossword`, `move_crossword`, `delete_crossword` | practice crosswords in a week; the agent writes words and clues, Kalami lays out the grid (or keeps the row, col and dir the agent gives a word: words can be placed and moved by hand). **Only offered to people with the crosswords feature** (Admin → People → Features); since 0.13.0 |
 | `import_image` | copies a picture from a link into the course (compressed WebP on ImageKit) and returns its url; `create_presentation` / `update_presentation` do it for image slides by themselves (since 0.12.0) |
 
 Not exposed on purpose: publish, archive, delete, anything about students, attempts or

@@ -25,7 +25,7 @@ import { THEME_INFO, type DeckTheme } from "@/lib/presentation";
 import { errorMessage } from "@/lib/errors";
 import { AssessmentRow, compactSelectClass } from "./AssessmentRow";
 import { DriveMark, driveBusy, folderStatus } from "./DriveStatus";
-import type { AssessmentId, LessonId, OutlineWeek, PresentationId, WeekId, WeekLink } from "./types";
+import type { AssessmentId, CrosswordId, LessonId, OutlineWeek, PresentationId, WeekId, WeekLink } from "./types";
 
 /** What a week card can do; the outline fills these in (dialogs) or passes them through (mutations). */
 export type WeekCardActions = {
@@ -41,6 +41,8 @@ export type WeekCardActions = {
   onImportPresentation: () => void;
   /** Up or down within the week, or to the end of another week. */
   onMovePresentation: (presentationId: PresentationId, to: { direction: "up" | "down" } | { weekId: WeekId }) => Promise<void>;
+  onNewCrossword: () => void;
+  onMoveCrossword: (crosswordId: CrosswordId, to: { direction: "up" | "down" } | { weekId: WeekId }) => Promise<void>;
   onMoveLesson: (lessonId: LessonId, direction: "up" | "down") => Promise<void>;
   onAddLink: () => void;
   onEditLink: (link: WeekLink) => void;
@@ -67,6 +69,7 @@ export function WeekCard({
   total,
   courseId,
   canEdit,
+  canMakeCrosswords = false,
   driveUsable,
   open = true,
   onToggle,
@@ -78,6 +81,8 @@ export function WeekCard({
   total: number;
   courseId: string;
   canEdit: boolean;
+  /** The viewer has the crosswords feature (the super admin turns it on per person). */
+  canMakeCrosswords?: boolean;
   /** The viewer may create a Drive folder for it. */
   driveUsable: boolean;
   open?: boolean;
@@ -111,6 +116,7 @@ export function WeekCard({
   const summary = [
     count(week.lessons.length, "lesson"),
     ...(week.presentations.length > 0 ? [count(week.presentations.length, "presentation")] : []),
+    ...(week.crosswords.length > 0 ? [count(week.crosswords.length, "crossword")] : []),
     count(materials, "material"),
     count(week.assessments.length, "task or quiz", "tasks and quizzes"),
   ].join(" · ");
@@ -175,6 +181,7 @@ export function WeekCard({
                   const sideEffects =
                     week.lessons.some((l) => l.status === "draft") ||
                     week.presentations.some((p) => p.status === "draft") ||
+                    week.crosswords.some((c) => c.status === "draft") ||
                     (week.drive?.url !== undefined && !week.drive.shared);
                   if (sideEffects) {
                     actions.onConfirmPublish();
@@ -400,6 +407,89 @@ export function WeekCard({
               </ul>
             )}
           </Subsection>
+
+          {(canMakeCrosswords || week.crosswords.length > 0) && (
+            <Subsection
+              title="Crosswords"
+              count={week.crosswords.length}
+              action={
+                canEdit &&
+                canMakeCrosswords && (
+                  <Button size="sm" variant={week.crosswords.length === 0 ? "outline" : "ghost"} onClick={actions.onNewCrossword}>
+                    <Plus className="size-4" />
+                    Crossword
+                  </Button>
+                )
+              }
+            >
+              {week.crosswords.length === 0 ? (
+                <Empty>A practice crossword on the week&apos;s words: write words and clues, or ask your agent for one.</Empty>
+              ) : (
+                <ul className="space-y-2">
+                  {week.crosswords.map((crossword, i) => (
+                    <li key={crossword._id} className="flex items-center gap-1">
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center rounded-2xl border border-line bg-paper transition focus-within:border-ink/30 hover:border-ink/30">
+                        <Link
+                          href={`/courses/${courseId}/crosswords/${crossword._id}`}
+                          className="flex min-w-0 flex-1 basis-64 items-center gap-3 rounded-2xl px-4 py-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
+                        >
+                          <CrosswordChip />
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-center gap-2">
+                              <span className="min-w-0 break-words font-medium">{crossword.title}</span>
+                              <Pill tone={statusTone(crossword.status)}>{statusLabel(crossword.status)}</Pill>
+                              {crossword.createdVia === "mcp" && (
+                                <Pill tone="lime">
+                                  <Robot className="size-3.5" />
+                                  Agent
+                                </Pill>
+                              )}
+                            </span>
+                            <span className="mt-0.5 block text-xs text-graphite">{count(crossword.wordCount, "word")} · practice</span>
+                          </span>
+                          <ArrowRight className="size-5 shrink-0 text-graphite" />
+                        </Link>
+                        {canEdit && canMakeCrosswords && weekTargets.length > 0 && (
+                          <div className="w-full px-4 pb-3 sm:w-auto sm:py-2 sm:pl-0 sm:pr-3">
+                            <MoveToSelect
+                              name={crossword.title}
+                              targets={weekTargets}
+                              disabled={busy}
+                              onPick={(weekId) => {
+                                if (weekId !== null) void run(() => actions.onMoveCrossword(crossword._id, { weekId }));
+                              }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                      {canEdit && canMakeCrosswords && week.crosswords.length > 1 && (
+                        <span className="flex flex-col">
+                          <button
+                            type="button"
+                            aria-label={`Move “${crossword.title}” up`}
+                            disabled={i === 0 || busy}
+                            className={iconButton}
+                            onClick={() => run(() => actions.onMoveCrossword(crossword._id, { direction: "up" }))}
+                          >
+                            <ArrowUp className="size-4" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Move “${crossword.title}” down`}
+                            disabled={i === week.crosswords.length - 1 || busy}
+                            className={iconButton}
+                            onClick={() => run(() => actions.onMoveCrossword(crossword._id, { direction: "down" }))}
+                          >
+                            <ArrowDown className="size-4" />
+                          </button>
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Subsection>
+          )}
 
           <Subsection
             title="Materials"
@@ -701,6 +791,20 @@ export function MoveToSelect({
 }
 
 const UNPLACED = "__unplaced";
+
+/** A crossword in miniature: a few squares, one of them marked. */
+function CrosswordChip() {
+  const on = [[0, 0], [1, 0], [2, 0], [1, 1], [1, 2], [2, 2], [3, 2]];
+  return (
+    <span aria-hidden="true" className="grid h-10 w-14 shrink-0 place-items-center rounded-xl bg-ink ring-1 ring-ink/10">
+      <svg viewBox="0 0 40 30" className="h-7 w-9">
+        {on.map(([x, y], i) => (
+          <rect key={i} x={x * 10 + 1} y={y * 10 + 1} width="8" height="8" rx="1.5" fill={i === 3 ? "var(--highlighter)" : "var(--paper)"} />
+        ))}
+      </svg>
+    </span>
+  );
+}
 
 /** A presentation's theme in miniature: its background with its accent, like a tiny slide. */
 function ThemeChip({ theme }: { theme: DeckTheme }) {

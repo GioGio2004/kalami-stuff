@@ -19,7 +19,18 @@ import {
   viaValidator,
   deckThemeValidator,
   slideInputValidator,
+  crosswordEntryInputValidator,
+  featureValidator,
 } from "./lib/validators";
+import { featuresOf } from "./lib/features";
+import {
+  createCrossword,
+  deleteCrossword,
+  getCrossword,
+  moveCrossword,
+  saveCrossword,
+  staffCrosswordValidator,
+} from "./model/crosswords";
 import { assessmentValidator, createAssessment, deleteAssessment, updateAssessment } from "./model/assessments";
 import { remember, remembered } from "./model/agentRequests";
 import { displayName } from "./model/audit";
@@ -154,6 +165,8 @@ const whoamiValidator = v.object({
   ),
   // Where this person may create courses.
   universities: v.array(universityOptionValidator),
+  /** Tools the super admin switched on for them (the super admin has all). */
+  features: v.array(featureValidator),
 });
 
 /** Null for an invalid or revoked token, so the route can answer 401 cleanly. */
@@ -183,6 +196,7 @@ export const whoami = query({
       isSuperAdmin: isSuperAdmin(actor.memberships),
       roles,
       universities: await creatableUniversities(ctx, actor),
+      features: featuresOf(actor.user, actor.memberships),
     };
   },
 });
@@ -748,6 +762,83 @@ export const reorderPresentationsAsAgent = mutation({
     const actor = await requireTokenActor(ctx, args.token, args.client);
     await enforceLimit(ctx, "agent", actor.user._id);
     await reorderPresentations(ctx, actor, args.weekId, args.presentationIds);
+    return null;
+  },
+});
+
+// --- Crosswords ---------------------------------------------------------------------------
+//
+// Only for people with the "crosswords" feature (model/crosswords.ts checks).
+// Agents send words and clues; Kalami lays out the grid. Drafts only.
+
+export const getCrosswordAsAgent = query({
+  args: { ...tokenArg, crosswordId: v.id("crosswords") },
+  returns: staffCrosswordValidator,
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    return await getCrossword(ctx, actor, args.crosswordId);
+  },
+});
+
+export const createCrosswordAsAgent = mutation({
+  args: { ...tokenArg, ...requestArg, weekId: v.id("weeks"), title: v.string(), entries: v.array(crosswordEntryInputValidator) },
+  returns: v.id("crosswords"),
+  handler: async (ctx, { token, client, requestId, ...args }) => {
+    const actor = await requireTokenActor(ctx, token, client);
+    const earlier = await remembered(ctx, actor, requestId);
+    if (typeof earlier === "string") {
+      return earlier as Id<"crosswords">;
+    }
+    await enforceLimit(ctx, "agent", actor.user._id);
+    if (args.entries.length === 0) {
+      throw appError("INVALID_INPUT", "A crossword needs words and clues.");
+    }
+    const crosswordId = await createCrossword(ctx, actor, args);
+    await remember(ctx, actor, requestId, crosswordId);
+    return crosswordId;
+  },
+});
+
+export const updateCrosswordAsAgent = mutation({
+  args: {
+    ...tokenArg,
+    crosswordId: v.id("crosswords"),
+    title: v.optional(v.string()),
+    entries: v.optional(v.array(crosswordEntryInputValidator)),
+  },
+  returns: v.array(v.string()),
+  handler: async (ctx, { token, client, crosswordId, ...patch }) => {
+    const actor = await requireTokenActor(ctx, token, client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    return await saveCrossword(ctx, actor, crosswordId, patch);
+  },
+});
+
+export const moveCrosswordAsAgent = mutation({
+  args: {
+    ...tokenArg,
+    crosswordId: v.id("crosswords"),
+    weekId: v.optional(v.id("weeks")),
+    direction: v.optional(v.union(v.literal("up"), v.literal("down"))),
+  },
+  returns: v.null(),
+  handler: async (ctx, { token, client, crosswordId, weekId, direction }) => {
+    const actor = await requireTokenActor(ctx, token, client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    if (weekId !== undefined) await moveCrossword(ctx, actor, crosswordId, { weekId });
+    else if (direction !== undefined) await moveCrossword(ctx, actor, crosswordId, { direction });
+    else throw appError("INVALID_INPUT", "Say where to: a weekId, or a direction (up or down).");
+    return null;
+  },
+});
+
+export const deleteCrosswordAsAgent = mutation({
+  args: { ...tokenArg, crosswordId: v.id("crosswords") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requireTokenActor(ctx, args.token, args.client);
+    await enforceLimit(ctx, "agent", actor.user._id);
+    await deleteCrossword(ctx, actor, args.crosswordId);
     return null;
   },
 });

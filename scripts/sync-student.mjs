@@ -12,6 +12,11 @@ const shared = [
   // Presentations: the deck rules (checked by the backend too) and the player students watch decks in.
   ["convex/lib/presentation", "../kalami/lib/presentation"],
   ["components/presentations", "../kalami/components/presentations"],
+  // Crosswords: the rules and layout (checked by the backend too) and the grid students fill in.
+  ["convex/lib/crossword", "../kalami/lib/crossword"],
+  ["components/crossword", "../kalami/components/crossword"],
+  // The fonts crossword PDFs are made with (Noto Sans Georgian: Georgian and Latin; SIL OFL).
+  ["public/fonts/crossword", "../kalami/public/fonts/crossword"],
   ["components/sandbox", "../kalami/components/sandbox"],
   ["components/lessons", "../kalami/components/lessons"],
   // The MCP connector's OAuth side (Clerk tokens, the service credential); each app has its own server.ts.

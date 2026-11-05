@@ -51,6 +51,21 @@ export type CheckRule = RuleBase &
         viewport?: number;
       }
     | { type: "linked"; href: string }
+    | {
+        /** A @keyframes exists (any, or this name) and, with `property`, animates that property. */
+        type: "keyframes";
+        name?: string;
+        property?: string;
+      }
+    | {
+        /** The matched elements run an animation whose @keyframes exists (and animates `property`). */
+        type: "animation";
+        selector: string;
+        property?: string;
+        /** Default true: every matching element must pass. */
+        every?: boolean;
+        viewport?: number;
+      }
   );
 
 export type CheckType = CheckRule["type"];

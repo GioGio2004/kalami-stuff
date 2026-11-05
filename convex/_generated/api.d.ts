@@ -28,6 +28,7 @@ import type * as lib_access from "../lib/access.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_checks_css from "../lib/checks/css.js";
 import type * as lib_checks_index from "../lib/checks/index.js";
+import type * as lib_checks_match from "../lib/checks/match.js";
 import type * as lib_checks_page from "../lib/checks/page.js";
 import type * as lib_checks_run from "../lib/checks/run.js";
 import type * as lib_checks_types from "../lib/checks/types.js";
@@ -130,6 +131,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/checks/css": typeof lib_checks_css;
   "lib/checks/index": typeof lib_checks_index;
+  "lib/checks/match": typeof lib_checks_match;
   "lib/checks/page": typeof lib_checks_page;
   "lib/checks/run": typeof lib_checks_run;
   "lib/checks/types": typeof lib_checks_types;

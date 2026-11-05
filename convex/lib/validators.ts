@@ -76,6 +76,9 @@ export const resultsVisibilityValidator = v.union(
 );
 export type ResultsVisibility = Infer<typeof resultsVisibilityValidator>;
 
+export const codeChecksValidator = v.union(v.literal("live"), v.literal("on_submit"));
+export type CodeChecks = Infer<typeof codeChecksValidator>;
+
 /** The settings a lecturer (or their agent) can change on an assessment. */
 export const assessmentSettingsValidator = v.object({
   opensAt: v.optional(v.number()),
@@ -86,8 +89,35 @@ export const assessmentSettingsValidator = v.object({
   shuffleOptions: v.boolean(),
   integrityLevel: integrityLevelValidator,
   resultsVisibility: resultsVisibilityValidator,
+  /**
+   * Code questions: "live" ticks every check while the student types (homework);
+   * "on_submit" shows what is checked but grades only on submit (exams).
+   * Unset: live for tasks and quizzes, on submit for midterms and finals.
+   */
+  codeChecks: v.optional(codeChecksValidator),
+  /** Code questions: hints, the mistake finder and hover explanations. Unset: on, except in midterms and finals. */
+  codeHelp: v.optional(v.boolean()),
+  /** Code questions: typing `<h1>` adds `</h1>` by itself. Unset: off (students type every character). */
+  codeAutoClose: v.optional(v.boolean()),
+  /** Code questions: typing `<` opens a list of tags; picking one writes the whole element. Unset: off. */
+  codeSuggest: v.optional(v.boolean()),
 });
 export type AssessmentSettings = Infer<typeof assessmentSettingsValidator>;
+
+/** Settings that can be emptied again; Convex drops `undefined`, so they are named to clear them. */
+export const clearableSettingValidator = v.union(v.literal("opensAt"), v.literal("closesAt"), v.literal("timeLimitMin"));
+export type ClearableSetting = Infer<typeof clearableSettingValidator>;
+
+/** How code questions behave for students in an assessment of this kind. */
+export function codeMode(kind: "task" | "quiz" | "midterm" | "final", settings: AssessmentSettings) {
+  const exam = kind === "midterm" || kind === "final";
+  return {
+    checks: settings.codeChecks ?? (exam ? "on_submit" : "live"),
+    help: settings.codeHelp ?? !exam,
+    autoClose: settings.codeAutoClose ?? false,
+    suggest: settings.codeSuggest ?? false,
+  } as const;
+}
 
 export const questionTypeValidator = v.union(
   v.literal("single"),
@@ -147,6 +177,20 @@ function checkRuleVariants<Base extends Record<string, ReturnType<typeof v.strin
       viewport: v.optional(v.number()),
     }),
     v.object({ ...base, type: v.literal("linked"), href: v.string() }),
+    v.object({
+      ...base,
+      type: v.literal("keyframes"),
+      name: v.optional(v.string()),
+      property: v.optional(v.string()),
+    }),
+    v.object({
+      ...base,
+      type: v.literal("animation"),
+      selector: v.string(),
+      property: v.optional(v.string()),
+      every: v.optional(v.boolean()),
+      viewport: v.optional(v.number()),
+    }),
   );
 }
 

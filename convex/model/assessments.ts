@@ -17,6 +17,7 @@ import {
   viaValidator,
   type AssessmentKind,
   type AssessmentSettings,
+  type ClearableSetting,
   type AssessmentStatus,
 } from "../lib/validators";
 import { logAudit } from "./audit";
@@ -89,6 +90,8 @@ export function defaultSettings(kind: AssessmentKind): AssessmentSettings {
         shuffleOptions: true,
         integrityLevel: "strict",
         resultsVisibility: "score",
+        codeChecks: "on_submit",
+        codeHelp: false,
       };
     case "final":
       return {
@@ -98,6 +101,8 @@ export function defaultSettings(kind: AssessmentKind): AssessmentSettings {
         shuffleOptions: true,
         integrityLevel: "strict",
         resultsVisibility: "score",
+        codeChecks: "on_submit",
+        codeHelp: false,
       };
   }
 }
@@ -193,7 +198,7 @@ export async function startedCount(ctx: QueryCtx, assessmentId: Id<"assessments"
   return rows.length;
 }
 
-async function hasAttempts(ctx: QueryCtx, assessmentId: Id<"assessments">): Promise<boolean> {
+export async function hasAttempts(ctx: QueryCtx, assessmentId: Id<"assessments">): Promise<boolean> {
   const first = await ctx.db
     .query("attempts")
     .withIndex("by_assessmentId", (q) => q.eq("assessmentId", assessmentId))
@@ -235,6 +240,8 @@ export type AssessmentPatch = {
   instructions?: string;
   kind?: AssessmentKind;
   settings?: Partial<AssessmentSettings>;
+  /** Settings to empty: no time limit, no opening or closing time. */
+  clear?: ClearableSetting[];
 };
 
 export async function createAssessment(
@@ -317,11 +324,10 @@ export async function updateAssessment(
       changes.weekId = undefined;
     }
   }
-  if (patch.settings !== undefined) {
-    const settings = validateSettings({
-      ...assessment.settings,
-      ...stripUndefined(patch.settings),
-    });
+  if (patch.settings !== undefined || (patch.clear?.length ?? 0) > 0) {
+    const merged: AssessmentSettings = { ...assessment.settings, ...stripUndefined(patch.settings ?? {}) };
+    for (const key of patch.clear ?? []) delete merged[key];
+    const settings = validateSettings(merged);
     const reshuffles =
       settings.shuffleQuestions !== assessment.settings.shuffleQuestions ||
       settings.shuffleOptions !== assessment.settings.shuffleOptions;

@@ -52,6 +52,24 @@ export const settingsSchema = z
       .enum(["hidden", "score", "full_after_close"])
       .optional()
       .describe("What students see afterwards"),
+    codeChecks: z
+      .enum(["live", "on_submit"])
+      .optional()
+      .describe(
+        "Code questions: live = every check ticks while the student types (homework); on_submit = students see what is checked, graded on submit (exams). Default: live for tasks and quizzes, on_submit for midterms and finals",
+      ),
+    codeHelp: z
+      .boolean()
+      .optional()
+      .describe("Code questions: hints, the mistake finder and hover explanations. Default: on, except in midterms and finals"),
+    codeAutoClose: z
+      .boolean()
+      .optional()
+      .describe("Code questions: typing <h1> adds </h1> by itself. Default: off (students type every character)"),
+    codeSuggest: z
+      .boolean()
+      .optional()
+      .describe("Code questions: typing < opens a list of HTML tags; picking one writes the whole element. Default: off"),
   })
   .describe("Only the fields you pass change; kind-based defaults fill the rest");
 
@@ -125,10 +143,30 @@ export const checkSchema = z.discriminatedUnion("type", [
       every: every.describe("Defaults to true"),
       viewport: z.number().int().min(200).max(3000).optional().describe("Screen width in px for @media rules; default 1280"),
     })
-    .describe("The value the property ends up with after the cascade (specificity, inheritance, shorthands, browser defaults)"),
+    .describe(
+      "The value the property ends up with after the cascade (specificity, inheritance, shorthands, var(), browser defaults). The selector may name a state or pseudo-element: \".btn:hover\", \".card:hover .title\", \"input:focus\", \".badge::before\"",
+    ),
   z
     .object({ type: z.literal("linked"), label: checkLabel, href: z.string().min(1).max(200) })
     .describe('index.html has <link rel="stylesheet" href="…">'),
+  z
+    .object({
+      type: z.literal("keyframes"),
+      label: checkLabel,
+      name: z.string().max(60).optional().describe("The @keyframes name; leave out for any"),
+      property: z.string().max(60).optional().describe('A property the keyframes change, e.g. "transform" or "opacity"'),
+    })
+    .describe("The CSS has a @keyframes (with this name), optionally one that changes a property"),
+  z
+    .object({
+      type: z.literal("animation"),
+      label: checkLabel,
+      selector,
+      property: z.string().max(60).optional().describe('A property the animation must change, e.g. "transform"'),
+      every: every.describe("Defaults to true"),
+      viewport: z.number().int().min(200).max(3000).optional(),
+    })
+    .describe("The elements run an animation: animation-name names an existing @keyframes and the duration isn't 0"),
 ]);
 
 export const codeFile = z.object({

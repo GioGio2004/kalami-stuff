@@ -9,8 +9,10 @@ import {
   assessmentKindValidator,
   attemptStatusValidator,
   codeAssetValidator,
+  codeChecksValidator,
   codeFileValidator,
   codeStepValidator,
+  codeMode,
   integrityLevelValidator,
   optionValidator,
   questionTypeValidator,
@@ -26,9 +28,11 @@ import {
   ensureAttempt,
   finalScore,
   hasUngradedEssays,
+  hiddenChecksFor,
   listComments,
   questionsOf,
   requireOpenableAssessment,
+  requireVisibleAssessment,
   responseFor,
   taskFor,
   visibleResults,
@@ -72,7 +76,9 @@ export const studentQuizValidator = v.object({
     kind: assessmentKindValidator,
     title: v.string(),
     instructions: v.optional(v.string()),
-    state: v.union(v.literal("open"), v.literal("closed")),
+    /** "upcoming": not open yet; the start screen counts down to opensAt. */
+    state: v.union(v.literal("upcoming"), v.literal("open"), v.literal("closed")),
+    opensAt: v.optional(v.number()),
     closesAt: v.optional(v.number()),
     timeLimitMin: v.optional(v.number()),
     integrityLevel: integrityLevelValidator,
@@ -82,6 +88,12 @@ export const studentQuizValidator = v.object({
     /** Code questions open the sandbox, which phones don't get; the start screen warns about them. */
     codeQuestionCount: v.number(),
     attemptsAllowed: v.number(),
+    /** How checks and help behave in code questions. */
+    codeChecks: codeChecksValidator,
+    codeHelp: v.boolean(),
+    /** Typing aids the lecturer allowed: closing tags, and tag suggestions after `<`. */
+    codeAutoClose: v.boolean(),
+    codeSuggest: v.boolean(),
   }),
   attemptsUsed: v.number(),
   /** The latest attempt. */
@@ -113,6 +125,8 @@ export const studentQuizValidator = v.object({
       correctOptionIds: v.optional(v.array(v.string())),
       acceptedAnswers: v.optional(v.array(v.string())),
       explanation: v.optional(v.string()),
+      /** Code questions: every check as graded, hidden ones included. */
+      checks: v.optional(v.array(v.object({ id: v.string(), label: v.string(), passed: v.boolean(), hidden: v.boolean() }))),
     }),
   ),
   /** The lecturer's red-pen notes on code questions, once submitted. */
@@ -158,7 +172,7 @@ export async function getStudentQuiz(
   student: Student,
   assessmentId: Id<"assessments">,
 ): Promise<Infer<typeof studentQuizValidator>> {
-  const { assessment, course, state } = await requireOpenableAssessment(ctx, student, assessmentId);
+  const { assessment, course, state } = await requireVisibleAssessment(ctx, student, assessmentId);
   const attempts = await attemptsOf(ctx, student.user._id, assessmentId);
   const attempt = attempts[0] ?? null;
   const submitted = attempt?.status === "submitted";
@@ -183,6 +197,7 @@ export async function getStudentQuiz(
             key?.type === "single" ? [key.correctOptionId] : key?.type === "multiple" ? key.correctOptionIds : undefined,
           acceptedAnswers: key?.type === "short" ? key.acceptedAnswers : undefined,
           explanation: question.explanation,
+          checks: question.type === "code" && question.code !== undefined ? codeReview(question, key, student, assessment, response) : undefined,
         });
       }
     }
@@ -195,7 +210,8 @@ export async function getStudentQuiz(
       kind: assessment.kind,
       title: assessment.title,
       instructions: assessment.instructions,
-      state: state === "closed" ? ("closed" as const) : ("open" as const),
+      state,
+      opensAt: assessment.settings.opensAt,
       closesAt: assessment.settings.closesAt,
       timeLimitMin: assessment.settings.timeLimitMin,
       integrityLevel: assessment.settings.integrityLevel,
@@ -204,6 +220,10 @@ export async function getStudentQuiz(
       questionCount: assessment.questionCount,
       codeQuestionCount: all.filter((q) => q.type === "code").length,
       attemptsAllowed: assessment.settings.attemptsAllowed,
+      codeChecks: codeMode(assessment.kind, assessment.settings).checks,
+      codeHelp: codeMode(assessment.kind, assessment.settings).help,
+      codeAutoClose: codeMode(assessment.kind, assessment.settings).autoClose,
+      codeSuggest: codeMode(assessment.kind, assessment.settings).suggest,
     },
     attemptsUsed: attempts.length,
     attempt:
@@ -219,14 +239,34 @@ export async function getStudentQuiz(
             autoSubmitted: attempt.autoSubmitted ?? false,
             score: results !== "none" ? finalScore(attempt) : undefined,
             maxScore: attempt.maxScore,
-            feedback: submitted ? attempt.feedback : undefined,
+            // Notes are part of the results: they wait for them, like the score.
+            feedback: results !== "none" ? attempt.feedback : undefined,
             pendingGrading: submitted && (await hasUngradedEssays(ctx, attempt._id, all)),
           },
     questions,
     review,
-    comments: submitted && attempt !== null ? await listComments(ctx, attempt._id) : [],
+    comments: results !== "none" && attempt !== null ? await listComments(ctx, attempt._id) : [],
     serverNow: Date.now(),
   };
+}
+
+/** A code question's checks as graded: labels in this student's variant, hidden ones marked. */
+function codeReview(
+  question: Doc<"questions">,
+  key: Awaited<ReturnType<typeof answerKeyOf>>,
+  student: Student,
+  assessment: Doc<"assessments">,
+  response: Doc<"responses"> | null,
+) {
+  const { code, values } = taskFor(question.code!, student.user, assessment._id);
+  const results = new Map((response?.checkResults ?? []).map((r) => [r.id, r.passed]));
+  const visible = code.steps.flatMap((step) => step.checks).map((rule) => ({ id: rule.id, label: rule.label, hidden: false }));
+  const hidden = hiddenChecksFor(key?.type === "code" ? key.hiddenChecks : [], values).map((rule) => ({
+    id: rule.id,
+    label: rule.label,
+    hidden: true,
+  }));
+  return [...visible, ...hidden].map((check) => ({ ...check, passed: results.get(check.id) ?? false }));
 }
 
 /** Saved answers of the latest attempt. Nothing before Start, nothing of other attempts. */
@@ -235,7 +275,7 @@ export async function getQuizAnswers(
   student: Student,
   assessmentId: Id<"assessments">,
 ): Promise<Infer<typeof quizAnswersValidator>> {
-  await requireOpenableAssessment(ctx, student, assessmentId);
+  await requireVisibleAssessment(ctx, student, assessmentId);
   const attempt = (await attemptsOf(ctx, student.user._id, assessmentId))[0];
   if (attempt === undefined) {
     return { answers: [] };

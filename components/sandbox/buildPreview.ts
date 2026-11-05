@@ -44,7 +44,31 @@ function cspFor(prefix: string): string {
 }
 
 function normalizeRef(ref: string): string {
-  return ref.trim().replace(/^\.\//, "").replace(/[?#].*$/, "");
+  return ref.trim().replace(/^\.?\//, "").replace(/[?#].*$/, "");
+}
+
+const MAX_IMPORT_DEPTH = 4;
+const IMPORT = /@import\s+(?:url\(\s*)?(["']?)([^"')\s;]+)\1\s*\)?\s*([^;]*);/gi;
+
+/** `@import "more.css";` of a task file becomes that file's CSS, as the checks read it. */
+function inlineImports(css: string, sheets: Map<string, string>, depth: number, seen: Set<string>): string {
+  return css.replace(IMPORT, (match, _quote: string, ref: string, media: string) => {
+    const name = normalizeRef(ref);
+    const imported = sheets.get(name);
+    if (imported === undefined || depth >= MAX_IMPORT_DEPTH || seen.has(name)) return match;
+    const inner = inlineImports(imported, sheets, depth + 1, new Set([...seen, name]));
+    const condition = media.trim();
+    return condition === "" ? inner : `@media ${condition} {\n${inner}\n}`;
+  });
+}
+
+/** The CSS of one task file as it goes into the preview. Also used to update it in place. */
+export function previewCss(name: string, files: CodeFile[], assets: SandboxAsset[]): string | undefined {
+  const sheets = new Map(files.filter((f) => f.name.endsWith(".css")).map((f) => [f.name, f.content]));
+  const css = sheets.get(name);
+  if (css === undefined) return undefined;
+  const assetUrls = new Map(assets.map((a) => [a.name, a.url]));
+  return escapeStyle(rewriteCssUrls(inlineImports(css, sheets, 0, new Set([name])), assetUrls));
 }
 
 /** Stops `</style>` inside CSS from ending the style element early. */
@@ -93,10 +117,14 @@ export function buildPreviewHtml(files: CodeFile[], assets: SandboxAsset[]): str
       continue;
     }
     if (name === "link" && isStylesheet(element.attribs.rel)) {
-      const css = sheets.get(normalizeRef(element.attribs.href ?? ""));
+      const file = normalizeRef(element.attribs.href ?? "");
+      const css = sheets.has(file) ? previewCss(file, files, assets) : undefined;
       if (css !== undefined) {
-        const style = adapter.createElement("style", HTML_NS, []);
-        adapter.insertText(style, escapeStyle(rewriteCssUrls(css, assetUrls)));
+        // Tagged with its file, so the preview can swap the CSS in place while the student types.
+        const attrs = [{ name: "data-kalami-sheet", value: file }];
+        if (element.attribs.media !== undefined) attrs.push({ name: "media", value: element.attribs.media });
+        const style = adapter.createElement("style", HTML_NS, attrs);
+        adapter.insertText(style, css);
         replaceElement(element, style);
         continue;
       }

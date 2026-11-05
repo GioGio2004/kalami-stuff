@@ -1,6 +1,7 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState } from "react";
+import { useContext, useDeferredValue, useMemo, useRef, useState } from "react";
+import { PicturesContext } from "@/components/presentations-editor/ImagePicker";
 import { CodeEditor } from "@/components/sandbox/CodeEditor";
 import { Button } from "@/components/ui/buttons";
 import { FormError } from "@/components/ui/form";
@@ -26,8 +27,10 @@ const RULE_TYPES: { value: RuleType; label: string }[] = [
   { value: "count", label: "Number of elements" },
   { value: "text", label: "Text of an element" },
   { value: "attr", label: "Attribute" },
-  { value: "css", label: "CSS value" },
+  { value: "css", label: "CSS value (also :hover, ::before)" },
   { value: "linked", label: "Stylesheet linked" },
+  { value: "animation", label: "Animation runs" },
+  { value: "keyframes", label: "@keyframes exists" },
 ];
 
 type RuleDraft = {
@@ -38,6 +41,8 @@ type RuleDraft = {
   property: string;
   attribute: string;
   href: string;
+  /** keyframes: the @keyframes name (optional). */
+  name: string;
   value: string;
   /** text and attr: how `value` is compared; css: one value or a comma list. */
   match: "equals" | "contains" | "present" | "oneOf";
@@ -72,6 +77,7 @@ function blankRule(type: RuleType = "exists"): RuleDraft {
     property: "",
     attribute: "",
     href: "style.css",
+    name: "",
     value: "",
     match: type === "attr" ? "present" : type === "text" ? "contains" : "equals",
     min: "",
@@ -93,6 +99,16 @@ function ruleFromInput(rule: RuleInput): RuleDraft {
   switch (rule.type) {
     case "linked":
       return { ...draft, href: rule.href };
+    case "keyframes":
+      return { ...draft, name: rule.name ?? "", property: rule.property ?? "" };
+    case "animation":
+      return {
+        ...draft,
+        selector: rule.selector,
+        property: rule.property ?? "",
+        viewport: rule.viewport?.toString() ?? "",
+        every: rule.every === undefined ? "default" : rule.every ? "yes" : "no",
+      };
     case "exists":
     case "not_exists":
       return { ...draft, selector: rule.selector };
@@ -135,6 +151,17 @@ function ruleToInput(rule: RuleDraft): RuleInput {
   switch (rule.type) {
     case "linked":
       return { type: "linked", label, href: rule.href };
+    case "keyframes":
+      return { type: "keyframes", label, name: rule.name.trim() || undefined, property: rule.property.trim() || undefined };
+    case "animation":
+      return {
+        type: "animation",
+        label,
+        selector: rule.selector,
+        property: rule.property.trim() || undefined,
+        viewport: number(rule.viewport),
+        every,
+      };
     case "exists":
     case "not_exists":
       return { type: rule.type, label, selector: rule.selector };
@@ -246,6 +273,40 @@ function toInput(draft: Draft): CodeInput {
 }
 
 const input = "h-9 w-full rounded-xl border border-line bg-paper px-3 text-sm outline-none focus:border-ink";
+
+/** Fields that share a wrapping row: they grow, but never below a readable width. */
+const rowInput = "h-9 min-w-28 flex-1 basis-32 rounded-xl border border-line bg-paper px-3 text-sm outline-none focus:border-ink";
+
+const IMAGE_TYPES = "image/jpeg,image/png,image/webp,image/gif,image/avif,image/svg+xml";
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "avif"]);
+
+/**
+ * The short name students type for an uploaded file: `My Cat (1).JPG` → `my-cat-1.jpg`,
+ * made unique among the task's images. Lecturers can still rename it.
+ */
+function shortName(fileName: string, taken: Set<string>): string {
+  const dot = fileName.lastIndexOf(".");
+  const rawExt = dot === -1 ? "" : fileName.slice(dot + 1).toLowerCase();
+  const ext = IMAGE_EXTENSIONS.has(rawExt) ? (rawExt === "jpeg" ? "jpg" : rawExt) : "png";
+  const base =
+    (dot === -1 ? fileName : fileName.slice(0, dot))
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^[-_]+|[-_]+$/g, "") || "image";
+  let name = `${base}.${ext}`;
+  for (let n = 2; taken.has(name); n++) name = `${base}-${n}.${ext}`;
+  return name;
+}
+
+/** Alt text to start from: the file's name in words. */
+function altFrom(fileName: string): string {
+  return fileName.replace(/\.[a-z0-9]+$/i, "").replace(/[-_]+/g, " ").trim();
+}
+
+/** A small preview: ImageKit sends a 96 px version. */
+function thumbnail(url: string): string {
+  return url.startsWith("https://ik.imagekit.io/") ? `${url}${url.includes("?") ? "&" : "?"}tr=w-96,h-96,c-at_max` : url;
+}
 const area = "w-full rounded-xl border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-ink";
 const small = "text-xs font-medium text-graphite";
 
@@ -281,7 +342,7 @@ function RuleEditor({
   onRemove: () => void;
 }) {
   const set = (patch: Partial<RuleDraft>) => onChange({ ...rule, ...patch });
-  const needsSelector = rule.type !== "linked";
+  const needsSelector = rule.type !== "linked" && rule.type !== "keyframes";
   return (
     <div className="rounded-xl border border-line bg-card p-3">
       <div className="flex items-center gap-2">
@@ -310,7 +371,12 @@ function RuleEditor({
       />
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
         {needsSelector && (
-          <input value={rule.selector} onChange={(e) => set({ selector: e.target.value })} placeholder="Selector, e.g. nav ul li" className={`${input} font-mono`} />
+          <input
+            value={rule.selector}
+            onChange={(e) => set({ selector: e.target.value })}
+            placeholder={rule.type === "css" ? "Selector, e.g. .btn or .btn:hover" : "Selector, e.g. nav ul li"}
+            className={`${input} font-mono`}
+          />
         )}
         {rule.type === "linked" && (
           <input value={rule.href} onChange={(e) => set({ href: e.target.value })} placeholder="style.css" className={`${input} font-mono`} />
@@ -326,6 +392,17 @@ function RuleEditor({
         )}
         {rule.type === "css" && (
           <input value={rule.property} onChange={(e) => set({ property: e.target.value })} placeholder="Property, e.g. display" className={`${input} font-mono`} />
+        )}
+        {rule.type === "keyframes" && (
+          <input value={rule.name} onChange={(e) => set({ name: e.target.value })} placeholder="@keyframes name (empty: any)" className={`${input} font-mono`} />
+        )}
+        {(rule.type === "keyframes" || rule.type === "animation") && (
+          <input
+            value={rule.property}
+            onChange={(e) => set({ property: e.target.value })}
+            placeholder="Changes property (optional), e.g. transform"
+            className={`${input} font-mono`}
+          />
         )}
         {(rule.type === "text" || rule.type === "attr" || rule.type === "css") && (
           <div className="flex gap-2 sm:col-span-2">
@@ -348,14 +425,14 @@ function RuleEditor({
             )}
           </div>
         )}
-        {(rule.type === "text" || rule.type === "attr" || rule.type === "css") && (
+        {(rule.type === "text" || rule.type === "attr" || rule.type === "css" || rule.type === "animation") && (
           <select value={rule.every} onChange={(e) => set({ every: e.target.value as RuleDraft["every"] })} className={input} aria-label="Which elements">
             <option value="default">{rule.type === "text" ? "One matching element is enough" : "Every matching element"} (default)</option>
             <option value="yes">Every matching element</option>
             <option value="no">One matching element is enough</option>
           </select>
         )}
-        {rule.type === "css" && (
+        {(rule.type === "css" || rule.type === "animation") && (
           <input value={rule.viewport} onChange={(e) => set({ viewport: e.target.value })} placeholder="Screen width for @media (default 1280)" inputMode="numeric" className={input} />
         )}
       </div>
@@ -382,6 +459,48 @@ export function CodeTaskForm({
   const report = useMemo(() => testCodeTask(toInput(deferred)), [deferred]);
 
   const patch = (changes: Partial<Draft>) => setDraft((d) => ({ ...d, ...changes }));
+  const pictures = useContext(PicturesContext);
+  // Per image row: upload progress (0–1, then "compress" while the server makes the WebP) or an error.
+  const [uploads, setUploads] = useState<Record<string, number | "compress" | { error: string }>>({});
+  const replaceInput = useRef<HTMLInputElement>(null);
+  const addInput = useRef<HTMLInputElement>(null);
+  const replacing = useRef<string | null>(null);
+
+  /** Uploads one file into the image row `key`, filling in its address (and its name and alt text if empty). */
+  async function uploadInto(key: string, file: File) {
+    if (!pictures) return;
+    setUploads((u) => ({ ...u, [key]: 0 }));
+    try {
+      const picture = await pictures.upload(file, (fraction) =>
+        setUploads((u) => ({ ...u, [key]: fraction >= 1 ? "compress" : fraction })),
+      );
+      setDraft((d) => {
+        const taken = new Set(d.assets.filter((a) => a.key !== key).map((a) => a.name.trim()));
+        return {
+          ...d,
+          assets: d.assets.map((a) =>
+            a.key === key
+              ? { ...a, url: picture.url, name: a.name.trim() || shortName(file.name, taken), alt: a.alt.trim() || altFrom(file.name) }
+              : a,
+          ),
+        };
+      });
+      setUploads((u) => {
+        const rest = { ...u };
+        delete rest[key];
+        return rest;
+      });
+    } catch (caught) {
+      setUploads((u) => ({ ...u, [key]: { error: errorMessage(caught) } }));
+    }
+  }
+
+  /** Several files at once: a new image row for each. */
+  function uploadNew(files: File[]) {
+    const rows = files.map((file) => ({ file, key: newKey() }));
+    setDraft((d) => ({ ...d, assets: [...d.assets, ...rows.map(({ key }) => ({ key, name: "", url: "", alt: "" }))] }));
+    for (const { file, key } of rows) void uploadInto(key, file);
+  }
   const setStep = (index: number, changes: Partial<StepDraft>) =>
     setDraft((d) => ({ ...d, steps: d.steps.map((s, i) => (i === index ? { ...s, ...changes } : s)) }));
 
@@ -535,20 +654,89 @@ export function CodeTaskForm({
 
             <section className="space-y-2 rounded-2xl bg-card p-4">
               <h3 className="text-lg font-medium">Images</h3>
-              <p className="text-xs text-graphite">ImageKit URLs. Students use the short name, e.g. &lt;img src=&quot;cat.jpg&quot;&gt;.</p>
-              {draft.assets.map((asset, i) => (
-                <div key={asset.key} className="grid gap-2 sm:grid-cols-[9rem_1fr_9rem_auto]">
-                  <input value={asset.name} onChange={(e) => patch({ assets: draft.assets.map((a, j) => (j === i ? { ...a, name: e.target.value } : a)) })} placeholder="cat.jpg" className={`${input} font-mono`} />
-                  <input value={asset.url} onChange={(e) => patch({ assets: draft.assets.map((a, j) => (j === i ? { ...a, url: e.target.value } : a)) })} placeholder="https://ik.imagekit.io/…" className={input} />
-                  <input value={asset.alt} onChange={(e) => patch({ assets: draft.assets.map((a, j) => (j === i ? { ...a, alt: e.target.value } : a)) })} placeholder="Alt text" className={input} />
-                  <button type="button" onClick={() => patch({ assets: draft.assets.filter((_, j) => j !== i) })} className="text-xs text-graphite hover:text-red-pen">
-                    Remove
-                  </button>
-                </div>
-              ))}
-              <Button size="sm" variant="outline" onClick={() => patch({ assets: [...draft.assets, { key: newKey(), name: "", url: "", alt: "" }] })}>
-                <Plus className="size-4" /> Add image
-              </Button>
+              <p className="text-xs text-graphite">
+                {pictures
+                  ? "Upload a picture: Kalami compresses it and keeps it on its ImageKit. Students use the short name, e.g. <img src=\"cat.jpg\">."
+                  : "ImageKit URLs. Students use the short name, e.g. <img src=\"cat.jpg\">."}
+              </p>
+              {draft.assets.map((asset, i) => {
+                const state = uploads[asset.key];
+                const busy = typeof state === "number" || state === "compress";
+                return (
+                  <div key={asset.key}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="grid size-10 place-items-center overflow-hidden rounded-lg border border-line bg-panel">
+                        {asset.url.trim() !== "" && (
+                          // eslint-disable-next-line @next/next/no-img-element -- an ImageKit thumbnail, already sized
+                          <img src={thumbnail(asset.url.trim())} alt="" className="size-full object-cover" />
+                        )}
+                      </span>
+                      <input value={asset.name} onChange={(e) => patch({ assets: draft.assets.map((a, j) => (j === i ? { ...a, name: e.target.value } : a)) })} placeholder="cat.jpg" aria-label="Short name" className={`${rowInput} font-mono`} />
+                      <input value={asset.alt} onChange={(e) => patch({ assets: draft.assets.map((a, j) => (j === i ? { ...a, alt: e.target.value } : a)) })} placeholder="Alt text" aria-label="Alt text" className={rowInput} />
+                      <span className="flex shrink-0 items-center gap-2">
+                        {pictures && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busy}
+                            onClick={() => {
+                              replacing.current = asset.key;
+                              replaceInput.current?.click();
+                            }}
+                          >
+                            {state === "compress"
+                              ? "Compressing…"
+                              : typeof state === "number"
+                                ? `Uploading ${Math.round(state * 100)}%`
+                                : asset.url.trim() === ""
+                                  ? "Upload"
+                                  : "Replace"}
+                          </Button>
+                        )}
+                        <button type="button" onClick={() => patch({ assets: draft.assets.filter((_, j) => j !== i) })} className="text-xs text-graphite hover:text-red-pen">
+                          Remove
+                        </button>
+                      </span>
+                    </div>
+                    <input value={asset.url} onChange={(e) => patch({ assets: draft.assets.map((a, j) => (j === i ? { ...a, url: e.target.value } : a)) })} placeholder="https://ik.imagekit.io/…" aria-label="Image address" className={`${input} mt-1.5 text-xs text-graphite`} />
+                    {typeof state === "object" && <p className="mt-1 text-xs text-red-pen">{state.error}</p>}
+                  </div>
+                );
+              })}
+              <div className="flex flex-wrap gap-2">
+                {pictures && (
+                  <Button size="sm" onClick={() => addInput.current?.click()}>
+                    <Plus className="size-4" /> Upload images
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" onClick={() => patch({ assets: [...draft.assets, { key: newKey(), name: "", url: "", alt: "" }] })}>
+                  <Plus className="size-4" /> {pictures ? "Add by address" : "Add image"}
+                </Button>
+              </div>
+              <input
+                ref={replaceInput}
+                type="file"
+                accept={IMAGE_TYPES}
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  const key = replacing.current;
+                  e.target.value = "";
+                  if (file && key) void uploadInto(key, file);
+                }}
+              />
+              <input
+                ref={addInput}
+                type="file"
+                accept={IMAGE_TYPES}
+                multiple
+                hidden
+                onChange={(e) => {
+                  const files = [...(e.target.files ?? [])];
+                  e.target.value = "";
+                  if (files.length > 0) uploadNew(files);
+                }}
+              />
             </section>
           </div>
 

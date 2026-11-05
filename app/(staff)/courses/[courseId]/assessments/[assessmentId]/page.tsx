@@ -1,12 +1,14 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { PicturesContext, type PictureActions } from "@/components/presentations-editor/ImagePicker";
 import { AssessmentBuilder } from "@/components/studio/AssessmentBuilder";
 import { LoadingScreen } from "@/components/ui/StatusScreen";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { postFile } from "@/lib/upload";
 
 export default function AssessmentPage() {
   const params = useParams<{ courseId: string; assessmentId: string }>();
@@ -30,12 +32,27 @@ export default function AssessmentPage() {
   const updateQuestion = useMutation(api.questions.update);
   const removeQuestion = useMutation(api.questions.remove);
   const reorder = useMutation(api.questions.reorder);
+  const uploadUrl = useMutation(api.media.generateUploadUrl);
+  const uploadPicture = useAction(api.mediaActions.upload);
+  const importPicture = useAction(api.mediaActions.importLink);
+  // Code task images go to Kalami's ImageKit like presentation pictures: compressed to WebP, in the course's folder.
+  const pictures: PictureActions = useMemo(
+    () => ({
+      upload: async (file, onProgress) => {
+        const storageId = await postFile(await uploadUrl({ courseId }), file, onProgress);
+        return await uploadPicture({ courseId, storageId: storageId as Id<"_storage">, name: file.name });
+      },
+      importLink: (url) => importPicture({ courseId, url }),
+    }),
+    [courseId, uploadUrl, uploadPicture, importPicture],
+  );
 
   if (detail === undefined) {
     return <LoadingScreen label="Opening assessment" />;
   }
 
   return (
+    <PicturesContext.Provider value={pictures}>
     <AssessmentBuilder
       detail={detail}
       onUpdate={async (args) => {
@@ -67,5 +84,6 @@ export default function AssessmentPage() {
         await reorder({ assessmentId, questionIds });
       }}
     />
+    </PicturesContext.Provider>
   );
 }

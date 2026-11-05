@@ -104,7 +104,8 @@ export function QuizReview({ attemptId, title, onClose }: { attemptId: Id<"attem
   );
 }
 
-function AnswerCard({
+/** One answer next to its key, with points to give. Also used by the grading desk. */
+export function AnswerCard({
   index,
   answer,
   attemptId,

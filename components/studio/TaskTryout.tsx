@@ -130,12 +130,15 @@ export function GradeBar({
   manualScore,
   maxScore,
   feedback,
+  onSaveAndNext,
 }: {
   attemptId: Id<"attempts">;
   autoScore?: number;
   manualScore?: number;
   maxScore: number;
   feedback?: string;
+  /** The grading desk: a second button that saves, then moves on to the next student. */
+  onSaveAndNext?: () => void;
 }) {
   const setGrade = useMutation(api.submissions.setGrade);
   const [score, setScore] = useState(manualScore === undefined ? "" : String(manualScore));
@@ -143,7 +146,7 @@ export function GradeBar({
   const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState<string | null>(null);
 
-  async function save() {
+  async function save(then?: () => void) {
     setState("saving");
     setError(null);
     try {
@@ -153,6 +156,7 @@ export function GradeBar({
         manualScore: score.trim() === "" ? undefined : Number(score),
       });
       setState("saved");
+      then?.();
     } catch (caught) {
       setError(errorMessage(caught));
       setState("idle");
@@ -190,10 +194,81 @@ export function GradeBar({
         placeholder="Overall note for the student"
         className="h-9 min-w-48 flex-1 rounded-full border border-line bg-paper px-4 font-hand text-lg text-red-pen placeholder:font-sans placeholder:text-sm placeholder:text-graphite/60"
       />
-      <Button size="sm" variant="danger" onClick={save} disabled={state === "saving"}>
+      <Button size="sm" variant={onSaveAndNext ? "outline" : "danger"} onClick={() => void save()} disabled={state === "saving"}>
         {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : "Save grade"}
       </Button>
+      {onSaveAndNext && (
+        <Button size="sm" variant="danger" onClick={() => void save(onSaveAndNext)} disabled={state === "saving"}>
+          Save &amp; next
+        </Button>
+      )}
       {error && <span className="w-full text-sm text-red-pen">{error}</span>}
+    </div>
+  );
+}
+
+/** Points for one code part: they replace that part's automatic points, and the total adds up again. */
+export function PartPoints({
+  attemptId,
+  questionId,
+  part,
+  points,
+  autoScore,
+  manualPoints,
+  overridden,
+}: {
+  attemptId: Id<"attempts">;
+  questionId: Id<"questions">;
+  part?: number;
+  points: number;
+  autoScore?: number;
+  manualPoints?: number;
+  overridden: boolean;
+}) {
+  const setQuestionPoints = useMutation(api.submissions.setQuestionPoints);
+  const [value, setValue] = useState(manualPoints === undefined ? "" : String(manualPoints));
+  const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    setState("saving");
+    setError(null);
+    try {
+      await setQuestionPoints({ attemptId, questionId, points: value.trim() === "" ? undefined : Number(value) });
+      setState("saved");
+    } catch (caught) {
+      setError(errorMessage(caught));
+      setState("idle");
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-[1.4rem] bg-card px-4 py-2.5 text-sm">
+      <span className="text-graphite">
+        {part === undefined ? "This task" : `Part ${part}`}: auto{" "}
+        <span className="font-semibold tabular-nums text-ink">{autoScore ?? 0}</span> / {points}
+      </span>
+      <label className="flex items-center gap-2">
+        Points
+        <input
+          type="number"
+          min={0}
+          max={points}
+          step={0.5}
+          value={value}
+          placeholder={String(autoScore ?? 0)}
+          onChange={(e) => {
+            setValue(e.target.value);
+            setState("idle");
+          }}
+          className="h-8 w-20 rounded-full border border-line bg-paper px-3 tabular-nums"
+        />
+      </label>
+      <Button size="sm" variant="outline" onClick={save} disabled={state === "saving"}>
+        {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : "Save points"}
+      </Button>
+      {overridden && <span className="text-xs text-graphite">The overall score below replaces the total while it is set.</span>}
+      {error && <span className="w-full text-red-pen">{error}</span>}
     </div>
   );
 }
@@ -255,7 +330,7 @@ export function SubmissionReview({
                 <span className="ml-2 text-base font-normal text-graphite">
                   {detail.status === "submitted"
                     ? detail.autoSubmitted
-                      ? "submitted automatically when the task closed"
+                      ? "submitted automatically (time ran out or it closed)"
                       : "submitted"
                     : "still working (last autosave)"}
                 </span>
@@ -281,14 +356,32 @@ export function SubmissionReview({
           }
           banner={
             detail.status === "submitted" ? (
-              <GradeBar
-                key={attemptId}
-                attemptId={attemptId}
-                autoScore={detail.autoScore}
-                manualScore={detail.manualScore}
-                maxScore={detail.maxScore}
-                feedback={detail.feedback}
-              />
+              <div className="space-y-2">
+                {detail.gradingError && (
+                  <p className="rounded-[1.2rem] bg-red-pen/10 px-4 py-2.5 text-sm text-red-pen">
+                    Automatic grading failed, so this counts as 0 for now: {detail.gradingError}. Give points per part or an
+                    overall score below, or fix the task and regrade.
+                  </p>
+                )}
+                <PartPoints
+                  key={`${attemptId}-${question.questionId}-${question.manualPoints ?? "auto"}`}
+                  attemptId={attemptId}
+                  questionId={question.questionId}
+                  part={detail.questions.length > 1 ? index + 1 : undefined}
+                  points={question.points}
+                  autoScore={question.autoScore}
+                  manualPoints={question.manualPoints}
+                  overridden={detail.manualScore !== undefined}
+                />
+                <GradeBar
+                  key={attemptId}
+                  attemptId={attemptId}
+                  autoScore={detail.autoScore}
+                  manualScore={detail.manualScore}
+                  maxScore={detail.maxScore}
+                  feedback={detail.feedback}
+                />
+              </div>
             ) : undefined
           }
         />

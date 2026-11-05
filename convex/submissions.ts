@@ -20,9 +20,10 @@ import {
   integrityCountsValidator,
   optionValidator,
 } from "./lib/validators";
+import { fill } from "./lib/checks";
 import { requireAssessmentAccess } from "./model/assessments";
 import { displayName, logAudit } from "./model/audit";
-import { hiddenChecksFor, listComments, recomputeScore, taskFor } from "./model/learn";
+import { hiddenChecksFor, listComments, recomputeScore, regradeAttempt, taskFor } from "./model/learn";
 
 // Staff app (Clerk session): who worked on an assessment, what they wrote, and grading it.
 // Anyone who can see the course (owner, assistant, admin) can grade.
@@ -145,6 +146,9 @@ export const detail = query({
         savedAt: v.optional(v.number()),
         checkResults: v.optional(v.array(checkOutcomeValidator)),
         autoScore: v.optional(v.number()),
+        /** What the part is worth, and the lecturer's own points for it. */
+        points: v.number(),
+        manualPoints: v.optional(v.number()),
       }),
     ),
     /** Every question that isn't code, in order, with its key and the student's answer. */
@@ -176,10 +180,9 @@ export const detail = query({
   handler: async (ctx, args) => {
     const actor = await requireStaffActor(ctx);
     const { attempt } = await requireAttempt(ctx, actor, args.attemptId);
-    const user = await ctx.db.get("users", attempt.userId);
-    if (user === null) {
-      throw appError("NOT_FOUND", "Student not found.");
-    }
+    // A deleted account still has its work to look at, with no name in its variant.
+    const account = await ctx.db.get("users", attempt.userId);
+    const user = account ?? { _id: attempt.userId, firstName: undefined, lastName: undefined };
     const questions = await ctx.db
       .query("questions")
       .withIndex("by_assessmentId_and_order", (q) => q.eq("assessmentId", attempt.assessmentId))
@@ -214,17 +217,20 @@ export const detail = query({
       const { code, values } = taskFor(question.code, user, attempt.assessmentId);
       out.push({
         questionId: question._id,
-        prompt: question.prompt,
+        // As this student read it: their values filled in, like the steps.
+        prompt: fill(question.prompt, values),
         code,
         hiddenChecks: hiddenChecksFor(key?.key.type === "code" ? key.key.hiddenChecks : [], values),
         files: response?.value.type === "code" ? response.value.files : undefined,
         savedAt: response?.savedAt,
         checkResults: response?.checkResults,
         autoScore: response?.autoScore,
+        points: question.points,
+        manualPoints: response?.manualPoints,
       });
     }
     return {
-      student: displayName(user),
+      student: displayName(account),
       number: attempt.number,
       status: attempt.status,
       autoSubmitted: attempt.autoSubmitted ?? false,
@@ -272,12 +278,26 @@ export const setQuestionPoints = mutation({
       .query("responses")
       .withIndex("by_attemptId_and_questionId", (q) => q.eq("attemptId", attempt._id).eq("questionId", question._id))
       .unique();
+    const manualPoints = args.points === undefined ? undefined : Math.round(args.points * 100) / 100;
     if (response === null) {
-      throw appError("CONFLICT", "The student didn't answer this question, so it counts as 0.");
+      // Code the student never saved (or work whose grading failed): their starter files get the points.
+      if (question.type !== "code" || question.code === undefined) {
+        throw appError("CONFLICT", "The student didn't answer this question, so it counts as 0.");
+      }
+      const user = (await ctx.db.get("users", attempt.userId)) ?? { _id: attempt.userId, firstName: undefined, lastName: undefined };
+      const { code } = taskFor(question.code, user, attempt.assessmentId);
+      await ctx.db.insert("responses", {
+        attemptId: attempt._id,
+        questionId: question._id,
+        userId: attempt.userId,
+        value: { type: "code", files: code.files },
+        savedAt: Date.now(),
+        autoScore: 0,
+        manualPoints,
+      });
+    } else {
+      await ctx.db.patch("responses", response._id, { manualPoints });
     }
-    await ctx.db.patch("responses", response._id, {
-      manualPoints: args.points === undefined ? undefined : Math.round(args.points * 100) / 100,
-    });
     await recomputeScore(ctx, attempt);
     await logAudit(ctx, actor, {
       action: "grading.points",
@@ -287,6 +307,60 @@ export const setQuestionPoints = mutation({
       summary: `Gave points for question ${question.order + 1} in “${assessment.title}”`,
     });
     return null;
+  },
+});
+
+const REGRADE_PAGE = 20;
+
+/**
+ * Grades submitted work again with the questions as they are now, after a check
+ * or the points were fixed. A page at a time: call again with the cursor until
+ * done. The lecturer's own points and overall scores stay.
+ */
+export const regrade = mutation({
+  args: { assessmentId: v.id("assessments"), cursor: v.union(v.string(), v.null()) },
+  returns: v.object({
+    done: v.boolean(),
+    cursor: v.string(),
+    results: v.array(
+      v.object({
+        attemptId: v.id("attempts"),
+        student: v.string(),
+        before: v.optional(v.number()),
+        after: v.optional(v.number()),
+        error: v.optional(v.string()),
+      }),
+    ),
+  }),
+  handler: async (ctx, args) => {
+    const actor = await requireStaffActor(ctx);
+    await enforceLimit(ctx, "grade", actor.user._id);
+    const { assessment } = await requireAssessmentAccess(ctx, actor, args.assessmentId, "view");
+    const page = await ctx.db
+      .query("attempts")
+      .withIndex("by_assessmentId_and_status", (q) => q.eq("assessmentId", args.assessmentId).eq("status", "submitted"))
+      .paginate({ numItems: REGRADE_PAGE, cursor: args.cursor });
+    const results = [];
+    for (const attempt of page.page) {
+      const outcome = await regradeAttempt(ctx, attempt);
+      results.push({
+        attemptId: attempt._id,
+        student: displayName(await ctx.db.get("users", attempt.userId)),
+        before: outcome.before,
+        after: outcome.after,
+        error: outcome.error,
+      });
+    }
+    if (args.cursor === null) {
+      await logAudit(ctx, actor, {
+        action: "grading.regrade",
+        targetTable: "assessments",
+        targetId: assessment._id,
+        courseId: assessment.courseId,
+        summary: `Regraded the submissions of “${assessment.title}”`,
+      });
+    }
+    return { done: page.isDone, cursor: page.continueCursor, results };
   },
 });
 

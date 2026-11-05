@@ -212,7 +212,8 @@ Rules:
 - Tasks default to standard integrity with the score shown on submit; quizzes to standard integrity; midterms and finals to strict integrity with a time limit.
 
 Code tasks (HTML and CSS only, written by hand in Kalami's sandbox; no JavaScript):
-- Create an assessment with kind "task", then add one question of type "code".
+- Homework: create an assessment with kind "task", then add one question of type "code". A coding quiz, midterm or final is that kind (quiz, midterm, final) with code questions in it: it gets the start screen, the timer and strict integrity. Never turn an exam the lecturer asked for into a task.
+- In midterms and finals students see each step's instructions and check labels but no ticks, and every step is open from the start (codeChecks "on_submit"); write steps that stand on their own and labels that say exactly what is checked.
 - Teach in small steps, like freeCodeCamp. Each step asks for ONE new thing, explains what it is and why in 2–5 short sentences (Markdown, \`inline code\` for tags and properties), and has 1–3 checks that pass only once that thing is done.
 - Students keep the same files from step to step, so later steps build on earlier ones. A step's checks must stay true after later steps, and each step should fail on the starter files.
 - Write the solution: the finished files. Every check (steps and hidden) must pass on it.
@@ -220,6 +221,7 @@ Code tasks (HTML and CSS only, written by hand in Kalami's sandbox; no JavaScrip
 - css checks compare the value the property ends up with after the cascade (specificity, inheritance, shorthands, browser defaults such as underlined links). Colours match in any notation (#f00 = red). Prefer longhands (margin-left, background-color) unless the step teaches the shorthand.
 - Students start with the starter files and can't add new ones; include style.css (it may be empty) when the task uses CSS, and make linking it a step.
 - Images: only from assets (ImageKit URLs). Students use the short name, e.g. <img src="cat.jpg">, and can't upload their own.
+- Animation and interaction: css checks accept states and pseudo-elements in the selector (".btn:hover" background-color, ".card:hover .title" color, "input:focus" outline-style, ".badge::before" content). keyframes checks that a @keyframes exists (and changes a property); animation checks that elements run an animation whose @keyframes exists, optionally changing a property. Shorthands such as transition, animation, font, background and flex-flow are understood, and so is var().
 - Variants: add variables (e.g. color: ["#e63946", "#2a9d8f", "#3a86ff"]) and write {{color}} in the instructions, checks and solution, so each student gets their own values. {{student.firstName}} is the student's first name, e.g. a text check that the <h1> contains it. The solution must pass for every value; check_code_task tries each one.`;
 
 // --- The server --------------------------------------------------------------
@@ -397,6 +399,10 @@ function makeHandler(features: { crosswords: boolean }) {
             instructions: z.string().max(8000).optional(),
             kind: z.enum(["task", "quiz", "midterm", "final"]).optional(),
             settings: settingsSchema.optional(),
+            clear: z
+              .array(z.enum(["opensAt", "closesAt", "timeLimitMin"]))
+              .optional()
+              .describe("Settings to remove, e.g. [\"timeLimitMin\"] for no time limit"),
           }),
         },
         async (args, ctx) =>
@@ -408,6 +414,7 @@ function makeHandler(features: { crosswords: boolean }) {
               instructions: args.instructions,
               kind: args.kind,
               settings: args.settings,
+              clear: args.clear,
             });
             return { ok: true };
           }),
@@ -1240,7 +1247,7 @@ function makeHandler(features: { crosswords: boolean }) {
       }
     },
     {
-      serverInfo: { name: "kalami", version: "0.13.0" },
+      serverInfo: { name: "kalami", version: "0.14.0" },
       instructions: features.crosswords ? INSTRUCTIONS + CROSSWORD_INSTRUCTIONS : INSTRUCTIONS,
     },
   );

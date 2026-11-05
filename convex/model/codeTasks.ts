@@ -120,12 +120,31 @@ function normalizeRule(rule: CheckRuleInput, id: string, where: string, sample: 
   if (rule.type === "linked") {
     return { id, label, type: "linked", href: requireText(rule.href, `${at} href`, 200) };
   }
+  if (rule.type === "keyframes") {
+    const name = optionalExpected(rule.name?.trim() || undefined, at, "name");
+    if (name !== undefined && !/^-?[a-zA-Z_][\w-]*$|^\{\{[^}]+\}\}$/.test(name)) {
+      throw appError("INVALID_INPUT", `${at}: "${name}" is not a @keyframes name.`);
+    }
+    return { id, label, type: "keyframes", name, property: cssProperty(rule.property, at) };
+  }
   const selector = requireText(rule.selector, `${at} selector`, 300);
-  const error = selectorError(fill(selector, sample));
+  // :hover, :focus and ::before only mean something to checks that read CSS.
+  const states = rule.type === "css" || rule.type === "animation";
+  const error = selectorError(fill(selector, sample), { states });
   if (error !== null) {
     throw appError("INVALID_INPUT", `${at}: the selector \`${selector}\` is not valid. ${error}`);
   }
   switch (rule.type) {
+    case "animation":
+      return {
+        id,
+        label,
+        type: "animation",
+        selector,
+        property: cssProperty(rule.property, at),
+        every: rule.every,
+        viewport: viewportOf(rule.viewport, at),
+      };
     case "exists":
     case "not_exists":
       return { id, label, type: rule.type, selector };
@@ -168,18 +187,12 @@ function normalizeRule(rule: CheckRuleInput, id: string, where: string, sample: 
         every: rule.every,
       };
     case "css": {
-      const property = rule.property.trim().toLowerCase();
-      if (!/^-?[a-z][a-z0-9-]*$/.test(property)) {
-        throw appError("INVALID_INPUT", `${at}: "${rule.property}" is not a CSS property.`);
-      }
+      const property = cssProperty(rule.property, at)!;
       if (rule.equals === undefined && (rule.oneOf === undefined || rule.oneOf.length === 0)) {
         throw appError("INVALID_INPUT", `${at}: a css check needs equals or oneOf.`);
       }
       if (rule.oneOf !== undefined && rule.oneOf.length > MAX_ONE_OF) {
         throw appError("INVALID_INPUT", `${at}: oneOf may list at most ${MAX_ONE_OF} values.`);
-      }
-      if (rule.viewport !== undefined && (!Number.isInteger(rule.viewport) || rule.viewport < 200 || rule.viewport > 3000)) {
-        throw appError("INVALID_INPUT", `${at}: viewport must be a width in px from 200 to 3000.`);
       }
       return {
         id,
@@ -190,10 +203,27 @@ function normalizeRule(rule: CheckRuleInput, id: string, where: string, sample: 
         equals: optionalExpected(rule.equals, at, "equals"),
         oneOf: rule.oneOf?.map((value) => optionalExpected(value, at, "oneOf")!),
         every: rule.every,
-        viewport: rule.viewport,
+        viewport: viewportOf(rule.viewport, at),
       };
     }
   }
+}
+
+/** A CSS property name (custom properties like --accent included), lower case. Undefined stays undefined. */
+function cssProperty<T extends string | undefined>(raw: T, at: string): T extends string ? string : string | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined as T extends string ? string : string | undefined;
+  const property = raw.trim().toLowerCase();
+  if (!/^(--[a-z0-9_-]+|-?[a-z][a-z0-9-]*)$/.test(property)) {
+    throw appError("INVALID_INPUT", `${at}: "${raw}" is not a CSS property.`);
+  }
+  return property;
+}
+
+function viewportOf(viewport: number | undefined, at: string): number | undefined {
+  if (viewport !== undefined && (!Number.isInteger(viewport) || viewport < 200 || viewport > 3000)) {
+    throw appError("INVALID_INPUT", `${at}: viewport must be a width in px from 200 to 3000.`);
+  }
+  return viewport;
 }
 
 export type NormalizedCodeTask = {

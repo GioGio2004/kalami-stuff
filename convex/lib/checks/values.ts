@@ -116,9 +116,16 @@ export function parseColor(input: string): Rgba | null {
   return [...hslToRgb(h, Math.min(1, Math.max(0, s)), Math.min(1, Math.max(0, l))), a] as Rgba;
 }
 
+
+/** Alpha the way browsers print it: two decimals when that is the same 8-bit value. */
+function formatAlpha(a: number): number {
+  const twoPlaces = Math.round(a * 100) / 100;
+  return Math.round(twoPlaces * 255) === Math.round(a * 255) ? twoPlaces : Math.round(a * 1000) / 1000;
+}
+
 function formatColor([r, g, b, a]: Rgba): string {
   const c = (n: number) => Math.round(n);
-  return a === 1 ? `rgb(${c(r)}, ${c(g)}, ${c(b)})` : `rgba(${c(r)}, ${c(g)}, ${c(b)}, ${Math.round(a * 1000) / 1000})`;
+  return a === 1 ? `rgb(${c(r)}, ${c(g)}, ${c(b)})` : `rgba(${c(r)}, ${c(g)}, ${c(b)}, ${formatAlpha(a)})`;
 }
 
 /** Splits a value on top-level spaces, keeping `rgb(1, 2, 3)` and quoted text whole. */
@@ -147,6 +154,55 @@ export function tokens(value: string): string[] {
   return out;
 }
 
+/** Splits on top-level commas: the layers of `transition`, the fonts of `font-family`. */
+function layers(value: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let current = "";
+  for (const ch of value) {
+    if (quote !== null) {
+      current += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    if (ch === "(") depth++;
+    if (ch === ")") depth = Math.max(0, depth - 1);
+    if (depth === 0 && ch === ",") {
+      out.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  out.push(current.trim());
+  return out;
+}
+
+/** Spaces around top-level `/`, so `center/cover` reads as three tokens. `url(a/b.png)` keeps its slash. */
+function spaceSlashes(value: string): string {
+  let depth = 0;
+  let quote: string | null = null;
+  let out = "";
+  for (const ch of value) {
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === "(") {
+      depth++;
+    } else if (ch === ")") {
+      depth = Math.max(0, depth - 1);
+    } else if (ch === "/" && depth === 0) {
+      out += " / ";
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
 const NUMBER = /^([+-]?\d*\.?\d+)([a-z%]*)$/;
 
 function normalizeToken(token: string): string {
@@ -154,22 +210,69 @@ function normalizeToken(token: string): string {
   if (color !== null) return formatColor(color);
   const number = NUMBER.exec(token);
   if (number !== null) {
-    const n = Number(number[1]);
-    return n === 0 && number[2] !== "" ? "0" : `${n}${number[2]}`;
+    let n = Number(number[1]);
+    let unit = number[2];
+    if (unit === "ms") {
+      n /= 1000;
+      unit = "s";
+    }
+    return n === 0 && unit !== "" ? "0" : `${Math.round(n * 1e6) / 1e6}${unit}`;
   }
-  return token.replace(/^["']|["']$/g, "");
+  // A whole quoted token ("Open Sans", 'x') compares without its quotes.
+  const quoted = /^(["'])(.*)\1$/.exec(token);
+  return quoted === null ? token : quoted[2];
 }
 
-/** The form two values are compared in: lower case, one space, colours as rgb(). */
-export function normalizeValue(value: string): string {
-  const flat = value
+/** `repeat(3, 1fr)` → `1fr 1fr 1fr`, as browsers compute grid tracks. `auto-fill` stays. */
+function expandRepeat(value: string): string {
+  return value.replace(/repeat\(\s*(\d+)\s*,\s*([^()]*(?:\([^()]*\)[^()]*)*)\)/g, (_, count: string, track: string) =>
+    Array.from({ length: Math.min(Number(count), 50) }, () => track.trim()).join(" "),
+  );
+}
+
+const FONT_WEIGHTS: Record<string, string> = { normal: "400", bold: "700" };
+const BORDER_WIDTH_PX: Record<string, string> = { thin: "1px", medium: "3px", thick: "5px" };
+const POSITION_KEYWORDS: Record<string, string> = { left: "0%", top: "0%", center: "50%", right: "100%", bottom: "100%" };
+
+/** `center` → `50% 50%`, `top left` → `0% 0%`: background-position as browsers compute it. */
+function normalizePosition(layer: string): string {
+  const parts = tokens(layer);
+  if (parts.length === 0 || parts.length > 2) return parts.join(" ");
+  let [x, y] = parts.length === 1 ? [parts[0], "center"] : parts;
+  // `top left`, `bottom center`: the vertical keyword came first.
+  if (x === "top" || x === "bottom" || ((y === "left" || y === "right") && x === "center")) [x, y] = [y, x];
+  if (parts.length === 1 && (parts[0] === "top" || parts[0] === "bottom")) [x, y] = ["center", parts[0]];
+  return [x, y].map((p) => POSITION_KEYWORDS[p] ?? p).join(" ");
+}
+
+/**
+ * The form two values are compared in: lower case, one space, colours as
+ * rgb(), times in seconds, fonts without quotes. With `property`, also what
+ * that property computes to (`bold` is `700`, `center` is `50% 50%`).
+ */
+export function normalizeValue(value: string, property?: string): string {
+  let flat = value
     .toLowerCase()
     .replace(/\s+/g, " ")
-    .replace(/\s*,\s*/g, ",")
     .replace(/\(\s+/g, "(")
     .replace(/\s+\)/g, ")")
     .trim();
-  return tokens(flat).map(normalizeToken).join(" ");
+  flat = expandRepeat(flat);
+  if (property === "font-weight") {
+    return FONT_WEIGHTS[flat] ?? normalizeToken(flat);
+  }
+  if (property !== undefined && /^border-(top|right|bottom|left)-width$|^outline-width$/.test(property)) {
+    return normalizeToken(BORDER_WIDTH_PX[flat] ?? flat);
+  }
+  if (property === "background-position") {
+    return layers(flat).map(normalizePosition).map((layer) => tokens(layer).map(normalizeToken).join(" ")).join(",");
+  }
+  if (property === "text-decoration-line") {
+    return tokens(flat).sort().join(" ");
+  }
+  return layers(flat)
+    .map((layer) => tokens(layer.replace(/\s*,\s*/g, ",")).map(normalizeToken).join(" "))
+    .join(",");
 }
 
 // --- What a browser accepts ----------------------------------------------------
@@ -179,11 +282,16 @@ const LENGTH_UNITS =
   "px|em|rem|%|vh|vw|vmin|vmax|svh|lvh|dvh|svw|lvw|dvw|ch|ex|cm|mm|in|pt|pc|q|cqw|cqh|fr";
 const LENGTH = new RegExp(`^[+-]?(\\d*\\.?\\d+)(${LENGTH_UNITS})$`);
 const FUNCTION = /^(calc|min|max|clamp|var|env)\(/;
+const TIME = /^[+-]?(\d*\.?\d+)(s|ms)$/;
 
 function isLength(token: string, { negative = true } = {}): boolean {
   if (token === "0" || FUNCTION.test(token)) return true;
   const m = LENGTH.exec(token);
   return m !== null && (negative || !token.startsWith("-"));
+}
+
+function isTime(token: string): boolean {
+  return TIME.test(token) || FUNCTION.test(token);
 }
 
 const BORDER_STYLES = new Set([
@@ -211,7 +319,12 @@ const KEYWORDS: Record<string, Set<string>> = {
   "box-sizing": new Set(["content-box", "border-box"]),
   float: new Set(["left", "right", "none", "inline-start", "inline-end"]),
   overflow: new Set(["visible", "hidden", "scroll", "auto", "clip"]),
+  "overflow-x": new Set(["visible", "hidden", "scroll", "auto", "clip"]),
+  "overflow-y": new Set(["visible", "hidden", "scroll", "auto", "clip"]),
   visibility: new Set(["visible", "hidden", "collapse"]),
+  "animation-direction": new Set(["normal", "reverse", "alternate", "alternate-reverse"]),
+  "animation-fill-mode": new Set(["none", "forwards", "backwards", "both"]),
+  "animation-play-state": new Set(["running", "paused"]),
 };
 
 const COLOR_PROPERTIES = new Set([
@@ -220,23 +333,48 @@ const COLOR_PROPERTIES = new Set([
   "accent-color",
 ]);
 
-const LENGTH_PROPERTIES: Record<string, { keywords: string[]; negative: boolean }> = {
-  width: { keywords: ["auto", "fit-content", "min-content", "max-content"], negative: false },
-  height: { keywords: ["auto", "fit-content", "min-content", "max-content"], negative: false },
-  "min-width": { keywords: ["auto", "fit-content", "min-content", "max-content"], negative: false },
-  "min-height": { keywords: ["auto", "fit-content", "min-content", "max-content"], negative: false },
+const SIZE_KEYWORDS = ["auto", "fit-content", "min-content", "max-content"];
+
+const LENGTH_PROPERTIES: Record<string, { keywords: string[]; negative: boolean; max?: number }> = {
+  width: { keywords: SIZE_KEYWORDS, negative: false },
+  height: { keywords: SIZE_KEYWORDS, negative: false },
+  "min-width": { keywords: SIZE_KEYWORDS, negative: false },
+  "min-height": { keywords: SIZE_KEYWORDS, negative: false },
   "max-width": { keywords: ["none", "fit-content", "min-content", "max-content"], negative: false },
   "max-height": { keywords: ["none", "fit-content", "min-content", "max-content"], negative: false },
   "font-size": {
     keywords: ["xx-small", "x-small", "small", "medium", "large", "x-large", "xx-large", "xxx-large", "smaller", "larger"],
     negative: false,
   },
-  "border-radius": { keywords: [], negative: false },
+  "border-radius": { keywords: [], negative: false, max: 4 },
   top: { keywords: ["auto"], negative: true },
   right: { keywords: ["auto"], negative: true },
   bottom: { keywords: ["auto"], negative: true },
   left: { keywords: ["auto"], negative: true },
+  "row-gap": { keywords: ["normal"], negative: false },
+  "column-gap": { keywords: ["normal"], negative: false },
+  "flex-basis": { keywords: ["auto", "content", ...SIZE_KEYWORDS], negative: false },
+  "letter-spacing": { keywords: ["normal"], negative: true },
+  "word-spacing": { keywords: ["normal"], negative: true },
+  "text-indent": { keywords: [], negative: true },
+  "outline-width": { keywords: ["thin", "medium", "thick"], negative: false },
+  "outline-offset": { keywords: [], negative: true },
+  ...Object.fromEntries(
+    (["top", "right", "bottom", "left"] as const).flatMap((side) => [
+      [`margin-${side}`, { keywords: ["auto"], negative: true }],
+      [`padding-${side}`, { keywords: [], negative: false }],
+      [`border-${side}-width`, { keywords: ["thin", "medium", "thick"], negative: false }],
+    ]),
+  ),
+  ...Object.fromEntries(
+    ["top-left", "top-right", "bottom-right", "bottom-left"].map((corner) => [
+      `border-${corner}-radius`,
+      { keywords: [], negative: false, max: 2 },
+    ]),
+  ),
 };
+
+const TIME_PROPERTIES = new Set(["transition-duration", "transition-delay", "animation-duration", "animation-delay"]);
 
 /**
  * False for the mistakes a browser silently ignores: `width: 100` (no unit),
@@ -244,7 +382,7 @@ const LENGTH_PROPERTIES: Record<string, { keywords: string[]; negative: boolean 
  */
 export function isValidDeclaration(property: string, value: string): boolean {
   const v = value.trim().toLowerCase();
-  if (GLOBAL.has(v) || v.includes("var(")) return true;
+  if (GLOBAL.has(v) || v.includes("var(") || property.startsWith("--")) return true;
   if (COLOR_PROPERTIES.has(property)) {
     return v === "currentcolor" || parseColor(v) !== null || (property === "border-color" && tokens(v).length <= 4 && tokens(v).every((t) => t === "currentcolor" || parseColor(t) !== null));
   }
@@ -252,18 +390,23 @@ export function isValidDeclaration(property: string, value: string): boolean {
   if (keywords !== undefined) {
     return property === "overflow"
       ? tokens(v).length <= 2 && tokens(v).every((t) => keywords.has(t))
-      : keywords.has(v);
+      : layers(v).every((layer) => keywords.has(layer));
   }
   if (property === "font-weight") {
     return ["normal", "bold", "bolder", "lighter"].includes(v) || /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 1000;
   }
+  if (TIME_PROPERTIES.has(property)) {
+    return layers(v).every(isTime);
+  }
+  if (property === "opacity") {
+    return /^[+-]?\d*\.?\d+%?$/.test(v) || FUNCTION.test(v);
+  }
   const lengths = LENGTH_PROPERTIES[property];
   if (lengths !== undefined) {
-    const parts = tokens(v);
-    const max = property === "border-radius" ? 4 : 1;
+    const parts = tokens(property === "border-radius" ? v.replace("/", " ") : v);
     return (
       parts.length >= 1 &&
-      parts.length <= max &&
+      parts.length <= (property === "border-radius" ? 8 : (lengths.max ?? 1)) &&
       parts.every((t) => lengths.keywords.includes(t) || isLength(t, { negative: lengths.negative }))
     );
   }
@@ -273,6 +416,7 @@ export function isValidDeclaration(property: string, value: string): boolean {
 // --- Shorthands -----------------------------------------------------------------
 
 const SIDES = ["top", "right", "bottom", "left"] as const;
+const CORNERS = ["top-left", "top-right", "bottom-right", "bottom-left"] as const;
 
 /** `1px 2px` → top, right, bottom, left, the way margin and padding read them. */
 function quad(parts: string[]): [string, string, string, string] | null {
@@ -307,7 +451,13 @@ function borderParts(parts: string[]): { width: string; style: string; color: st
       return null;
     }
   }
-  return { width: width ?? "medium", style: style ?? "none", color: color ?? "currentcolor" };
+  const finalStyle = style ?? "none";
+  // A border with no style has no width, whatever was written: `border: none` and `border: 0` are the same.
+  return {
+    width: finalStyle === "none" || finalStyle === "hidden" ? "0" : (width ?? "medium"),
+    style: finalStyle,
+    color: color ?? "currentcolor",
+  };
 }
 
 const LIST_STYLE_TYPES = new Set([
@@ -315,10 +465,22 @@ const LIST_STYLE_TYPES = new Set([
   "lower-alpha", "upper-alpha", "lower-latin", "upper-latin", "lower-greek", "georgian", "armenian",
 ]);
 
+const TRANSITION_LONGHANDS = ["transition-property", "transition-duration", "transition-timing-function", "transition-delay"];
+const ANIMATION_LONGHANDS = [
+  "animation-name", "animation-duration", "animation-timing-function", "animation-delay",
+  "animation-iteration-count", "animation-direction", "animation-fill-mode", "animation-play-state",
+];
+const BACKGROUND_LONGHANDS = [
+  "background-color", "background-image", "background-repeat", "background-position", "background-size",
+  "background-attachment",
+];
+const FONT_LONGHANDS = ["font-style", "font-variant", "font-weight", "font-size", "line-height", "font-family"];
+
 /** The longhands each supported shorthand sets. */
 const LONGHANDS: Record<string, string[]> = {
   margin: SIDES.map((side) => `margin-${side}`),
   padding: SIDES.map((side) => `padding-${side}`),
+  inset: [...SIDES],
   "border-width": SIDES.map((side) => `border-${side}-width`),
   "border-style": SIDES.map((side) => `border-${side}-style`),
   "border-color": SIDES.map((side) => `border-${side}-color`),
@@ -326,11 +488,24 @@ const LONGHANDS: Record<string, string[]> = {
   ...Object.fromEntries(
     SIDES.map((side) => [`border-${side}`, ["width", "style", "color"].map((x) => `border-${side}-${x}`)]),
   ),
-  background: ["background-color", "background-image"],
+  "border-radius": CORNERS.map((corner) => `border-${corner}-radius`),
+  outline: ["outline-width", "outline-style", "outline-color"],
+  background: BACKGROUND_LONGHANDS,
   gap: ["row-gap", "column-gap"],
+  "grid-gap": ["row-gap", "column-gap"],
+  "grid-row-gap": ["row-gap"],
+  "grid-column-gap": ["column-gap"],
   flex: ["flex-grow", "flex-shrink", "flex-basis"],
+  "flex-flow": ["flex-direction", "flex-wrap"],
+  "place-items": ["align-items", "justify-items"],
+  "place-content": ["align-content", "justify-content"],
+  "place-self": ["align-self", "justify-self"],
+  overflow: ["overflow-x", "overflow-y"],
+  font: FONT_LONGHANDS,
   "list-style": ["list-style-type", "list-style-position", "list-style-image"],
   "text-decoration": ["text-decoration-line"],
+  transition: TRANSITION_LONGHANDS,
+  animation: ANIMATION_LONGHANDS,
 };
 
 /** Shorthands checks can ask about; they pass when every longhand matches. */
@@ -360,6 +535,130 @@ function expandFlex(v: string, parts: string[]): [string, string, string] | null
   }
 }
 
+const TIMING_KEYWORDS = new Set(["ease", "linear", "ease-in", "ease-out", "ease-in-out", "step-start", "step-end"]);
+const isTiming = (t: string) => TIMING_KEYWORDS.has(t) || /^(cubic-bezier|steps|linear)\(/.test(t);
+
+/** One layer of `transition`: property, duration, timing, delay. */
+function transitionLayer(layer: string): string[] | null {
+  let property: string | undefined;
+  let timing: string | undefined;
+  const times: string[] = [];
+  for (const part of tokens(layer)) {
+    if (isTime(part) && times.length < 2) times.push(part);
+    else if (timing === undefined && isTiming(part)) timing = part;
+    else if (property === undefined && /^-?[a-z][a-z0-9-]*$/.test(part)) property = part;
+    else if (part !== "allow-discrete" && part !== "normal") return null;
+  }
+  return [property ?? "all", times[0] ?? "0s", timing ?? "ease", times[1] ?? "0s"];
+}
+
+/** One layer of `animation`. Keywords of the other properties win over a name, as in browsers. */
+function animationLayer(layer: string): string[] | null {
+  const set: Record<string, string> = {};
+  const times: string[] = [];
+  for (const part of tokens(layer)) {
+    if (isTime(part) && times.length < 2) times.push(part);
+    else if (set.timing === undefined && isTiming(part)) set.timing = part;
+    else if (set.count === undefined && (part === "infinite" || PLAIN_NUMBER.test(part))) set.count = part;
+    else if (set.direction === undefined && KEYWORDS["animation-direction"].has(part)) set.direction = part;
+    else if (set.fill === undefined && KEYWORDS["animation-fill-mode"].has(part)) set.fill = part;
+    else if (set.state === undefined && KEYWORDS["animation-play-state"].has(part)) set.state = part;
+    else if (set.name === undefined && /^(-?[a-z_][a-z0-9_-]*|"[^"]*"|'[^']*')$/.test(part)) set.name = part.replace(/^["']|["']$/g, "");
+    else return null;
+  }
+  return [
+    set.name ?? "none",
+    times[0] ?? "0s",
+    set.timing ?? "ease",
+    times[1] ?? "0s",
+    set.count ?? "1",
+    set.direction ?? "normal",
+    set.fill ?? "none",
+    set.state ?? "running",
+  ];
+}
+
+const REPEAT_KEYWORDS = new Set(["repeat-x", "repeat-y", "repeat", "space", "round", "no-repeat"]);
+const ATTACHMENTS = new Set(["scroll", "fixed", "local"]);
+const BOXES = new Set(["border-box", "padding-box", "content-box", "text"]);
+const POSITION_WORDS = new Set(["left", "right", "top", "bottom", "center"]);
+
+/** One layer of `background`: color, image, repeat, position, size, attachment. */
+function backgroundLayer(layer: string, last: boolean): string[] | null {
+  let color: string | undefined;
+  let image: string | undefined;
+  const repeat: string[] = [];
+  const position: string[] = [];
+  const size: string[] = [];
+  let attachment: string | undefined;
+  let afterSlash = false;
+  for (const part of tokens(spaceSlashes(layer))) {
+    if (part === "/") {
+      if (position.length === 0) return null;
+      afterSlash = true;
+    } else if (afterSlash && size.length < 2 && (part === "cover" || part === "contain" || part === "auto" || isLength(part, { negative: false }))) {
+      size.push(part);
+    } else if (image === undefined && (part === "none" || /^(url|linear-gradient|radial-gradient|conic-gradient|repeating-[a-z-]+gradient|image-set)\(/.test(part))) {
+      image = part;
+    } else if (repeat.length < 2 && REPEAT_KEYWORDS.has(part)) {
+      repeat.push(part);
+    } else if (attachment === undefined && ATTACHMENTS.has(part)) {
+      attachment = part;
+    } else if (!afterSlash && position.length < 4 && (POSITION_WORDS.has(part) || isLength(part))) {
+      position.push(part);
+    } else if (BOXES.has(part)) {
+      // background-origin / background-clip: not something checks look at.
+    } else if (last && color === undefined && (part === "currentcolor" || parseColor(part) !== null)) {
+      color = part;
+    } else {
+      return null;
+    }
+  }
+  if (afterSlash && size.length === 0) return null;
+  return [
+    color ?? "transparent",
+    image ?? "none",
+    repeat.length === 0 ? "repeat" : repeat.join(" "),
+    position.length === 0 ? "0% 0%" : position.join(" "),
+    size.length === 0 ? "auto" : size.join(" "),
+    attachment ?? "scroll",
+  ];
+}
+
+const FONT_SIZE_WORDS = new Set(LENGTH_PROPERTIES["font-size"].keywords);
+const SYSTEM_FONTS = new Set(["caption", "icon", "menu", "message-box", "small-caption", "status-bar"]);
+
+/** `font: italic bold 20px/1.5 "Open Sans", sans-serif` */
+function expandFont(v: string): string[] | null {
+  if (SYSTEM_FONTS.has(v)) return ["normal", "normal", "normal", "medium", "normal", v];
+  const parts = tokens(spaceSlashes(v));
+  let style = "normal";
+  let variant = "normal";
+  let weight = "normal";
+  let i = 0;
+  for (; i < parts.length; i++) {
+    const p = parts[i];
+    if (FONT_SIZE_WORDS.has(p) || isLength(p, { negative: false })) break;
+    if (p === "normal") continue;
+    if (p === "italic" || p === "oblique") style = p;
+    else if (p === "small-caps") variant = p;
+    else if (["bold", "bolder", "lighter"].includes(p) || (/^\d+$/.test(p) && Number(p) >= 1 && Number(p) <= 1000)) weight = p;
+    else if (/condensed|expanded/.test(p)) continue;
+    else return null;
+  }
+  const size = parts[i];
+  if (size === undefined) return null;
+  let lineHeight = "normal";
+  let rest = parts.slice(i + 1);
+  if (rest[0] === "/") {
+    if (rest[1] === undefined) return null;
+    lineHeight = rest[1];
+    rest = rest.slice(2);
+  }
+  if (rest.length === 0) return null;
+  return [style, variant, weight, size, lineHeight, rest.join(" ")];
+}
+
 /**
  * The longhands a shorthand sets, or null if the browser would drop it.
  * Properties that aren't shorthands come back as themselves.
@@ -376,12 +675,24 @@ export function expand(property: string, value: string): Longhand[] | null {
   }
   const parts = tokens(v);
   const assign = (values: string[]) => longhands.map((longhand, i) => ({ property: longhand, value: values[i] }));
+  /** Comma-separated layers, each longhand listing its value per layer. */
+  const layered = (read: (layer: string, index: number, count: number) => string[] | null) => {
+    const all = layers(v);
+    const values: string[][] = [];
+    for (const [index, layer] of all.entries()) {
+      const one = read(layer, index, all.length);
+      if (one === null) return null;
+      values.push(one);
+    }
+    return assign(longhands.map((_, i) => values.map((layer) => layer[i]).join(", ")));
+  };
   switch (property) {
     case "margin":
-    case "padding": {
+    case "padding":
+    case "inset": {
       const values = quad(parts);
       const valid = values?.every(
-        (t) => isLength(t, { negative: property === "margin" }) || (property === "margin" && t === "auto"),
+        (t) => isLength(t, { negative: property !== "padding" }) || (property !== "padding" && t === "auto"),
       );
       return values && valid ? assign(values) : null;
     }
@@ -391,15 +702,52 @@ export function expand(property: string, value: string): Longhand[] | null {
       const values = quad(parts);
       return values === null ? null : assign(values);
     }
+    case "border-radius": {
+      const [horizontal, vertical] = v.split("/").map((side) => quad(tokens(side)));
+      if (horizontal === null || horizontal === undefined || vertical === null) return null;
+      if (![...horizontal, ...(vertical ?? [])].every((t) => isLength(t, { negative: false }))) return null;
+      return assign(horizontal.map((h, i) => (vertical === undefined || vertical[i] === h ? h : `${h} ${vertical[i]}`)));
+    }
     case "background": {
-      const color = parts.filter((p) => parseColor(p) !== null).at(-1);
-      const image = parts.find((p) => p === "none" || /^(url|linear-gradient|radial-gradient|conic-gradient)\(/.test(p));
-      return assign([color ?? "transparent", image ?? "none"]);
+      const result = layered((layer, index, count) => backgroundLayer(layer, index === count - 1));
+      // Only the last layer has a colour.
+      return result?.map((longhand) =>
+        longhand.property === "background-color" ? { ...longhand, value: longhand.value.split(", ").at(-1)! } : longhand,
+      ) ?? null;
     }
     case "gap":
-      return parts.length === 1 || parts.length === 2 ? assign([parts[0], parts[1] ?? parts[0]]) : null;
+    case "grid-gap": {
+      if (parts.length < 1 || parts.length > 2) return null;
+      if (!parts.every((p) => p === "normal" || isLength(p, { negative: false }))) return null;
+      return assign([parts[0], parts[1] ?? parts[0]]);
+    }
+    case "grid-row-gap":
+    case "grid-column-gap":
+      return parts.length === 1 && (parts[0] === "normal" || isLength(parts[0], { negative: false })) ? assign(parts) : null;
     case "flex": {
       const values = expandFlex(v, parts);
+      return values === null ? null : assign(values);
+    }
+    case "flex-flow": {
+      let direction: string | undefined;
+      let wrap: string | undefined;
+      for (const part of parts) {
+        if (direction === undefined && KEYWORDS["flex-direction"].has(part)) direction = part;
+        else if (wrap === undefined && KEYWORDS["flex-wrap"].has(part)) wrap = part;
+        else return null;
+      }
+      return parts.length === 0 ? null : assign([direction ?? "row", wrap ?? "nowrap"]);
+    }
+    case "place-items":
+    case "place-content":
+    case "place-self":
+      return parts.length === 1 || parts.length === 2 ? assign([parts[0], parts[1] ?? parts[0]]) : null;
+    case "overflow":
+      return (parts.length === 1 || parts.length === 2) && parts.every((p) => KEYWORDS.overflow.has(p))
+        ? assign([parts[0], parts[1] ?? parts[0]])
+        : null;
+    case "font": {
+      const values = expandFont(v);
       return values === null ? null : assign(values);
     }
     case "list-style": {
@@ -418,6 +766,14 @@ export function expand(property: string, value: string): Longhand[] | null {
       const lines = parts.filter((p) => ["none", "underline", "overline", "line-through"].includes(p));
       return assign([lines.length > 0 ? lines.join(" ") : "none"]);
     }
+    case "transition":
+      return layered(transitionLayer);
+    case "animation":
+      return layered(animationLayer);
+    case "outline": {
+      const outline = borderParts(parts.map((p) => (p === "auto" ? "solid" : p)));
+      return outline === null ? null : assign([outline.width, outline.style, outline.color]);
+    }
     default: {
       // border and border-<side>: width, style and colour in any order, repeated per side.
       const border = borderParts(parts);
@@ -433,8 +789,18 @@ export function expand(property: string, value: string): Longhand[] | null {
 /** Starting values for the longhands above (and display), when nothing sets them. */
 export const INITIAL: Record<string, string> = {
   display: "inline",
+  color: "black",
+  "font-size": "16px",
+  "font-style": "normal",
+  "font-variant": "normal",
+  "font-weight": "normal",
+  "line-height": "normal",
   "background-color": "transparent",
   "background-image": "none",
+  "background-repeat": "repeat",
+  "background-position": "0% 0%",
+  "background-size": "auto",
+  "background-attachment": "scroll",
   "row-gap": "normal",
   "column-gap": "normal",
   "flex-grow": "0",
@@ -445,13 +811,46 @@ export const INITIAL: Record<string, string> = {
   "list-style-image": "none",
   "text-decoration-line": "none",
   position: "static",
-  "font-style": "normal",
-  "font-weight": "normal",
+  top: "auto",
+  right: "auto",
+  bottom: "auto",
+  left: "auto",
+  "z-index": "auto",
   "text-align": "start",
+  "text-transform": "none",
   "flex-direction": "row",
   "flex-wrap": "nowrap",
   "justify-content": "normal",
   "align-items": "normal",
+  "align-content": "normal",
+  "justify-items": "legacy",
+  "align-self": "auto",
+  "justify-self": "auto",
+  "overflow-x": "visible",
+  "overflow-y": "visible",
+  visibility: "visible",
+  opacity: "1",
+  transform: "none",
+  "box-sizing": "content-box",
+  width: "auto",
+  height: "auto",
+  cursor: "auto",
+  "outline-width": "medium",
+  "outline-style": "none",
+  "outline-color": "currentcolor",
+  "transition-property": "all",
+  "transition-duration": "0s",
+  "transition-timing-function": "ease",
+  "transition-delay": "0s",
+  "animation-name": "none",
+  "animation-duration": "0s",
+  "animation-timing-function": "ease",
+  "animation-delay": "0s",
+  "animation-iteration-count": "1",
+  "animation-direction": "normal",
+  "animation-fill-mode": "none",
+  "animation-play-state": "running",
+  ...Object.fromEntries(CORNERS.map((corner) => [`border-${corner}-radius`, "0"])),
   ...Object.fromEntries(
     SIDES.flatMap((side) => [
       [`margin-${side}`, "0"],

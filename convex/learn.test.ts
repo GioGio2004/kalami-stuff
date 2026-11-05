@@ -282,8 +282,11 @@ describe("students and code tasks", () => {
       files: [{ name: "hack.html", content: "x" }],
     });
     expect(saved.progress.step).toBe(0);
+    // Work in progress comes from taskWork, read once; the task itself leaves it out so autosaves stay light.
     const task = await ana.query(api.learn.task, { assessmentId });
-    expect(task.responses[0].files.map((f) => f.name)).toEqual(["index.html", "style.css"]);
+    expect(task.responses).toEqual([]);
+    const work = await ana.query(api.learn.taskWork, { assessmentId });
+    expect(work.responses[0].files.map((f) => f.name)).toEqual(["index.html", "style.css"]);
 
     const draft = await nino.mutation(api.assessments.create, { courseId, kind: "task", title: "Draft" });
     await expectAppError(ana.query(api.learn.task, { assessmentId: draft }), "NOT_FOUND");

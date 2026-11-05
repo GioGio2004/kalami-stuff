@@ -8,6 +8,7 @@ import {
   finishOpenAttempts as finishOpenAttemptsOf,
   getStudentCourse,
   getStudentTask,
+  getTaskWork,
   gradeDue as gradeDueAttempt,
   joinCourse,
   joinResultValidator,
@@ -19,6 +20,7 @@ import {
   studentCourseValidator,
   studentTaskValidator,
   submitTask,
+  taskWorkValidator,
   upNextValidator,
 } from "./model/learn";
 import { getQuizAnswers, getStudentQuiz, quizAnswersValidator, saveAnswer, startQuiz, studentQuizValidator } from "./model/quiz";
@@ -75,6 +77,16 @@ export const task = query({
   },
 });
 
+/** Work saved so far on a task in progress. The page reads it once; autosaves don't re-send it. */
+export const taskWork = query({
+  args: { assessmentId: v.id("assessments") },
+  returns: taskWorkValidator,
+  handler: async (ctx, args) => {
+    const student = await requireStudent(ctx);
+    return await getTaskWork(ctx, student, args.assessmentId);
+  },
+});
+
 export const saveCodeWork = mutation({
   args: {
     assessmentId: v.id("assessments"),
@@ -95,7 +107,15 @@ export const saveCodeWork = mutation({
 
 /** A quiz, midterm or final: the start screen, the running attempt, or the results. Never the answers (see quizAnswers). */
 export const quiz = query({
-  args: { assessmentId: v.id("assessments") },
+  args: {
+    assessmentId: v.id("assessments"),
+    /**
+     * Not read: the start screen bumps it at the opening time. Query results are
+     * cached until data changes, and time passing isn't a change, so a new
+     * argument is what makes an "upcoming" quiz come back open.
+     */
+    refresh: v.optional(v.number()),
+  },
   returns: studentQuizValidator,
   handler: async (ctx, args) => {
     const student = await requireStudent(ctx);

@@ -12,7 +12,9 @@ import {
   attemptStatusValidator,
   checkOutcomeValidator,
   codeAssetValidator,
+  codeChecksValidator,
   codeFileValidator,
+  codeMode,
   codeStepValidator,
   integrityLevelValidator,
   studentWeekValidator,
@@ -399,6 +401,12 @@ export const studentTaskValidator = v.object({
     integrityLevel: integrityLevelValidator,
     resultsVisibility: resultsVisibilityValidator,
     totalPoints: v.number(),
+    /** How checks and help behave for this task's code. */
+    codeChecks: codeChecksValidator,
+    codeHelp: v.boolean(),
+    /** Typing aids the lecturer allowed: closing tags, and tag suggestions after `<`. */
+    codeAutoClose: v.boolean(),
+    codeSuggest: v.boolean(),
   }),
   questions: v.array(
     v.object({
@@ -425,6 +433,10 @@ export const studentTaskValidator = v.object({
       feedback: v.optional(v.string()),
     }),
   ),
+  /**
+   * Saved work, once it can't change any more (submitted or closed). While the
+   * student works, `taskWork` loads it once instead, so autosaves don't send it all back.
+   */
   responses: v.array(
     v.object({
       questionId: v.id("questions"),
@@ -443,13 +455,22 @@ export const studentTaskValidator = v.object({
   unsupported: v.number(),
 });
 
-export async function requireOpenableAssessment(ctx: QueryCtx, student: Student, assessmentId: Id<"assessments">) {
+/**
+ * A published assessment in a course the student is in, with where it stands.
+ * Unlike requireOpenableAssessment, one that hasn't opened yet comes back
+ * (state "upcoming") so its start screen can count down to the opening time.
+ */
+export async function requireVisibleAssessment(ctx: QueryCtx, student: Student, assessmentId: Id<"assessments">) {
   const assessment = await ctx.db.get("assessments", assessmentId);
   if (assessment === null || assessment.status !== "published") {
     throw appError("NOT_FOUND", "Not found.");
   }
   const course = await requireEnrolledCourse(ctx, student, assessment.courseId);
-  const state = windowState(assessment, course, Date.now());
+  return { assessment, course, state: windowState(assessment, course, Date.now()) };
+}
+
+export async function requireOpenableAssessment(ctx: QueryCtx, student: Student, assessmentId: Id<"assessments">) {
+  const { assessment, course, state } = await requireVisibleAssessment(ctx, student, assessmentId);
   if (state === "upcoming") {
     throw appError("CONFLICT", "This hasn't opened yet.");
   }
@@ -507,6 +528,10 @@ export async function listComments(ctx: QueryCtx, attemptId: Id<"attempts">) {
 
 export async function getStudentTask(ctx: QueryCtx, student: Student, assessmentId: Id<"assessments">) {
   const { assessment, course, state } = await requireOpenableAssessment(ctx, student, assessmentId);
+  // Quizzes and exams hand out their questions only after Start (model/quiz.ts), never here.
+  if (assessment.kind !== "task") {
+    throw appError("NOT_FOUND", "Not found.");
+  }
   const all = await questionsOf(ctx, assessmentId);
   const questions = [];
   const valuesByQuestion = new Map<Id<"questions">, Record<string, string>>();
@@ -521,7 +546,8 @@ export async function getStudentTask(ctx: QueryCtx, student: Student, assessment
   const results = submitted ? visibleResults(assessment, state) : "none";
   const responses = [];
   const hiddenChecks = [];
-  if (attempt !== null) {
+  // Work in progress comes from taskWork; reading it here would re-send everything on every autosave.
+  if (attempt !== null && (submitted || state === "closed")) {
     for (const question of questions) {
       const response = await responseFor(ctx, attempt._id, question._id);
       if (response === null || response.value.type !== "code") continue;
@@ -559,6 +585,10 @@ export async function getStudentTask(ctx: QueryCtx, student: Student, assessment
       integrityLevel: assessment.settings.integrityLevel,
       resultsVisibility: assessment.settings.resultsVisibility,
       totalPoints: assessment.totalPoints,
+      codeChecks: codeMode(assessment.kind, assessment.settings).checks,
+      codeHelp: codeMode(assessment.kind, assessment.settings).help,
+      codeAutoClose: codeMode(assessment.kind, assessment.settings).autoClose,
+      codeSuggest: codeMode(assessment.kind, assessment.settings).suggest,
     },
     questions,
     attempt:
@@ -571,13 +601,37 @@ export async function getStudentTask(ctx: QueryCtx, student: Student, assessment
             autoSubmitted: attempt.autoSubmitted ?? false,
             score: results !== "none" ? finalScore(attempt) : undefined,
             maxScore: attempt.maxScore,
-            feedback: submitted ? attempt.feedback : undefined,
+            // Notes are part of the results: they wait for them, like the score.
+            feedback: results !== "none" ? attempt.feedback : undefined,
           },
     responses,
     hiddenChecks,
-    comments: submitted && attempt !== null ? await listComments(ctx, attempt._id) : [],
+    comments: results !== "none" && attempt !== null ? await listComments(ctx, attempt._id) : [],
     unsupported: all.length - questions.length,
   };
+}
+
+export const taskWorkValidator = v.object({
+  responses: v.array(
+    v.object({ questionId: v.id("questions"), files: v.array(codeFileValidator), savedAt: v.number() }),
+  ),
+});
+
+/** The work saved so far on a task in progress; the page reads it once when it opens. */
+export async function getTaskWork(ctx: QueryCtx, student: Student, assessmentId: Id<"assessments">) {
+  const { assessment } = await requireOpenableAssessment(ctx, student, assessmentId);
+  if (assessment.kind !== "task") {
+    throw appError("NOT_FOUND", "Not found.");
+  }
+  const attempt = await latestAttempt(ctx, student.user._id, assessmentId);
+  if (attempt === null) return { responses: [] };
+  const responses = [];
+  for (const question of await questionsOf(ctx, assessmentId)) {
+    const response = await responseFor(ctx, attempt._id, question._id);
+    if (response === null || response.value.type !== "code") continue;
+    responses.push({ questionId: question._id, files: response.value.files, savedAt: response.savedAt });
+  }
+  return { responses };
 }
 
 /** The student's files, limited to the task's own files and filled in from the starter. */
@@ -715,13 +769,31 @@ export async function reportIntegrity(
   return null;
 }
 
+/** Two sets of files with the same content, line endings and outer blank lines aside. */
+function sameFiles(a: CodeFile[], b: CodeFile[]): boolean {
+  const normalize = (files: CodeFile[]) =>
+    JSON.stringify(
+      [...files].sort((x, y) => x.name.localeCompare(y.name)).map((f) => [f.name, f.content.replaceAll("\r\n", "\n").trim()]),
+    );
+  return normalize(a) === normalize(b);
+}
+
+type ScoredAttempt = {
+  score: number;
+  maxScore: number;
+  stepsDone: number;
+  needsGrading: boolean;
+  /** Writes to make once everything is worked out, so a failure halfway writes nothing. */
+  writes: (() => Promise<unknown>)[];
+};
+
 /**
- * Grades every question and closes the attempt: code with all of its checks
- * (hidden ones included, the student's own variant), choices and short answers
- * against the key. Essays stay ungraded until a lecturer gives them points.
- * Used on submit, when a timed attempt runs out and when an assessment closes.
+ * Works out every question's points: code with all of its checks (hidden ones
+ * included, the student's own variant), choices and short answers against the
+ * key. Essays stay ungraded until a lecturer gives them points. Reads only;
+ * the writes come back to be applied together.
  */
-export async function gradeAttempt(ctx: MutationCtx, attempt: Doc<"attempts">, options: { auto: boolean }) {
+async function scoreAttempt(ctx: MutationCtx, attempt: Doc<"attempts">): Promise<ScoredAttempt> {
   // A deleted account grades like anyone else, with no name in its variant.
   const user: VariantStudent =
     (await ctx.db.get("users", attempt.userId)) ?? { _id: attempt.userId, firstName: undefined, lastName: undefined };
@@ -729,13 +801,14 @@ export async function gradeAttempt(ctx: MutationCtx, attempt: Doc<"attempts">, o
   let maxScore = 0;
   let stepsDone = 0;
   let needsGrading = false;
+  const writes: (() => Promise<unknown>)[] = [];
   for (const question of await questionsOf(ctx, attempt.assessmentId)) {
     maxScore += question.points;
     if (question.type !== "code" || question.code === undefined) {
       const response = await responseFor(ctx, attempt._id, question._id);
       const autoScore = scoreAnswer(await answerKeyOf(ctx, question._id), response?.value, question.points);
       if (response !== null) {
-        await ctx.db.patch("responses", response._id, { autoScore });
+        writes.push(() => ctx.db.patch("responses", response._id, { autoScore }));
         needsGrading ||= awaitsGrading(response.value, response.manualPoints);
       }
       score += response?.manualPoints ?? autoScore ?? 0;
@@ -748,37 +821,75 @@ export async function gradeAttempt(ctx: MutationCtx, attempt: Doc<"attempts">, o
     const files = (response?.value.type === "code" ? response.value.files : undefined) ?? code.files;
     const checkResults = runChecks(files, rules as CheckRule[]).map((r) => ({ id: r.id, passed: r.passed }));
     const passed = checkResults.filter((r) => r.passed).length;
-    const autoScore = rules.length === 0 ? 0 : Math.round((question.points * passed * 100) / rules.length) / 100;
-    score += response?.manualPoints ?? autoScore;
+    // Starter files left as they were earn nothing, even where a check happens to hold on them.
+    const untouched = sameFiles(files, code.files);
+    const autoScore =
+      rules.length === 0 || untouched ? 0 : Math.round((question.points * passed * 100) / rules.length) / 100;
+    score += Math.min(response?.manualPoints ?? autoScore, question.points);
+    const progress = stepProgress(code, files);
+    stepsDone += progress.step;
     if (response === null) {
-      const progress = stepProgress(code, files);
-      stepsDone += progress.step;
-      await ctx.db.insert("responses", {
-        attemptId: attempt._id,
-        questionId: question._id,
-        userId: attempt.userId,
-        value: { type: "code", files },
-        progress,
-        savedAt: Date.now(),
-        checkResults,
-        autoScore,
-      });
+      writes.push(() =>
+        ctx.db.insert("responses", {
+          attemptId: attempt._id,
+          questionId: question._id,
+          userId: attempt.userId,
+          value: { type: "code", files },
+          progress,
+          savedAt: Date.now(),
+          checkResults,
+          autoScore,
+        }),
+      );
     } else {
-      stepsDone += response.progress?.step ?? 0;
-      await ctx.db.patch("responses", response._id, { checkResults, autoScore });
+      writes.push(() => ctx.db.patch("responses", response._id, { checkResults, autoScore, progress }));
     }
   }
+  return { score: Math.round(score * 100) / 100, maxScore: Math.round(maxScore * 100) / 100, stepsDone, needsGrading, writes };
+}
+
+/**
+ * Grades every question and closes the attempt. Used on submit, when a timed
+ * attempt runs out and when an assessment closes.
+ */
+export async function gradeAttempt(ctx: MutationCtx, attempt: Doc<"attempts">, options: { auto: boolean }) {
+  const scored = await scoreAttempt(ctx, attempt);
+  for (const write of scored.writes) await write();
   await ctx.db.patch("attempts", attempt._id, {
     status: "submitted",
     submittedAt: Date.now(),
-    score: Math.round(score * 100) / 100,
+    score: scored.score,
     // The questions as they are now, so a question added or re-pointed since the start still adds up.
-    maxScore: Math.round(maxScore * 100) / 100,
-    stepsDone,
-    needsGrading: needsGrading || undefined,
+    maxScore: scored.maxScore,
+    stepsDone: scored.stepsDone,
+    needsGrading: scored.needsGrading || undefined,
     autoSubmitted: options.auto ? true : undefined,
     gradingError: undefined,
   });
+}
+
+/**
+ * Grades submitted work again with the questions as they are now (a fixed
+ * check, new points). The lecturer's own points and overall score stay; when
+ * and how it was submitted stays. Returns the automatic score before and after.
+ */
+export async function regradeAttempt(ctx: MutationCtx, attempt: Doc<"attempts">) {
+  const before = attempt.score;
+  try {
+    const scored = await scoreAttempt(ctx, attempt);
+    for (const write of scored.writes) await write();
+    await ctx.db.patch("attempts", attempt._id, {
+      score: scored.score,
+      maxScore: scored.maxScore,
+      stepsDone: scored.stepsDone,
+      needsGrading: scored.needsGrading || undefined,
+      gradingError: undefined,
+    });
+    return { before, after: scored.score, error: undefined };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { before, after: before, error: message.slice(0, 300) };
+  }
 }
 
 /**

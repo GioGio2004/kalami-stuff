@@ -204,3 +204,148 @@ describe("css rules", () => {
     expect(results.map((r) => r.passed)).toEqual([false, true]);
   });
 });
+
+describe("browser agreement (2026-11-05 fixes)", () => {
+  const css = (property: string, equals: string, selector = ".x") => ({ type: "css", selector, property, equals }) as const;
+  const div = '<div class="x"><p class="c">x</p></div>';
+
+  test.each([
+    ["font shorthand weight", ".x { font: bold 20px Arial }", css("font-weight", "bold")],
+    ["font shorthand size", ".x { font: italic 20px/1.5 Arial }", css("font-size", "20px")],
+    ["700 is bold", ".x { font-weight: 700 }", css("font-weight", "bold")],
+    ["var()", ":root { --main: red } .x { color: var(--main) }", css("color", "red")],
+    ["var() fallback", ".x { color: var(--nope, teal) }", css("color", "teal")],
+    ["custom property inherited", ":root { --gap: 4px }", css("--gap", "4px")],
+    ["flex-flow", ".x { flex-flow: column wrap }", css("flex-direction", "column")],
+    ["place-items", ".x { place-items: center }", css("align-items", "center")],
+    ["grid-gap", ".x { grid-gap: 10px }", css("gap", "10px")],
+    ["border 0 is none", ".x { border: 0 }", css("border", "none")],
+    ["background repeat", ".x { background: url(a.png) center/cover no-repeat }", css("background-repeat", "no-repeat")],
+    ["background size", ".x { background: url(a.png) center/cover no-repeat }", css("background-size", "cover")],
+    ["background position", ".x { background: url(a.png) center/cover no-repeat }", css("background-position", "50% 50%")],
+    ["border-radius corner", ".x { border-radius: 10px }", css("border-top-left-radius", "10px")],
+    ["overflow", ".x { overflow: hidden }", css("overflow-x", "hidden")],
+    ["inset", ".x { position: absolute; inset: 0 }", css("top", "0")],
+    ["transition duration", ".x { transition: color 300ms ease }", css("transition-duration", "0.3s")],
+    ["animation name", ".x { animation: spin 2s linear infinite }", css("animation-name", "spin")],
+    ["animation count", ".x { animation: spin 2s linear infinite }", css("animation-iteration-count", "infinite")],
+    ["font-family quotes", '.x { font-family: "Open Sans", Arial }', css("font-family", "Open Sans, Arial")],
+    ["8-digit hex", ".x { color: rgba(255, 0, 0, 0.5) }", css("color", "#ff000080")],
+    ["repeat()", ".x { grid-template-columns: repeat(3, 1fr) }", css("grid-template-columns", "1fr 1fr 1fr")],
+    ["[class=] doesn't outrank two classes", ".x .c { color: blue } [class=c] { color: red }", css("color", "blue", ".c")],
+    ["<!-- --> in CSS", "<!-- .x { color: red } -->", css("color", "red")],
+    ["@supports", "@supports (display: grid) { .x { display: grid } }", css("display", "grid")],
+    ["@layer loses to unlayered", "@layer base { .x { color: red } } div { color: blue }", css("color", "blue")],
+    ["nesting", ".x { color: red; .c { color: blue } }", css("color", "blue", ".c")],
+    ["nesting with &", ".x { & > .c { color: blue } padding: 4px }", css("padding", "4px")],
+    ["range media", "@media (300px <= width <= 2000px) { .x { color: red } }", css("color", "red")],
+    ["default colour", "", css("color", "black")],
+  ])("%s", (_, sheet, rule) => {
+    expect(check(div, sheet, rule)).toMatchObject({ passed: true });
+  });
+
+  test("[id=x] counts like a class, #x like an id", () => {
+    const body = '<div class="card"><p id="t" class="title">x</p></div>';
+    const rule = { type: "css", selector: "p", property: "color", equals: "blue" } as const;
+    expect(check(body, ".card .title { color: blue } [id=t] { color: red }", rule).passed).toBe(true);
+    expect(check(body, ".card .title { color: red } #t { color: blue }", rule).passed).toBe(true);
+  });
+
+  test.each([
+    ["one bad selector drops the list", ".x, p:hoverr { color: red }", css("color", "red")],
+    ["unitless padding is dropped", ".x { padding-top: 10 }", css("padding-top", "10")],
+    ["unitless gap is dropped", ".x { gap: 10 }", css("row-gap", "10")],
+  ])("%s", (_, sheet, rule) => {
+    expect(check(div, sheet, rule)).toMatchObject({ passed: false });
+  });
+
+  test("media attributes, leading slashes and @import", () => {
+    const rule = css("display", "none");
+    expect(check(div, "", rule, '<style media="print">.x { display: none }</style>').passed).toBe(false);
+    expect(check(div, ".x { display: none }", rule, '<link rel="stylesheet" href="/style.css">').passed).toBe(true);
+    const [imported] = runChecks(
+      [
+        { name: "index.html", content: html(div) },
+        { name: "style.css", content: "@import url('more.css');" },
+        { name: "more.css", content: ".x { display: none }" },
+      ],
+      [{ id: "r", label: "r", ...rule }],
+    );
+    expect(imported.passed).toBe(true);
+  });
+
+  test("text reads like a person: <br> breaks words, <style> isn't text", () => {
+    expect(check("<p>Hello<br>World</p>", "", { type: "text", selector: "p", equals: "Hello World" }).passed).toBe(true);
+    expect(
+      check("<main><style>p{}</style><p>Hi</p></main>", "", { type: "text", selector: "main", equals: "Hi" }).passed,
+    ).toBe(true);
+  });
+
+  test("attributes browsers read loosely", () => {
+    expect(check("<input TYPE=EMAIL>", "", { type: "attr", selector: "input", attribute: "type", equals: "email" }).passed).toBe(true);
+    expect(
+      check('<a href="./about.html">x</a>', "", { type: "attr", selector: "a", attribute: "href", equals: "about.html" }).passed,
+    ).toBe(true);
+  });
+});
+
+describe("states and animation", () => {
+  const body = '<nav><a href="#" class="link">x</a></nav><div class="card"><h2 class="title">T</h2></div>';
+
+  test("hover styles can be checked", () => {
+    const sheet = "a { color: black; transition: color .3s } a:hover { color: red } .card:hover .title { color: teal }";
+    expect(check(body, sheet, { type: "css", selector: "a:hover", property: "color", equals: "red" }).passed).toBe(true);
+    expect(check(body, sheet, { type: "css", selector: "a", property: "color", equals: "black" }).passed).toBe(true);
+    expect(check(body, sheet, { type: "css", selector: ".card:hover .title", property: "color", equals: "teal" }).passed).toBe(true);
+    expect(check(body, "", { type: "css", selector: "a:hover", property: "color", equals: "red" }).passed).toBe(false);
+    expect(check(body, sheet, { type: "css", selector: "a", property: "transition-property", equals: "color" }).passed).toBe(true);
+  });
+
+  test("focus and pseudo-elements", () => {
+    const sheet = "input:focus { outline: 2px solid red } .title::before { content: '★' }";
+    const form = "<input>" + body;
+    expect(check(form, sheet, { type: "css", selector: "input:focus", property: "outline-style", equals: "solid" }).passed).toBe(true);
+    expect(check(form, sheet, { type: "css", selector: ".title::before", property: "content", equals: "'★'" }).passed).toBe(true);
+  });
+
+  test("keyframes and animations", () => {
+    const sheet = "@keyframes spin { to { transform: rotate(360deg) } } .card { animation: spin 2s linear infinite }";
+    expect(check(body, sheet, { type: "keyframes", name: "spin", property: "transform" }).passed).toBe(true);
+    expect(check(body, sheet, { type: "keyframes", name: "spin", property: "opacity" }).passed).toBe(false);
+    expect(check(body, sheet, { type: "animation", selector: ".card", property: "transform" }).passed).toBe(true);
+    expect(check(body, sheet, { type: "animation", selector: ".title" })).toMatchObject({ passed: false });
+    expect(check(body, ".card { animation: spin 2s }", { type: "animation", selector: ".card" })).toMatchObject({
+      passed: false,
+      detail: "The animation `spin` has no `@keyframes spin`.",
+    });
+    expect(check(body, "@keyframes spin {} .card { animation-name: spin }", { type: "animation", selector: ".card" })).toMatchObject({
+      passed: false,
+      detail: "The animation's duration is 0, so it never plays.",
+    });
+  });
+
+  test("states only in css checks", () => {
+    expect(selectorError("a:hover")).toBeNull();
+    expect(selectorError("a:hover", { states: false })).not.toBeNull();
+    expect(selectorError("p:hoverr")).not.toBeNull();
+    expect(selectorError("p::before span")).not.toBeNull();
+  });
+});
+
+describe("speed", () => {
+  test("sibling chains stay linear", () => {
+    const body = "<p>x</p>".repeat(400);
+    const t = performance.now();
+    const result = check(body, ".zz ~ p ~ p ~ p ~ p ~ p ~ p { color: red }", { type: "css", selector: "p", property: "color", equals: "red" });
+    expect(result.passed).toBe(false);
+    expect(performance.now() - t).toBeLessThan(250);
+  });
+
+  test("a hostile page stops at the work budget instead of hanging", () => {
+    const body = "<div>".repeat(300) + "x" + "</div>".repeat(300);
+    const sheet = Array.from({ length: 1200 }, (_, i) => `div:nth-child(${i + 1}n) div div div { color: red }`).join("\n");
+    const t = performance.now();
+    check(body, sheet, { type: "exists", selector: "div" });
+    expect(performance.now() - t).toBeLessThan(2000);
+  });
+});

@@ -21,6 +21,7 @@ import {
   recountAssessment,
   requireAssessmentAccess,
   requireEditable,
+  hasAttempts,
   requireNoAttempts,
   startedCount,
   toAssessment,
@@ -291,7 +292,9 @@ async function requireQuestionEditor(ctx: QueryCtx, actor: Actor, questionId: Id
 /**
  * Replaces the question. Once students have started, only edits that keep
  * their saved answers meaningful are allowed: the same type with the same
- * number of options (ids are kept by position), never a code task.
+ * number of options (ids are kept by position); for code, the same files and
+ * the same per-student values, so everyone's saved work still fits. Checks,
+ * steps, the solution and points can change: regrade afterwards.
  */
 export async function updateQuestion(
   ctx: MutationCtx,
@@ -304,10 +307,19 @@ export async function updateQuestion(
     input.type === question.type &&
     (question.options === undefined ||
       ("options" in input && input.options.length === question.options.length));
-  if (!sameShape || input.type === "code") {
-    await requireNoAttempts(ctx, assessment, "change this question's type, options or code");
+  if (!sameShape) {
+    await requireNoAttempts(ctx, assessment, "change this question's type or options");
   }
   const { key, ...fields } = normalizeQuestion(input, question.options?.map((option) => option.id));
+  if (fields.code !== undefined && question.code !== undefined && (await hasAttempts(ctx, assessment._id))) {
+    const names = (files: { name: string }[]) => files.map((file) => file.name).sort().join(",");
+    if (names(fields.code.files) !== names(question.code.files)) {
+      throw appError("CONFLICT", "Students have started, so the task keeps its files. You can still change steps, checks, the solution and points.");
+    }
+    if (JSON.stringify(fields.code.variables ?? []) !== JSON.stringify(question.code.variables ?? [])) {
+      throw appError("CONFLICT", "Students have started, so the per-student values stay as they are. You can still change steps, checks, the solution and points.");
+    }
+  }
   await ctx.db.patch("questions", questionId, {
     ...fields,
     // Patching with undefined removes a field, e.g. options on a former choice question.

@@ -9,6 +9,7 @@ import { enforceLimit } from "./lib/limits";
 import {
   assessmentKindValidator,
   assessmentSettingsValidator,
+  clearableSettingValidator,
   courseStatusValidator,
   localeValidator,
   localizedTextValidator,
@@ -313,6 +314,7 @@ export const updateAssessmentAsAgent = mutation({
     instructions: v.optional(v.string()),
     kind: v.optional(assessmentKindValidator),
     settings: v.optional(assessmentSettingsValidator.partial()),
+    clear: v.optional(v.array(clearableSettingValidator)),
   },
   returns: v.null(),
   handler: async (ctx, { token, client, assessmentId, ...patch }) => {

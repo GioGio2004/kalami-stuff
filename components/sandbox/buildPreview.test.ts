@@ -63,11 +63,24 @@ describe("the preview document", () => {
       ],
       [CAT],
     );
-    expect(html).toContain(`<style>.card { background: url('${CAT.url}'); } /* <\\/style> */</style>`);
+    expect(html).toContain(`<style data-kalami-sheet="style.css">.card { background: url('${CAT.url}'); } /* <\\/style> */</style>`);
     // An outside stylesheet stays as a link the policy will block.
     expect(html).toContain('<link rel="stylesheet" href="https://x/y.css">');
     expect(html).toContain(`<img src="${CAT.url}" srcset="${CAT.url} 2x, other.jpg 1x" style="background: url(${CAT.url})">`);
     expect(html).toContain(`<a href="${CAT.url}">`);
+  });
+
+  test("keeps a link's media, reads /style.css and inlines @import", () => {
+    const html = buildPreviewHtml(
+      [
+        { name: "index.html", content: '<link rel="stylesheet" href="/style.css" media="print"><p>x</p>' },
+        { name: "style.css", content: "@import 'more.css' screen; p { color: red }" },
+        { name: "more.css", content: "p { margin: 0 }" },
+      ],
+      [],
+    );
+    expect(html).toContain('<style data-kalami-sheet="style.css" media="print">');
+    expect(html).toContain("@media screen {\np { margin: 0 }\n} p { color: red }");
   });
 
   test("keeps the doctype and a page without a head", () => {

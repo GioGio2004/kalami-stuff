@@ -2,6 +2,7 @@
 
 import { SignOutButton } from "@clerk/nextjs";
 import type { ReactNode } from "react";
+import { AccountTrouble } from "@/components/AccountTrouble";
 import { useCurrentUser } from "@/components/CurrentUserProvider";
 import { ButtonLink, buttonClass } from "@/components/ui/buttons";
 import { LoadingScreen, StatusScreen } from "@/components/ui/StatusScreen";
@@ -18,11 +19,7 @@ export function StaffGate({ children }: { children: ReactNode }) {
     case "loading":
       return <LoadingScreen />;
     case "error":
-      return (
-        <StatusScreen note="Hmm, that didn't work" title="Something went wrong">
-          <p>{current.message}</p>
-        </StatusScreen>
-      );
+      return <AccountTrouble kind={current.kind} message={current.message} />;
     case "signed-out":
       return (
         <StatusScreen note="Staff only" title="Sign in to Kalami AntiCheat">

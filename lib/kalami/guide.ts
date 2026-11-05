@@ -335,8 +335,11 @@ JavaScript. Fields: \`prompt\`, \`starterFiles\` ([{ \`name\`, \`content\` }], e
 
 Check types: \`exists\` / \`not_exists\` (\`selector\`), \`count\` (\`selector\`, \`min?\`,
 \`max?\`), \`text\` (\`selector\`, \`equals?\` / \`contains?\`), \`attr\` (\`selector\`, \`attribute\`,
-\`equals?\` / \`contains?\`), \`css\` (\`selector\`, \`property\`, \`equals?\` / \`oneOf?\`), \`linked\`
-(\`href\` of a stylesheet). Every check has a \`label\` students read.
+\`equals?\` / \`contains?\`), \`css\` (\`selector\`, \`property\`, \`equals?\` / \`oneOf?\`; the
+selector may name a state or pseudo-element such as \`.btn:hover\` or \`.badge::before\`),
+\`linked\` (\`href\` of a stylesheet), \`keyframes\` (\`name?\`, \`property?\`: a @keyframes
+exists and changes that property) and \`animation\` (\`selector\`, \`property?\`: the elements
+run an animation whose @keyframes exists). Every check has a \`label\` students read.
 
 Rules: teach one new thing per step; each step fails on the starter files and
 its checks stay true after later steps; **every check must pass on the

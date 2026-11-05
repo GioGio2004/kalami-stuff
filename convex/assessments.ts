@@ -5,6 +5,7 @@ import { enforceLimit } from "./lib/limits";
 import {
   assessmentKindValidator,
   assessmentSettingsValidator,
+  clearableSettingValidator,
   assessmentStatusValidator,
 } from "./lib/validators";
 import {
@@ -52,6 +53,8 @@ export const update = mutation({
     instructions: v.optional(v.string()),
     kind: v.optional(assessmentKindValidator),
     settings: v.optional(assessmentSettingsValidator.partial()),
+    /** Settings to empty (Convex drops undefined, so emptying is said out loud). */
+    clear: v.optional(v.array(clearableSettingValidator)),
   },
   returns: v.null(),
   handler: async (ctx, { assessmentId, ...patch }) => {

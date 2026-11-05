@@ -1,7 +1,7 @@
 "use client";
 
-import { motion } from "motion/react";
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type ReactNode } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { memo, useEffect, useMemo, useRef, useState, type ClipboardEvent, type ReactNode } from "react";
 import { Button } from "@/components/ui/buttons";
 import { runChecks, type CheckResult, type CheckRule } from "@/lib/checks";
 import type { Locale } from "./assist/dictionary";
@@ -12,7 +12,11 @@ import { Markdown } from "./Markdown";
 import { Preview } from "./Preview";
 import type { CodeFile, IntegrityEvent, LineComment, SandboxTask } from "./types";
 
+// Shared empty values: a fresh `[]` on every render would make every memo below recompute.
 const NO_COMMENTS: LineComment[] = [];
+const NO_RULES: CheckRule[] = [];
+const NO_RESULTS: { id: string; label: string; passed: boolean }[] = [];
+const NO_MISTAKES: Mistake[] = [];
 
 const LABELS = {
   mistakes: { ka: "შეცდომები კოდში", en: "Mistakes in your code" },
@@ -21,6 +25,12 @@ const LABELS = {
   hover: {
     ka: "მიიტანე მაუსი ტეგზე ან თვისებაზე, რომ ახსნა ნახო.",
     en: "Rest the mouse on a tag or property to see what it does.",
+  },
+  stepDone: { ka: "ნაბიჯი შესრულდა", en: "Step done" },
+  allDone: { ka: "ყველა ნაბიჯი შესრულდა!", en: "Every step done!" },
+  onSubmit: {
+    ka: "ეს შემოწმდება, როცა ნამუშევარს გააგზავნი.",
+    en: "These are checked when you submit.",
   },
 } satisfies Record<string, Record<Locale, string>>;
 
@@ -73,6 +83,10 @@ function MistakeList({
  * student types), the files in the middle, the page on the right. On narrow
  * screens one panel shows at a time. The same component serves students,
  * lecturers testing a task, and lecturers reviewing a submission.
+ *
+ * In exams (`checks="on_submit"`) every step is open from the start and the
+ * checks show what will be graded, without ticks; `help={false}` takes away
+ * hints, the mistake finder and the hover explanations.
  */
 
 type Mode = "student" | "lecturer" | "review";
@@ -120,10 +134,13 @@ function CheckList({
   rules,
   results,
   showDetail,
+  live,
 }: {
   rules: { id: string; label: string }[];
   results: Map<string, { passed: boolean; detail?: string }>;
   showDetail: boolean;
+  /** False: what will be checked, without ticks (exams). */
+  live: boolean;
 }) {
   return (
     <ul className="space-y-2.5">
@@ -132,10 +149,10 @@ function CheckList({
         const passed = result?.passed ?? false;
         return (
           <li key={rule.id} className="flex gap-2.5 text-sm">
-            <Tick passed={passed} />
+            {live ? <Tick passed={passed} /> : <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-graphite/50" />}
             <span className="min-w-0">
-              <span className={passed ? "text-ink" : "text-ink/80"}>{rule.label}</span>
-              {showDetail && !passed && result?.detail && (
+              <span className={passed || !live ? "text-ink" : "text-ink/80"}>{rule.label}</span>
+              {live && showDetail && !passed && result?.detail && (
                 <span className="mt-0.5 block text-xs leading-relaxed text-graphite">{result.detail}</span>
               )}
             </span>
@@ -146,7 +163,29 @@ function CheckList({
   );
 }
 
-export function TaskPlayer({
+/** A short burst when a step turns done: a few dots fly out of the tick. */
+function Burst() {
+  const dots = Array.from({ length: 10 }, (_, i) => {
+    const angle = (i / 10) * Math.PI * 2;
+    return { x: Math.cos(angle) * 34, y: Math.sin(angle) * 22, color: i % 3 === 0 ? "var(--red-pen)" : i % 3 === 1 ? "var(--ink)" : "var(--highlighter)" };
+  });
+  return (
+    <span aria-hidden className="pointer-events-none absolute left-4 top-1/2">
+      {dots.map((dot, i) => (
+        <motion.span
+          key={i}
+          className="absolute size-1.5 rounded-full"
+          style={{ backgroundColor: dot.color }}
+          initial={{ x: 0, y: 0, opacity: 1, scale: 1 }}
+          animate={{ x: dot.x, y: dot.y, opacity: 0, scale: 0.4 }}
+          transition={{ duration: 0.7, ease: "easeOut" }}
+        />
+      ))}
+    </span>
+  );
+}
+
+export const TaskPlayer = memo(function TaskPlayer({
   task,
   intro,
   initialFiles,
@@ -156,11 +195,16 @@ export function TaskPlayer({
   header,
   actions,
   banner,
-  hiddenChecks = [],
-  hiddenResults = [],
+  hiddenChecks = NO_RULES,
+  hiddenResults = NO_RESULTS,
   solution,
   locale = "en",
   comments = NO_COMMENTS,
+  checks = "live",
+  help = true,
+  openSteps = false,
+  autoClose = false,
+  suggest = false,
   onAddComment,
   onDeleteComment,
   onFilesChange,
@@ -170,6 +214,7 @@ export function TaskPlayer({
   task: SandboxTask;
   /** Markdown shown before the first step: what the student builds. */
   intro?: string;
+  /** Read when the player opens (and keyed remounts); later changes are ignored. */
   initialFiles: CodeFile[];
   mode: Mode;
   readOnly?: boolean;
@@ -189,6 +234,15 @@ export function TaskPlayer({
   locale?: Locale;
   /** Red-pen notes on lines, shown under the lines they belong to. */
   comments?: LineComment[];
+  /** Students: tick checks while typing ("live"), or list them and grade on submit ("on_submit"). */
+  checks?: "live" | "on_submit";
+  /** Students: hints, the mistake finder and hover explanations. */
+  help?: boolean;
+  /** Every step can be opened from the start (always so when checks wait for submit). */
+  openSteps?: boolean;
+  /** Typing aids the lecturer allowed: `<h1>` closes itself; `<` lists the tags. */
+  autoClose?: boolean;
+  suggest?: boolean;
   /** Review mode: clicking a line number starts a note on it. */
   onAddComment?: (file: string, line: number, text: string) => Promise<void>;
   onDeleteComment?: (id: string) => void;
@@ -196,6 +250,12 @@ export function TaskPlayer({
   onIntegrity?: (event: IntegrityEvent) => void;
   onSaveNow?: () => void;
 }) {
+  const student = mode === "student";
+  // Ticks only while working; finished work (read only) shows its results.
+  const live = !student || checks === "live" || readOnly;
+  const assist = !student || help;
+  const allOpen = !student || openSteps || checks === "on_submit";
+
   const [files, setFiles] = useState(initialFiles);
   const [revision, setRevision] = useState(0);
   const [active, setActive] = useState(initialFiles[0]?.name ?? "index.html");
@@ -206,22 +266,44 @@ export function TaskPlayer({
   const [hintOpen, setHintOpen] = useState(false);
   const [draft, setDraft] = useState<{ file: string; line: number; text: string; saving: boolean } | null>(null);
 
-  const mistakes = useMemo(() => findMistakes(checked, task.assets, locale), [checked, task.assets, locale]);
+  // Only what is shown gets computed: no mistake finder without help, no checks without ticks.
+  const mistakes = useMemo(
+    () => (assist ? findMistakes(checked, task.assets, locale) : NO_MISTAKES),
+    [assist, checked, task.assets, locale],
+  );
   const visibleRules = useMemo(() => task.steps.flatMap((s) => s.checks), [task]);
   const results = useMemo(
-    () => new Map(runChecks(checked, [...visibleRules, ...hiddenChecks]).map((r) => [r.id, r])),
-    [checked, visibleRules, hiddenChecks],
+    () => (live ? new Map(runChecks(checked, [...visibleRules, ...hiddenChecks]).map((r) => [r.id, r])) : new Map<string, CheckResult>()),
+    [live, checked, visibleRules, hiddenChecks],
   );
-  const firstFailing = firstFailingStep(task, results);
-  const allDone = firstFailing === task.steps.length;
+  const firstFailing = live ? firstFailingStep(task, results) : 0;
   const lastStep = task.steps.length - 1;
+  const stepDone = (i: number) => live && task.steps[i].checks.every((c) => results.get(c.id)?.passed);
+  const doneFlags = task.steps.map((_, i) => stepDone(i));
+  const doneCount = doneFlags.filter(Boolean).length;
+  const allDone = live && doneCount === task.steps.length;
 
-  const [furthest, setFurthest] = useState(() =>
-    mode === "student" ? Math.min(firstFailing, lastStep) : lastStep,
-  );
-  const [stepIndex, setStepIndex] = useState(() => (mode === "student" ? Math.min(firstFailing, lastStep) : 0));
+  const [furthest, setFurthest] = useState(() => (allOpen ? lastStep : Math.min(firstFailing, lastStep)));
+  const [stepIndex, setStepIndex] = useState(() => (student && live ? Math.min(firstFailing, lastStep) : 0));
   const step = task.steps[stepIndex];
-  const stepPasses = step.checks.every((c) => results.get(c.id)?.passed);
+  const stepPasses = !live || allOpen || step.checks.every((c) => results.get(c.id)?.passed);
+
+  // A step that turns done while the student types gets a moment; steps done on arrival don't.
+  const doneKey = doneFlags.map((d) => (d ? "1" : "0")).join("");
+  const [seenDone, setSeenDone] = useState(doneKey);
+  const [celebrate, setCelebrate] = useState<{ step: number; all: boolean; at: number } | null>(null);
+  if (doneKey !== seenDone) {
+    setSeenDone(doneKey);
+    const newly = doneFlags.findIndex((d, i) => d && seenDone[i] !== "1");
+    if (student && !readOnly && newly !== -1) {
+      setCelebrate({ step: newly, all: doneFlags.every(Boolean), at: (celebrate?.at ?? 0) + 1 });
+    }
+  }
+  useEffect(() => {
+    if (celebrate === null) return;
+    const timer = setTimeout(() => setCelebrate(null), celebrate.all ? 3200 : 1800);
+    return () => clearTimeout(timer);
+  }, [celebrate]);
 
   // Checks run a moment after typing stops; Ctrl+Enter runs them at once.
   useEffect(() => {
@@ -274,21 +356,23 @@ export function TaskPlayer({
     goTo(stepIndex + 1);
   }
 
-  const locked = mode === "student" && !readOnly;
+  const locked = student && !readOnly;
   const activeMistakes = useMemo(() => mistakes.filter((m) => m.file === active), [mistakes, active]);
   const activeComments = useMemo(() => comments.filter((c) => c.file === active), [comments, active]);
   const overlay = watermark ? watermarkStyle(watermark) : undefined;
-  const doneCount = task.steps.filter((s) => s.checks.every((c) => results.get(c.id)?.passed)).length;
+  const hiddenMap = useMemo(() => new Map(hiddenResults.map((r) => [r.id, { passed: r.passed }])), [hiddenResults]);
 
   const panelClass = (which: Pane) =>
     `${pane === which ? "flex" : "hidden"} min-h-0 flex-col overflow-hidden rounded-[1.6rem] bg-card lg:flex`;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
-        <div className="min-w-0 flex-1">{header}</div>
-        <div className="flex items-center gap-2">{actions}</div>
-      </div>
+      {(header || actions) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
+          <div className="min-w-0 flex-1">{header}</div>
+          <div className="flex items-center gap-2">{actions}</div>
+        </div>
+      )}
       {banner}
 
       {/* Narrow screens: one panel at a time. */}
@@ -312,39 +396,43 @@ export function TaskPlayer({
         {/* Steps */}
         <section
           aria-label="Steps"
-          className={`${panelClass("steps")} ${mode === "student" ? "select-none" : ""}`}
+          className={`relative ${panelClass("steps")} ${student ? "select-none" : ""}`}
           // Students type the task themselves: the text can't be copied out (KALAMI.md §6.1).
-          onCopy={mode === "student" ? blockCopy : undefined}
-          onCut={mode === "student" ? blockCopy : undefined}
-          onContextMenu={mode === "student" ? (event) => event.preventDefault() : undefined}
+          onCopy={student ? blockCopy : undefined}
+          onCut={student ? blockCopy : undefined}
+          onContextMenu={student ? (event) => event.preventDefault() : undefined}
         >
-          <div className="border-b border-line px-5 pb-4 pt-5">
+          <div className="relative border-b border-line px-5 pb-4 pt-5">
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm font-medium text-graphite">
                 Step {stepIndex + 1} of {task.steps.length}
               </p>
-              <p className="text-xs tabular-nums text-graphite">{doneCount} done</p>
+              {live && <p className="text-xs tabular-nums text-graphite">{doneCount} done</p>}
             </div>
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-panel">
-              <motion.div
-                className="h-full rounded-full bg-ink"
-                initial={false}
-                animate={{ width: `${(doneCount / task.steps.length) * 100}%` }}
-                transition={{ duration: 0.5, ease: "easeOut" }}
-              />
-            </div>
+            {live && (
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-panel">
+                <motion.div
+                  className={`h-full rounded-full ${allDone ? "bg-highlighter" : "bg-ink"}`}
+                  initial={false}
+                  animate={{ width: `${(doneCount / task.steps.length) * 100}%` }}
+                  transition={{ type: "spring", stiffness: 140, damping: 20 }}
+                />
+              </div>
+            )}
             <ol className="mt-3 flex flex-wrap gap-1.5" aria-label="All steps">
               {task.steps.map((s, i) => {
-                const done = s.checks.every((c) => results.get(c.id)?.passed);
-                const reachable = i <= furthest;
+                const done = doneFlags[i];
+                const reachable = allOpen || i <= furthest;
                 return (
                   <li key={i}>
-                    <button
+                    <motion.button
                       onClick={() => reachable && goTo(i)}
                       disabled={!reachable}
                       aria-current={i === stepIndex ? "step" : undefined}
                       aria-label={`Step ${i + 1}: ${s.title}${done ? ", done" : ""}`}
-                      className={`grid size-7 place-items-center rounded-full text-xs font-semibold tabular-nums transition ${
+                      animate={celebrate?.step === i ? { scale: [1, 1.35, 1] } : { scale: 1 }}
+                      transition={{ duration: 0.45, ease: "easeOut" }}
+                      className={`grid size-7 place-items-center rounded-full text-xs font-semibold tabular-nums transition-colors ${
                         i === stepIndex
                           ? "bg-ink text-paper"
                           : done && reachable
@@ -355,11 +443,29 @@ export function TaskPlayer({
                       }`}
                     >
                       {i + 1}
-                    </button>
+                    </motion.button>
                   </li>
                 );
               })}
             </ol>
+            <AnimatePresence>
+              {celebrate !== null && (
+                <motion.div
+                  key={celebrate.at}
+                  role="status"
+                  initial={{ opacity: 0, y: 8, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ type: "spring", stiffness: 320, damping: 22 }}
+                  className={`absolute right-4 top-4 z-10 flex items-center gap-2 rounded-full px-3.5 py-1.5 text-sm font-semibold shadow-[0_10px_24px_-12px_rgba(20,20,20,0.45)] ${
+                    celebrate.all ? "bg-ink text-highlighter" : "bg-highlighter text-ink"
+                  }`}
+                >
+                  <Burst />
+                  {celebrate.all ? LABELS.allDone[locale] : `${LABELS.stepDone[locale]} · ${celebrate.step + 1}`}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
@@ -368,34 +474,45 @@ export function TaskPlayer({
                 <Markdown source={intro} />
               </div>
             )}
-            <h2 className="text-2xl font-medium leading-tight tracking-[-0.02em]">{step.title}</h2>
-            <Markdown source={step.instructions} className="mt-3 text-[15px] leading-relaxed text-ink/85" />
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={stepIndex}
+                initial={{ opacity: 0, x: 14 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -14 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+              >
+                <h2 className="text-2xl font-medium leading-tight tracking-[-0.02em]">{step.title}</h2>
+                <Markdown source={step.instructions} className="mt-3 text-[15px] leading-relaxed text-ink/85" />
 
-            <div className="mt-6">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-graphite">Checks</p>
-              <CheckList rules={step.checks} results={results} showDetail />
-            </div>
+                <div className="mt-6">
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-graphite">Checks</p>
+                  <CheckList rules={step.checks} results={results} showDetail live={live} />
+                  {!live && <p className="mt-3 text-xs text-graphite">{LABELS.onSubmit[locale]}</p>}
+                </div>
 
-            {step.hint && (
-              <div className="mt-5">
-                {hintOpen ? (
-                  <div className="rounded-2xl border border-line p-4 text-sm leading-relaxed">
-                    <p className="mb-1 flex items-center gap-1.5 font-medium">
-                      <Bulb className="size-4" /> Hint
-                    </p>
-                    <Markdown source={step.hint} />
+                {assist && step.hint && (
+                  <div className="mt-5">
+                    {hintOpen ? (
+                      <div className="rounded-2xl border border-line p-4 text-sm leading-relaxed">
+                        <p className="mb-1 flex items-center gap-1.5 font-medium">
+                          <Bulb className="size-4" /> Hint
+                        </p>
+                        <Markdown source={step.hint} />
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setHintOpen(true)}
+                        className="inline-flex items-center gap-1.5 text-sm font-medium text-graphite underline-offset-4 hover:text-ink hover:underline"
+                      >
+                        <Bulb className="size-4" />
+                        Need a hint?
+                      </button>
+                    )}
                   </div>
-                ) : (
-                  <button
-                    onClick={() => setHintOpen(true)}
-                    className="inline-flex items-center gap-1.5 text-sm font-medium text-graphite underline-offset-4 hover:text-ink hover:underline"
-                  >
-                    <Bulb className="size-4" />
-                    Need a hint?
-                  </button>
                 )}
-              </div>
-            )}
+              </motion.div>
+            </AnimatePresence>
 
             {task.assets.length > 0 && (
               <div className="mt-6">
@@ -421,10 +538,9 @@ export function TaskPlayer({
                 </p>
                 <CheckList
                   rules={hiddenChecks.length > 0 ? hiddenChecks : hiddenResults}
-                  results={
-                    hiddenChecks.length > 0 ? results : new Map(hiddenResults.map((r) => [r.id, { passed: r.passed }]))
-                  }
-                  showDetail={mode !== "student"}
+                  results={hiddenChecks.length > 0 ? results : hiddenMap}
+                  showDetail={!student}
+                  live
                 />
               </div>
             )}
@@ -455,15 +571,19 @@ export function TaskPlayer({
               </div>
             )}
 
-            <MistakeList
-              mistakes={mistakes}
-              locale={locale}
-              onOpen={(m) => {
-                setActive(m.file);
-                setPane("code");
-              }}
-            />
-            <p className="mt-4 text-xs leading-relaxed text-graphite">{LABELS.hover[locale]}</p>
+            {assist && (
+              <>
+                <MistakeList
+                  mistakes={mistakes}
+                  locale={locale}
+                  onOpen={(m) => {
+                    setActive(m.file);
+                    setPane("code");
+                  }}
+                />
+                <p className="mt-4 text-xs leading-relaxed text-graphite">{LABELS.hover[locale]}</p>
+              </>
+            )}
           </div>
 
           <div className="flex items-center justify-between gap-2 border-t border-line px-5 py-3.5">
@@ -472,7 +592,7 @@ export function TaskPlayer({
               Back
             </Button>
             {stepIndex < lastStep ? (
-              <Button variant={stepPasses ? "lime" : "outline"} size="sm" onClick={next} disabled={!stepPasses}>
+              <Button variant={stepPasses && (live ? stepDone(stepIndex) : true) ? "lime" : "outline"} size="sm" onClick={next} disabled={!stepPasses}>
                 Next step
                 <ArrowRight className="size-4" />
               </Button>
@@ -529,6 +649,9 @@ export function TaskPlayer({
               readOnly={readOnly}
               locked={locked}
               locale={locale}
+              assist={assist}
+              autoClose={autoClose}
+              suggest={suggest}
               mistakes={activeMistakes}
               comments={activeComments}
               onChange={updateFile}
@@ -621,4 +744,4 @@ export function TaskPlayer({
       </div>
     </div>
   );
-}
+});

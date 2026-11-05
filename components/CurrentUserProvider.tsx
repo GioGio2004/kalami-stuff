@@ -12,14 +12,24 @@ export type Me = NonNullable<FunctionReturnType<typeof api.users.me>>;
 export type CurrentUser =
   | { status: "loading" }
   | { status: "signed-out" }
-  | { status: "error"; message: string }
+  /** `session`: Clerk says signed in but the backend refused the token; `account`: setting up the account failed. */
+  | { status: "error"; kind: "session" | "account"; message: string }
   | { status: "ready"; me: Me };
 
 /** Exported so the dev UI gallery can render screens with sample users. */
 export const CurrentUserContext = createContext<CurrentUser>({ status: "loading" });
 
-const BACKEND_REJECTED_SESSION =
-  "You're signed in, but the Kalami backend didn't accept the session. Check that CLERK_FRONTEND_API_URL is set on the Convex deployment and that Clerk's Convex integration is enabled.";
+const SESSION_REJECTED =
+  "This usually sorts itself out. Try again, or sign out and sign back in.";
+
+/** For whoever runs Kalami, never for students: what to check when this keeps happening. */
+const SESSION_REJECTED_DETAIL =
+  "[Kalami] Clerk reports a session but Convex rejected its token. Check that CLERK_FRONTEND_API_URL on this Convex " +
+  "deployment matches the Clerk instance of NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, that the session token has aud: \"convex\", " +
+  "and that the computer's clock is right.";
+
+/** A refused token can be a moment's hiccup (a refresh after sleep); only a lasting refusal is an error. */
+const REJECTION_GRACE_MS = 4000;
 
 /**
  * Stores the signed-in user in Convex once per session and exposes `users.me`.
@@ -32,6 +42,8 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
   const me = useQuery(api.users.me, isAuthenticated ? {} : "skip");
   // Keyed by Clerk user so an error from a previous account doesn't linger.
   const [storeError, setStoreError] = useState<{ userId: string; message: string } | null>(null);
+  const rejected = isSignedIn === true && !isLoading && !isAuthenticated;
+  const [rejectedFor, setRejectedFor] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated || !userId) {
@@ -48,15 +60,26 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
     };
   }, [isAuthenticated, userId, storeUser]);
 
+  useEffect(() => {
+    if (!rejected || !userId) return;
+    const timer = setTimeout(() => {
+      console.warn(SESSION_REJECTED_DETAIL);
+      setRejectedFor(userId);
+    }, REJECTION_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [rejected, userId]);
+
   let value: CurrentUser;
   if (storeError !== null && storeError.userId === userId) {
-    value = { status: "error", message: storeError.message };
+    value = { status: "error", kind: "account", message: storeError.message };
   } else if (isLoading) {
     value = { status: "loading" };
   } else if (!isAuthenticated) {
-    value = isSignedIn
-      ? { status: "error", message: BACKEND_REJECTED_SESSION }
-      : { status: "signed-out" };
+    value = !isSignedIn
+      ? { status: "signed-out" }
+      : rejectedFor === userId
+        ? { status: "error", kind: "session", message: SESSION_REJECTED }
+        : { status: "loading" };
   } else if (!me) {
     // undefined while loading; null until `store` has created the row.
     value = { status: "loading" };

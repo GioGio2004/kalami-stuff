@@ -8,6 +8,7 @@ import { PanelHeader } from "@/components/admin/panel/ui";
 import { InviteCenter, type AnyInvite } from "@/components/admin/InviteCenter";
 import { PeoplePanel, type Person } from "@/components/admin/PeoplePanel";
 import { EmailPreviews } from "@/components/dev/EmailPreviews";
+import { GradingDeskSample } from "@/components/dev/GradingDeskSample";
 import { InvitesBoard, type Invite } from "@/components/admin/InvitesBoard";
 import { AgentsView } from "@/components/agents/AgentsView";
 import { InviteScreen } from "@/components/AcceptInvite";
@@ -26,6 +27,8 @@ import type {
 import { StaffGate } from "@/components/StaffGate";
 import { StaffNav } from "@/components/StaffNav";
 import { AssessmentBuilder } from "@/components/studio/AssessmentBuilder";
+import { CodeTaskForm } from "@/components/studio/CodeTaskForm";
+import { PicturesContext } from "@/components/presentations-editor/ImagePicker";
 import { LessonEditor } from "@/components/lessons-editor/LessonEditor";
 import { DeckPlayer } from "@/components/presentations/DeckPlayer";
 import { PresentationEditor } from "@/components/presentations-editor/PresentationEditor";
@@ -1030,6 +1033,8 @@ const views: Record<string, string> = {
   "kalami-verified": ".kalami · import (verified Kalami file)",
   "kalami-ai": ".kalami · import (AI-written file)",
   "kalami-errors": ".kalami · import (file with problems)",
+  grading: "Studio · grading desk (sample students)",
+  "code-task-images": "Studio · code task editor, uploading images (fake upload)",
   courses: "Studio · courses",
   "courses-empty": "Studio · no courses yet",
   "studio-intro": "Studio · first-visit intro card",
@@ -1125,6 +1130,8 @@ export function StaffGallery({ view }: { view?: string }) {
   );
 
   switch (view) {
+    case "grading":
+      return staffPage(<GradingDeskSample />);
     case "courses":
       return staffPage(dashboard(false, courses));
     case "courses-empty":
@@ -1234,6 +1241,12 @@ export function StaffGallery({ view }: { view?: string }) {
       return staffPage(<GroupView group={groupDetail} courses={courses} now={NOW} actions={groupActions} />);
     case "group-admin":
       return staffPage(<GroupView group={groupDetailAdmin} courses={courses} now={NOW} actions={groupActions} />);
+    case "code-task-images":
+      return staffPage(
+        <PicturesContext.Provider value={galleryPictures}>
+          <CodeTaskForm onSubmit={pause} onCancel={() => undefined} />
+        </PicturesContext.Provider>,
+      );
     case "builder":
       return staffPage(
         <AssessmentBuilder

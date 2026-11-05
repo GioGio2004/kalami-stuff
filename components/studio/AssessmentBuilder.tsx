@@ -7,6 +7,7 @@ import { Dialog } from "@/components/ui/Dialog";
 import { CheckCard, Field, FormError, Segmented, TextArea, TextInput } from "@/components/ui/form";
 import { ArrowDown, ArrowLeft, ArrowUp, Check, Plus, Robot } from "@/components/ui/icons";
 import { Pill, statusLabel, statusTone } from "@/components/ui/Pill";
+import { codeMode } from "@/convex/lib/validators";
 import { errorMessage } from "@/lib/errors";
 import { fromLocalInputValue, toLocalInputValue } from "@/lib/format";
 import { useIsMobile } from "@/lib/useDevice";
@@ -30,6 +31,15 @@ import {
 } from "./types";
 
 const KINDS = (Object.keys(KIND_LABEL) as AssessmentKind[]).map((value) => ({ value, label: KIND_LABEL[value] }));
+const CLEARABLE = ["opensAt", "closesAt", "timeLimitMin"] as const;
+const CODE_CHECKS: { value: "live" | "on_submit"; label: string }[] = [
+  { value: "live", label: "Ticked live" },
+  { value: "on_submit", label: "Checked on submit" },
+];
+const CODE_CHECKS_HINT = {
+  live: "Students see each check tick as they type and open the next step once one is done. Good for homework and practice.",
+  on_submit: "Students see what will be checked, without ticks, and every step is open from the start. Graded on submit. Good for exams.",
+};
 const INTEGRITY = (Object.keys(INTEGRITY_LABEL) as AssessmentSettings["integrityLevel"][]).map((value) => ({
   value,
   label: INTEGRITY_LABEL[value],
@@ -558,7 +568,9 @@ function SettingsCard({
     setState("saving");
     setError(null);
     try {
-      await onUpdate({ title, instructions, kind, settings });
+      // Emptied fields have to be named: Convex drops undefined, so they'd keep their old value.
+      const clear = CLEARABLE.filter((key) => settings[key] === undefined && assessment.settings[key] !== undefined);
+      await onUpdate({ title, instructions, kind, settings, clear: clear.length > 0 ? clear : undefined });
       setDirty(false);
       setState("saved");
     } catch (caught) {
@@ -589,12 +601,18 @@ function SettingsCard({
           <TextArea id="a-instructions" value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={3} maxLength={8000} />
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
+          {kind === "task" && (
+            <p className="text-xs leading-relaxed text-graphite sm:col-span-2">
+              Homework has no timer and one submission; it closes at the closing time. For a timed coding test, make it a quiz or a midterm.
+            </p>
+          )}
           <Field label="Opens" htmlFor="a-opens" optional hint="Your local time. Empty: opens as soon as it’s published.">
             <TextInput id="a-opens" type="datetime-local" value={toLocalInputValue(settings.opensAt)} onChange={(e) => set({ opensAt: fromLocalInputValue(e.target.value) })} />
           </Field>
           <Field label="Closes" htmlFor="a-closes" optional hint="Hard deadline; open attempts are submitted then. Empty: no deadline.">
             <TextInput id="a-closes" type="datetime-local" value={toLocalInputValue(settings.closesAt)} onChange={(e) => set({ closesAt: fromLocalInputValue(e.target.value) })} />
           </Field>
+          {kind !== "task" && (
           <Field label="Time limit (min)" htmlFor="a-time" optional hint="Per attempt, counted from when the student starts. Empty: untimed.">
             <TextInput
               id="a-time"
@@ -605,6 +623,8 @@ function SettingsCard({
               onChange={(e) => set({ timeLimitMin: e.target.value === "" ? undefined : Number(e.target.value) })}
             />
           </Field>
+          )}
+          {kind !== "task" && (
           <Field label="Attempts" htmlFor="a-attempts" hint="How many times each student may start it (1 to 10).">
             <TextInput
               id="a-attempts"
@@ -615,6 +635,26 @@ function SettingsCard({
               onChange={(e) => set({ attemptsAllowed: Math.min(10, Math.max(1, Math.round(Number(e.target.value)) || 1)) })}
             />
           </Field>
+          )}
+        </div>
+        <Field label="Code questions" hint={CODE_CHECKS_HINT[codeMode(kind, settings).checks]}>
+          <Segmented
+            label="Code checks"
+            value={codeMode(kind, settings).checks}
+            options={CODE_CHECKS}
+            onChange={(codeChecks) => set({ codeChecks })}
+          />
+        </Field>
+        <CheckCard checked={codeMode(kind, settings).help} onChange={(codeHelp) => set({ codeHelp })}>
+          Hints, the mistake finder and explanations in code questions
+        </CheckCard>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <CheckCard checked={codeMode(kind, settings).autoClose} onChange={(codeAutoClose) => set({ codeAutoClose })}>
+            Close HTML tags automatically: typing &lt;h1&gt; adds &lt;/h1&gt;
+          </CheckCard>
+          <CheckCard checked={codeMode(kind, settings).suggest} onChange={(codeSuggest) => set({ codeSuggest })}>
+            Suggest HTML tags when students type &lt;
+          </CheckCard>
         </div>
         <Field label="Integrity" hint={INTEGRITY_HINT[settings.integrityLevel]}>
           <Segmented label="Integrity level" value={settings.integrityLevel} options={INTEGRITY} onChange={(integrityLevel) => set({ integrityLevel })} />

@@ -20,6 +20,7 @@ import {
 } from "@codemirror/view";
 import { useEffect, useRef } from "react";
 import type { Locale } from "./assist/dictionary";
+import { tagSuggestions } from "./assist/complete";
 import { explainOnHover } from "./assist/explain";
 import type { Mistake } from "./assist/lint";
 import type { CodeFile, IntegrityEvent, LineComment } from "./types";
@@ -91,12 +92,33 @@ const theme = EditorView.theme({
     cursor: "pointer",
   },
   ".cm-lineNumbers .cm-gutterElement": { cursor: "var(--line-cursor, default)" },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul": {
+    fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
+    fontSize: "13px",
+    maxHeight: "16rem",
+  },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul > li": { padding: "4px 12px", lineHeight: "1.6" },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]": {
+    backgroundColor: "color-mix(in oklab, var(--highlighter) 70%, transparent)",
+    color: "var(--ink)",
+  },
+  ".cm-completionDetail": { marginLeft: "10px", color: "var(--graphite)", fontStyle: "normal" },
+  ".cm-completionMatchedText": { textDecoration: "none", fontWeight: "700" },
+  ".cm-tooltip.cm-completionInfo": {
+    maxWidth: "280px",
+    padding: "8px 12px",
+    fontFamily: "var(--font-geist-sans), sans-serif",
+    fontSize: "13px",
+    lineHeight: "1.5",
+  },
+  ".cm-snippetField": { backgroundColor: "color-mix(in oklab, var(--highlighter) 30%, transparent)" },
 });
 
 /**
- * Every character typed by hand: no paste, no drop, no autocomplete, no
- * auto-closing tags, and the browser's spellcheck and autocorrect switched off.
- * Blocked attempts are counted for the integrity summary.
+ * Every character typed by hand: no paste, no drop, and the browser's spellcheck
+ * and autocorrect switched off. Closing tags and tag suggestions only when the
+ * lecturer turns them on (autoClose, suggest). Blocked attempts are counted for
+ * the integrity summary.
  */
 function integrityRules(report: (event: IntegrityEvent) => void): Extension {
   // Dragging a selection around inside the editor is still off, but it isn't
@@ -226,6 +248,9 @@ export function CodeEditor({
   readOnly,
   locked,
   locale,
+  assist = true,
+  autoClose = false,
+  suggest = false,
   mistakes,
   comments,
   onChange,
@@ -242,6 +267,11 @@ export function CodeEditor({
   /** Student mode: the integrity rules above. Staff edit freely. */
   locked: boolean;
   locale: Locale;
+  /** Hover explanations; off in exams without help. */
+  assist?: boolean;
+  /** Typing aids the lecturer allowed in HTML files: `<h1>` closes itself; `<` lists the tags. */
+  autoClose?: boolean;
+  suggest?: boolean;
   /** The mistake finder's results for the active file. */
   mistakes: Mistake[];
   /** Red-pen notes for the active file. */
@@ -307,8 +337,9 @@ export function CodeEditor({
           bracketMatching(),
           highlightActiveLine(),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-          name.endsWith(".css") ? css() : html({ autoCloseTags: false }),
-          explainOnHover(() => localeRef.current),
+          name.endsWith(".css") ? css() : html({ autoCloseTags: autoClose }),
+          suggest && !name.endsWith(".css") ? tagSuggestions(() => localeRef.current) : [],
+          assist ? explainOnHover(() => localeRef.current) : [],
           notesField,
           keymap.of([
             { key: "Mod-Enter", run: () => (callbacks.current.onRun?.(), true) },
@@ -344,7 +375,7 @@ export function CodeEditor({
       view.current.setState(state);
     }
     decorate(view.current);
-  }, [revision, readOnly, locked]);
+  }, [revision, readOnly, locked, assist, autoClose, suggest]);
 
   // Switching tabs keeps the old file's state (cursor, undo) for when it comes back.
   useEffect(() => {

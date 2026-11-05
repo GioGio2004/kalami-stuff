@@ -51,9 +51,6 @@ const submissionRowValidator = v.object({
   score: v.optional(v.number()),
   maxScore: v.number(),
   graded: v.boolean(),
-  /** Code questions: steps done across all of them. */
-  stepsDone: v.number(),
-  stepsTotal: v.number(),
   /** Every other question: how many have an answer. */
   answered: v.number(),
   questionsTotal: v.number(),
@@ -81,7 +78,6 @@ export const forAssessment = query({
       .query("questions")
       .withIndex("by_assessmentId_and_order", (q) => q.eq("assessmentId", args.assessmentId))
       .take(200);
-    const stepsTotal = questions.reduce((sum, q) => sum + (q.code?.steps.length ?? 0), 0);
     const questionsTotal = questions.filter((q) => q.type !== "code").length;
     const result = await ctx.db
       .query("attempts")
@@ -101,8 +97,6 @@ export const forAssessment = query({
         score: attempt.manualScore ?? attempt.score,
         maxScore: attempt.maxScore,
         graded: attempt.gradedAt !== undefined,
-        stepsDone: attempt.stepsDone ?? 0,
-        stepsTotal,
         answered: attempt.answered ?? 0,
         questionsTotal,
         needsGrading: attempt.needsGrading ?? false,

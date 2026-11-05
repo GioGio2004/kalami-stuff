@@ -94,10 +94,7 @@ export const saveCodeWork = mutation({
     files: v.array(codeFileValidator),
     integrity: v.optional(integrityDeltaValidator),
   },
-  returns: v.object({
-    savedAt: v.number(),
-    progress: v.object({ step: v.number(), passed: v.array(v.string()) }),
-  }),
+  returns: v.object({ savedAt: v.number() }),
   handler: async (ctx, args) => {
     const student = await requireStudent(ctx);
     await enforceLimit(ctx, "saveCode", student.user._id);

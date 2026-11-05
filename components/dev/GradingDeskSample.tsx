@@ -27,8 +27,6 @@ function row(i: number, student: string, status: DeskRow["status"], extra: Parti
     score: status === "submitted" ? 18 + i : undefined,
     maxScore: 30,
     graded: false,
-    stepsDone: 9,
-    stepsTotal: 14,
     answered: 10,
     questionsTotal: 10,
     needsGrading: false,

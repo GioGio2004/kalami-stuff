@@ -3,7 +3,7 @@
  * follows the browser's recovery rules where it matters: an unclosed comment
  * runs to the end, a rule with a broken selector is dropped, a declaration
  * missing its `;` swallows the next line. Offsets point into the original
- * source, so the mistake finder can underline the right characters.
+ * source.
  *
  * It understands what beginners meet in tutorials: @media, @supports, @layer,
  * @import, @keyframes, nested rules (`.card { & p { … } }`) and the old

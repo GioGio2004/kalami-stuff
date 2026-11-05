@@ -4,7 +4,6 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirro
 import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
 import { bracketMatching, defaultHighlightStyle, indentOnInput, syntaxHighlighting } from "@codemirror/language";
-import { setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import { EditorState, StateEffect, StateField, type Extension } from "@codemirror/state";
 import {
   Decoration,
@@ -22,7 +21,6 @@ import { useEffect, useRef } from "react";
 import type { Locale } from "./assist/dictionary";
 import { tagSuggestions } from "./assist/complete";
 import { explainOnHover } from "./assist/explain";
-import type { Mistake } from "./assist/lint";
 import type { CodeFile, IntegrityEvent, LineComment } from "./types";
 
 /** One change inserting more than this many characters is counted (KALAMI.md §6.2). */
@@ -53,24 +51,6 @@ const theme = EditorView.theme({
   },
   ".cm-explain": { maxWidth: "320px", padding: "10px 12px", fontFamily: "var(--font-geist-sans), sans-serif", fontSize: "13px", lineHeight: "1.5" },
   ".cm-explain-title": { fontFamily: "var(--font-geist-mono), monospace", fontWeight: "600", marginBottom: "2px" },
-  ".cm-tooltip-lint": { padding: "0" },
-  ".cm-diagnostic": { padding: "8px 12px", fontFamily: "var(--font-geist-sans), sans-serif", fontSize: "13px", maxWidth: "360px" },
-  ".cm-diagnostic-error": { borderLeft: "3px solid var(--red-pen)" },
-  ".cm-diagnostic-warning": { borderLeft: "3px solid var(--warn)" },
-  ".cm-diagnostic-info": { borderLeft: "3px solid var(--graphite)" },
-  ".cm-lintRange-error": {
-    backgroundImage: "none",
-    textDecoration: "underline wavy var(--red-pen)",
-    textDecorationSkipInk: "none",
-    textUnderlineOffset: "3px",
-  },
-  ".cm-lintRange-warning": {
-    backgroundImage: "none",
-    textDecoration: "underline wavy var(--warn)",
-    textDecorationSkipInk: "none",
-    textUnderlineOffset: "3px",
-  },
-  ".cm-lintRange-info": { backgroundImage: "none", textDecoration: "underline dotted var(--graphite)" },
   ".cm-redpen-line": { backgroundColor: "color-mix(in oklab, var(--red-pen) 9%, transparent)" },
   ".cm-redpen-note": {
     margin: "2px 12px 6px 0",
@@ -251,7 +231,6 @@ export function CodeEditor({
   assist = true,
   autoClose = false,
   suggest = false,
-  mistakes,
   comments,
   onChange,
   onIntegrity,
@@ -272,8 +251,6 @@ export function CodeEditor({
   /** Typing aids the lecturer allowed in HTML files: `<h1>` closes itself; `<` lists the tags. */
   autoClose?: boolean;
   suggest?: boolean;
-  /** The mistake finder's results for the active file. */
-  mistakes: Mistake[];
   /** Red-pen notes for the active file. */
   comments: LineComment[];
 } & Callbacks) {
@@ -284,7 +261,6 @@ export function CodeEditor({
   const current = useRef(active);
   const initialFiles = useRef(files);
   const localeRef = useRef(locale);
-  const mistakesRef = useRef(mistakes);
   const commentsRef = useRef(comments);
 
   useEffect(() => {
@@ -296,13 +272,8 @@ export function CodeEditor({
     initialFiles.current = files;
   }, [files, revision]);
 
-  /** Pushes the current file's mistakes and notes into the editor. */
+  /** Pushes the current file's red-pen notes into the editor. */
   function decorate(editor: EditorView) {
-    const doc = editor.state.doc;
-    const diagnostics: Diagnostic[] = mistakesRef.current
-      .filter((m) => m.to <= doc.length)
-      .map((m) => ({ from: m.from, to: Math.max(m.to, m.from), severity: m.severity, message: m.message }));
-    editor.dispatch(setDiagnostics(editor.state, diagnostics));
     editor.dispatch({
       effects: setNotes.of({
         comments: commentsRef.current,
@@ -389,12 +360,11 @@ export function CodeEditor({
     }
   }, [active]);
 
-  // New mistakes or notes (or a new tab, whose state has the old ones): redraw them.
+  // New notes (or a new tab, whose state has the old ones): redraw them.
   useEffect(() => {
-    mistakesRef.current = mistakes;
     commentsRef.current = comments;
     if (view.current !== null) decorate(view.current);
-  }, [mistakes, comments, active]);
+  }, [comments, active]);
 
   useEffect(
     () => () => {

@@ -188,7 +188,7 @@ describe("students and code tasks", () => {
   });
 
   test("work through the steps, submit, get a score and red-pen notes", async () => {
-    const { nino, ana, courseId, assessmentId, questionId, joinCode } = await published();
+    const { t, nino, ana, courseId, assessmentId, questionId, joinCode } = await published();
     await ana.mutation(api.learn.join, { code: joinCode });
 
     const view = await ana.query(api.learn.course, { courseId });
@@ -212,15 +212,14 @@ describe("students and code tasks", () => {
       files: linked,
       integrity: { pasteBlocked: 2, dropBlocked: 0, largeInserts: 0 },
     });
-    expect(saved.progress).toEqual({ step: 1, passed: ["s1c1"] });
+    // A save only stores the files: no checks run and no step is recorded.
+    expect(saved).toEqual({ savedAt: expect.any(Number) });
     await ana.mutation(api.learn.reportIntegrityCounts, { assessmentId, counts: { tabSwitches: 3, awayMs: 25_000 } });
 
     const withCard = linked.map((f) =>
       f.name === "index.html" ? { ...f, content: f.content.replace("<body>", '<body>\n<div class="card"><h1>Ana</h1></div>') } : f,
     );
-    expect(
-      (await ana.mutation(api.learn.saveCodeWork, { assessmentId, questionId, files: withCard })).progress.step,
-    ).toBe(2);
+    await ana.mutation(api.learn.saveCodeWork, { assessmentId, questionId, files: withCard });
 
     await ana.mutation(api.learn.submit, { assessmentId });
     const after = await ana.query(api.learn.task, { assessmentId });
@@ -242,14 +241,19 @@ describe("students and code tasks", () => {
         student: "ana S",
         status: "submitted",
         score: 8,
-        stepsDone: 2,
-        stepsTotal: 3,
         integrity: { pasteBlocked: 2, tabSwitches: 3, awayMs: 25_000 },
         integrityScore: 10,
         integrityColor: "yellow",
       },
     ]);
+    expect(rows[0]).not.toHaveProperty("stepsDone");
     const { attemptId } = rows[0];
+    const stored = await t.run(async (ctx) => ({
+      attempt: await ctx.db.get("attempts", attemptId),
+      responses: await ctx.db.query("responses").collect(),
+    }));
+    expect(stored.attempt?.stepsDone).toBeUndefined();
+    expect(stored.responses.every((r) => r.progress === undefined)).toBe(true);
     const detail = await nino.query(api.submissions.detail, { attemptId });
     expect(detail.questions[0].checkResults).toHaveLength(5);
     expect(detail.questions[0].hiddenChecks).toHaveLength(1);
@@ -281,7 +285,7 @@ describe("students and code tasks", () => {
       questionId,
       files: [{ name: "hack.html", content: "x" }],
     });
-    expect(saved.progress.step).toBe(0);
+    expect(saved.savedAt).toBeTypeOf("number");
     // Work in progress comes from taskWork, read once; the task itself leaves it out so autosaves stay light.
     const task = await ana.query(api.learn.task, { assessmentId });
     expect(task.responses).toEqual([]);
@@ -290,6 +294,39 @@ describe("students and code tasks", () => {
 
     const draft = await nino.mutation(api.assessments.create, { courseId, kind: "task", title: "Draft" });
     await expectAppError(ana.query(api.learn.task, { assessmentId: draft }), "NOT_FOUND");
+  });
+
+  test("the clean-up clears step progress stored before steps stopped being tracked", async () => {
+    const { t, ana, assessmentId, questionId, joinCode } = await published();
+    await ana.mutation(api.learn.join, { code: joinCode });
+    const task = await ana.query(api.learn.task, { assessmentId });
+    await ana.mutation(api.learn.saveCodeWork, { assessmentId, questionId, files: task.questions[0].code.files });
+    // What older saves left behind.
+    await t.run(async (ctx) => {
+      for (const response of await ctx.db.query("responses").collect()) {
+        await ctx.db.patch("responses", response._id, { progress: { step: 1, passed: ["s1c1"] } });
+      }
+      for (const attempt of await ctx.db.query("attempts").collect()) {
+        await ctx.db.patch("attempts", attempt._id, { stepsDone: 1 });
+      }
+    });
+    vi.useFakeTimers();
+    try {
+      expect(await t.mutation(internal.migrations.clearStepProgress, {})).toEqual({ table: "responses", cleared: 1, done: false });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+    } finally {
+      vi.useRealTimers();
+    }
+    const left = await t.run(async (ctx) => ({
+      responses: await ctx.db.query("responses").collect(),
+      attempts: await ctx.db.query("attempts").collect(),
+    }));
+    expect(left.responses).toHaveLength(1);
+    expect(left.responses[0].progress).toBeUndefined();
+    expect(left.responses[0].value.type).toBe("code");
+    expect(left.attempts.every((a) => a.stepsDone === undefined)).toBe(true);
+    // Running it again changes nothing.
+    expect(await t.mutation(internal.migrations.clearStepProgress, { table: "attempts" })).toEqual({ table: "attempts", cleared: 0, done: true });
   });
 
   test("work left in progress is submitted when the task closes", async () => {
@@ -337,7 +374,7 @@ describe("students and code tasks", () => {
     expect(JSON.stringify(task)).not.toContain("purple\",\"");
 
     const files = [{ name: "index.html", content: `<h1 style="color: ${color}">ana</h1>` }];
-    expect((await ana.mutation(api.learn.saveCodeWork, { assessmentId, questionId, files })).progress.step).toBe(1);
+    await ana.mutation(api.learn.saveCodeWork, { assessmentId, questionId, files });
     await ana.mutation(api.learn.submit, { assessmentId });
     const rows = (await nino.query(api.submissions.forAssessment, { assessmentId, paginationOpts: FIRST_PAGE })).page;
     expect(rows[0].score).toBe(2);

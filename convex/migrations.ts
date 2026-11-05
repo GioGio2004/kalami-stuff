@@ -50,3 +50,46 @@ export const materialsToWeeks = internalMutation({
     return rows.length;
   },
 });
+
+/**
+ * Code steps aren't tracked any more (2026-11-05): saves stopped recording the
+ * step a student reached. Clears the old `progress` on responses, then
+ * `stepsDone` on attempts, a page at a time; each page schedules the next.
+ * Run once per deployment (`npx convex run migrations:clearStepProgress`, add
+ * `--prod` for production). Once every deployment has run it, both fields can
+ * leave the schema and this function can go.
+ */
+export const clearStepProgress = internalMutation({
+  args: {
+    table: v.optional(v.union(v.literal("responses"), v.literal("attempts"))),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  returns: v.object({ table: v.string(), cleared: v.number(), done: v.boolean() }),
+  handler: async (ctx, args) => {
+    const table = args.table ?? "responses";
+    const paginationOpts = { cursor: args.cursor ?? null, numItems: BATCH };
+    let cleared = 0;
+    let page;
+    if (table === "responses") {
+      page = await ctx.db.query("responses").paginate(paginationOpts);
+      for (const response of page.page) {
+        if (response.progress === undefined) continue;
+        await ctx.db.patch("responses", response._id, { progress: undefined });
+        cleared += 1;
+      }
+    } else {
+      page = await ctx.db.query("attempts").paginate(paginationOpts);
+      for (const attempt of page.page) {
+        if (attempt.stepsDone === undefined) continue;
+        await ctx.db.patch("attempts", attempt._id, { stepsDone: undefined });
+        cleared += 1;
+      }
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.migrations.clearStepProgress, { table, cursor: page.continueCursor });
+    } else if (table === "responses") {
+      await ctx.scheduler.runAfter(0, internal.migrations.clearStepProgress, { table: "attempts", cursor: null });
+    }
+    return { table, cleared, done: page.isDone && table === "attempts" };
+  },
+});

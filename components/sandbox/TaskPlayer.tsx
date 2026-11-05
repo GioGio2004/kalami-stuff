@@ -5,7 +5,6 @@ import { memo, useEffect, useMemo, useRef, useState, type ClipboardEvent, type R
 import { Button } from "@/components/ui/buttons";
 import { runChecks, type CheckResult, type CheckRule } from "@/lib/checks";
 import type { Locale } from "./assist/dictionary";
-import { findMistakes, type Mistake } from "./assist/lint";
 import { CodeEditor } from "./CodeEditor";
 import { ArrowLeft, ArrowRight, Bulb, Desktop, EyeOff, ImageIcon, Lock, Pen, Phone, Refresh } from "./icons";
 import { Markdown } from "./Markdown";
@@ -16,11 +15,8 @@ import type { CodeFile, IntegrityEvent, LineComment, SandboxTask } from "./types
 const NO_COMMENTS: LineComment[] = [];
 const NO_RULES: CheckRule[] = [];
 const NO_RESULTS: { id: string; label: string; passed: boolean }[] = [];
-const NO_MISTAKES: Mistake[] = [];
 
 const LABELS = {
-  mistakes: { ka: "შეცდომები კოდში", en: "Mistakes in your code" },
-  noMistakes: { ka: "შეცდომები არ ჩანს.", en: "No mistakes spotted." },
   notes: { ka: "ლექტორის შენიშვნები", en: "Notes from your lecturer" },
   hover: {
     ka: "მიიტანე მაუსი ტეგზე ან თვისებაზე, რომ ახსნა ნახო.",
@@ -34,50 +30,6 @@ const LABELS = {
   },
 } satisfies Record<string, Record<Locale, string>>;
 
-function MistakeList({
-  mistakes,
-  locale,
-  onOpen,
-}: {
-  mistakes: Mistake[];
-  locale: Locale;
-  onOpen: (mistake: Mistake) => void;
-}) {
-  return (
-    <div className="mt-6">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-graphite">
-        {LABELS.mistakes[locale]} {mistakes.length > 0 && <span className="tabular-nums">({mistakes.length})</span>}
-      </p>
-      {mistakes.length === 0 ? (
-        <p className="text-sm text-graphite">{LABELS.noMistakes[locale]}</p>
-      ) : (
-        <ul className="space-y-1.5">
-          {mistakes.slice(0, 12).map((m, i) => (
-            <li key={`${m.file}-${m.from}-${m.code}-${i}`}>
-              <button
-                onClick={() => onOpen(m)}
-                className="flex w-full gap-2.5 rounded-xl p-2 text-left text-sm transition hover:bg-panel"
-              >
-                <span
-                  className={`mt-1.5 size-2 shrink-0 rounded-full ${
-                    m.severity === "error" ? "bg-red-pen" : m.severity === "warning" ? "bg-warn" : "bg-graphite"
-                  }`}
-                />
-                <span className="min-w-0">
-                  <span className="block font-mono text-xs text-graphite">
-                    {m.file}:{m.line}
-                  </span>
-                  <span className="block leading-snug">{m.message}</span>
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
 /**
  * The code sandbox: steps on the left (freeCodeCamp-style, ticked live as the
  * student types), the files in the middle, the page on the right. On narrow
@@ -86,7 +38,7 @@ function MistakeList({
  *
  * In exams (`checks="on_submit"`) every step is open from the start and the
  * checks show what will be graded, without ticks; `help={false}` takes away
- * hints, the mistake finder and the hover explanations.
+ * hints and the hover explanations.
  */
 
 type Mode = "student" | "lecturer" | "review";
@@ -230,13 +182,13 @@ export const TaskPlayer = memo(function TaskPlayer({
   hiddenResults?: { id: string; label: string; passed: boolean }[];
   /** Lecturer mode: lets them load the solution to see every step pass. */
   solution?: CodeFile[];
-  /** Language of explanations and mistakes. */
+  /** Language of the hover explanations. */
   locale?: Locale;
   /** Red-pen notes on lines, shown under the lines they belong to. */
   comments?: LineComment[];
   /** Students: tick checks while typing ("live"), or list them and grade on submit ("on_submit"). */
   checks?: "live" | "on_submit";
-  /** Students: hints, the mistake finder and hover explanations. */
+  /** Students: hints and hover explanations. */
   help?: boolean;
   /** Every step can be opened from the start (always so when checks wait for submit). */
   openSteps?: boolean;
@@ -266,11 +218,7 @@ export const TaskPlayer = memo(function TaskPlayer({
   const [hintOpen, setHintOpen] = useState(false);
   const [draft, setDraft] = useState<{ file: string; line: number; text: string; saving: boolean } | null>(null);
 
-  // Only what is shown gets computed: no mistake finder without help, no checks without ticks.
-  const mistakes = useMemo(
-    () => (assist ? findMistakes(checked, task.assets, locale) : NO_MISTAKES),
-    [assist, checked, task.assets, locale],
-  );
+  // Only what is shown gets computed: no checks without ticks.
   const visibleRules = useMemo(() => task.steps.flatMap((s) => s.checks), [task]);
   const results = useMemo(
     () => (live ? new Map(runChecks(checked, [...visibleRules, ...hiddenChecks]).map((r) => [r.id, r])) : new Map<string, CheckResult>()),
@@ -357,7 +305,6 @@ export const TaskPlayer = memo(function TaskPlayer({
   }
 
   const locked = student && !readOnly;
-  const activeMistakes = useMemo(() => mistakes.filter((m) => m.file === active), [mistakes, active]);
   const activeComments = useMemo(() => comments.filter((c) => c.file === active), [comments, active]);
   const overlay = watermark ? watermarkStyle(watermark) : undefined;
   const hiddenMap = useMemo(() => new Map(hiddenResults.map((r) => [r.id, { passed: r.passed }])), [hiddenResults]);
@@ -571,19 +518,7 @@ export const TaskPlayer = memo(function TaskPlayer({
               </div>
             )}
 
-            {assist && (
-              <>
-                <MistakeList
-                  mistakes={mistakes}
-                  locale={locale}
-                  onOpen={(m) => {
-                    setActive(m.file);
-                    setPane("code");
-                  }}
-                />
-                <p className="mt-4 text-xs leading-relaxed text-graphite">{LABELS.hover[locale]}</p>
-              </>
-            )}
+            {assist && <p className="mt-6 text-xs leading-relaxed text-graphite">{LABELS.hover[locale]}</p>}
           </div>
 
           <div className="flex items-center justify-between gap-2 border-t border-line px-5 py-3.5">
@@ -652,7 +587,6 @@ export const TaskPlayer = memo(function TaskPlayer({
               assist={assist}
               autoClose={autoClose}
               suggest={suggest}
-              mistakes={activeMistakes}
               comments={activeComments}
               onChange={updateFile}
               onIntegrity={onIntegrity}

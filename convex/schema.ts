@@ -603,8 +603,10 @@ export default defineSchema({
     maxScore: v.number(),
     integrity: integrityCountsValidator,
     // Progress for the lecturer's list, kept here so it never has to read answers:
-    // questions answered (not code) and code steps done. Written only when they change.
+    // questions answered (not code). Written only when it changes.
     answered: v.optional(v.number()),
+    // No longer written (code steps aren't tracked since 2026-11-05). Kept until
+    // migrations.clearStepProgress has run on every deployment, then removed.
     stepsDone: v.optional(v.number()),
     // An essay has an answer and no points yet.
     needsGrading: v.optional(v.boolean()),
@@ -633,7 +635,8 @@ export default defineSchema({
     questionId: v.id("questions"),
     userId: v.id("users"),
     value: responseValueValidator,
-    // Code: the first step with a failing check, and the visible checks that pass.
+    // No longer written (code steps aren't tracked since 2026-11-05). Kept until
+    // migrations.clearStepProgress has run on every deployment, then removed.
     progress: v.optional(v.object({ step: v.number(), passed: v.array(v.string()) })),
     savedAt: v.number(),
     // Written by the server on submit, from every check including hidden ones.

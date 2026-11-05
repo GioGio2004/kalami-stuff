@@ -646,7 +646,7 @@ function SettingsCard({
           />
         </Field>
         <CheckCard checked={codeMode(kind, settings).help} onChange={(codeHelp) => set({ codeHelp })}>
-          Hints, the mistake finder and explanations in code questions
+          Hints and hover explanations in code questions
         </CheckCard>
         <div className="grid gap-2 sm:grid-cols-2">
           <CheckCard checked={codeMode(kind, settings).autoClose} onChange={(codeAutoClose) => set({ codeAutoClose })}>

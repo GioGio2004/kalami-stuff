@@ -775,7 +775,6 @@ export function CodeTaskForm({
                   readOnly={false}
                   locked={false}
                   locale="en"
-                  mistakes={[]}
                   comments={[]}
                   onChange={(name, content) =>
                     setDraft((d) => {

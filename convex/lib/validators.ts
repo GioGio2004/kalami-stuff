@@ -95,7 +95,7 @@ export const assessmentSettingsValidator = v.object({
    * Unset: live for tasks and quizzes, on submit for midterms and finals.
    */
   codeChecks: v.optional(codeChecksValidator),
-  /** Code questions: hints, the mistake finder and hover explanations. Unset: on, except in midterms and finals. */
+  /** Code questions: hints and hover explanations. Unset: on, except in midterms and finals. */
   codeHelp: v.optional(v.boolean()),
   /** Code questions: typing `<h1>` adds `</h1>` by itself. Unset: off (students type every character). */
   codeAutoClose: v.optional(v.boolean()),

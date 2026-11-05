@@ -208,7 +208,7 @@ describe("grading never gets stuck", () => {
     await nino.mutation(api.assessments.setStatus, { assessmentId, status: "published" });
     const huge = `<h1>a</h1>${"<p></p>".repeat(4500)}`;
     const saved = await ana.mutation(api.learn.saveCodeWork, { assessmentId, questionId, files: [{ name: "index.html", content: huge }] });
-    expect(saved.progress).toEqual({ step: 0, passed: [] });
+    expect(saved.savedAt).toBeTypeOf("number");
     await ana.mutation(api.learn.submit, { assessmentId });
     const view = await ana.query(api.learn.task, { assessmentId });
     expect(view.attempt).toMatchObject({ status: "submitted", score: 0 });

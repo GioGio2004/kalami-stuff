@@ -442,7 +442,6 @@ export const studentTaskValidator = v.object({
       questionId: v.id("questions"),
       files: v.array(v.object({ name: v.string(), content: v.string() })),
       savedAt: v.number(),
-      progress: v.optional(v.object({ step: v.number(), passed: v.array(v.string()) })),
       checkResults: v.optional(v.array(checkOutcomeValidator)),
       autoScore: v.optional(v.number()),
     }),
@@ -555,7 +554,6 @@ export async function getStudentTask(ctx: QueryCtx, student: Student, assessment
         questionId: question._id,
         files: response.value.files,
         savedAt: response.savedAt,
-        progress: response.progress,
         // Visible checks the student saw anyway; hidden ones only with full results.
         checkResults:
           results === "full"
@@ -649,17 +647,6 @@ function cleanFiles(code: { files: CodeFile[] }, files: CodeFile[]): CodeFile[] 
   });
 }
 
-/** First step with a failing visible check, and the visible checks that pass. */
-export function stepProgress(code: { steps: { checks: CheckRuleDoc[] }[] }, files: CodeFile[]) {
-  const rules = code.steps.flatMap((step) => step.checks) as CheckRule[];
-  const results = new Map(runChecks(files, rules).map((r) => [r.id, r.passed]));
-  const firstFailing = code.steps.findIndex((step) => step.checks.some((c) => !results.get(c.id)));
-  return {
-    step: firstFailing === -1 ? code.steps.length : firstFailing,
-    passed: rules.filter((r) => results.get(r.id)).map((r) => r.id),
-  };
-}
-
 /** Saves still in flight at the closing time get the same few seconds as at a time limit. */
 function withinClosingGrace(assessment: Doc<"assessments">, course: Doc<"courses">, now: number): boolean {
   const { closesAt } = assessment.settings;
@@ -720,15 +707,10 @@ export async function saveCode(
   const { code } = taskFor(question.code, student.user, assessment._id);
   const files = cleanFiles(code, args.files);
   const now = Date.now();
-  const progress = stepProgress(code, files);
   const existing = await responseFor(ctx, attempt._id, question._id);
-  // Written only when a step is gained or lost, so typing doesn't wake up the lecturer's list.
-  const stepsDelta = progress.step - (existing?.progress?.step ?? 0);
-  if (stepsDelta !== 0 || hasCounts(args.integrity)) {
-    await ctx.db.patch("attempts", attempt._id, {
-      stepsDone: (attempt.stepsDone ?? 0) + stepsDelta,
-      integrity: hasCounts(args.integrity) ? addCounts(attempt.integrity, args.integrity!) : attempt.integrity,
-    });
+  // The attempt is written only when there are counts to add, so typing doesn't wake up the lecturer's list.
+  if (hasCounts(args.integrity)) {
+    await ctx.db.patch("attempts", attempt._id, { integrity: addCounts(attempt.integrity, args.integrity!) });
   }
   const value = { type: "code" as const, files };
   if (existing === null) {
@@ -737,13 +719,12 @@ export async function saveCode(
       questionId: question._id,
       userId: student.user._id,
       value,
-      progress,
       savedAt: now,
     });
   } else {
-    await ctx.db.patch("responses", existing._id, { value, progress, savedAt: now });
+    await ctx.db.patch("responses", existing._id, { value, savedAt: now });
   }
-  return { savedAt: now, progress };
+  return { savedAt: now };
 }
 
 /** Counters from the page (tab switches, fullscreen…), sent every few seconds while they change. */
@@ -781,7 +762,6 @@ function sameFiles(a: CodeFile[], b: CodeFile[]): boolean {
 type ScoredAttempt = {
   score: number;
   maxScore: number;
-  stepsDone: number;
   needsGrading: boolean;
   /** Writes to make once everything is worked out, so a failure halfway writes nothing. */
   writes: (() => Promise<unknown>)[];
@@ -799,7 +779,6 @@ async function scoreAttempt(ctx: MutationCtx, attempt: Doc<"attempts">): Promise
     (await ctx.db.get("users", attempt.userId)) ?? { _id: attempt.userId, firstName: undefined, lastName: undefined };
   let score = 0;
   let maxScore = 0;
-  let stepsDone = 0;
   let needsGrading = false;
   const writes: (() => Promise<unknown>)[] = [];
   for (const question of await questionsOf(ctx, attempt.assessmentId)) {
@@ -826,8 +805,6 @@ async function scoreAttempt(ctx: MutationCtx, attempt: Doc<"attempts">): Promise
     const autoScore =
       rules.length === 0 || untouched ? 0 : Math.round((question.points * passed * 100) / rules.length) / 100;
     score += Math.min(response?.manualPoints ?? autoScore, question.points);
-    const progress = stepProgress(code, files);
-    stepsDone += progress.step;
     if (response === null) {
       writes.push(() =>
         ctx.db.insert("responses", {
@@ -835,17 +812,16 @@ async function scoreAttempt(ctx: MutationCtx, attempt: Doc<"attempts">): Promise
           questionId: question._id,
           userId: attempt.userId,
           value: { type: "code", files },
-          progress,
           savedAt: Date.now(),
           checkResults,
           autoScore,
         }),
       );
     } else {
-      writes.push(() => ctx.db.patch("responses", response._id, { checkResults, autoScore, progress }));
+      writes.push(() => ctx.db.patch("responses", response._id, { checkResults, autoScore }));
     }
   }
-  return { score: Math.round(score * 100) / 100, maxScore: Math.round(maxScore * 100) / 100, stepsDone, needsGrading, writes };
+  return { score: Math.round(score * 100) / 100, maxScore: Math.round(maxScore * 100) / 100, needsGrading, writes };
 }
 
 /**
@@ -861,7 +837,6 @@ export async function gradeAttempt(ctx: MutationCtx, attempt: Doc<"attempts">, o
     score: scored.score,
     // The questions as they are now, so a question added or re-pointed since the start still adds up.
     maxScore: scored.maxScore,
-    stepsDone: scored.stepsDone,
     needsGrading: scored.needsGrading || undefined,
     autoSubmitted: options.auto ? true : undefined,
     gradingError: undefined,
@@ -881,7 +856,6 @@ export async function regradeAttempt(ctx: MutationCtx, attempt: Doc<"attempts">)
     await ctx.db.patch("attempts", attempt._id, {
       score: scored.score,
       maxScore: scored.maxScore,
-      stepsDone: scored.stepsDone,
       needsGrading: scored.needsGrading || undefined,
       gradingError: undefined,
     });

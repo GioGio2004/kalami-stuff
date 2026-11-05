@@ -61,7 +61,7 @@ export const settingsSchema = z
     codeHelp: z
       .boolean()
       .optional()
-      .describe("Code questions: hints, the mistake finder and hover explanations. Default: on, except in midterms and finals"),
+      .describe("Code questions: hints and hover explanations. Default: on, except in midterms and finals"),
     codeAutoClose: z
       .boolean()
       .optional()

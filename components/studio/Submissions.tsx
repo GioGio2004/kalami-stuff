@@ -133,10 +133,13 @@ export function Submissions({ detail }: { detail: AssessmentDetail }) {
         <>
           <ul className="mt-4 divide-y divide-line">
             {rows.map((row) => {
-              const progress = [
+              const pastes = row.integrity.pasteBlocked + row.integrity.dropBlocked;
+              const details = [
+                row.status === "submitted" ? "submitted" : "working",
                 row.questionsTotal > 0 && `${row.answered} of ${row.questionsTotal} answered`,
-                row.stepsTotal > 0 &&
-                  (row.stepsDone >= row.stepsTotal ? "every step done" : `step ${row.stepsDone + 1} of ${row.stepsTotal}`),
+                (row.integrity.tabSwitches ?? 0) > 0 && `${row.integrity.tabSwitches} tab switches`,
+                pastes > 0 && `${pastes} pastes blocked`,
+                row.autoSubmitted && "auto-submitted",
               ]
                 .filter(Boolean)
                 .join(" · ");
@@ -156,11 +159,7 @@ export function Submissions({ detail }: { detail: AssessmentDetail }) {
                         {row.number > 1 && <span className="font-normal text-graphite"> · attempt {row.number}</span>}
                       </span>
                       <span className="block text-xs text-graphite">
-                        {progress.charAt(0).toUpperCase() + progress.slice(1)}
-                        {(row.integrity.tabSwitches ?? 0) > 0 && ` · ${row.integrity.tabSwitches} tab switches`}
-                        {row.integrity.pasteBlocked + row.integrity.dropBlocked > 0 &&
-                          ` · ${row.integrity.pasteBlocked + row.integrity.dropBlocked} pastes blocked`}
-                        {row.autoSubmitted && " · auto-submitted"}
+                        {details.charAt(0).toUpperCase() + details.slice(1)}
                       </span>
                     </span>
                     {row.status === "submitted" ? (
